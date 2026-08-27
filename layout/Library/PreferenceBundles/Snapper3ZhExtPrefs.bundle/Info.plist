@@ -17,6 +17,6 @@
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>NSPrincipalClass</key>
-    <string>Snapper3ZhExtPrefsController</string>
+	<string>Snapper3ZhExtPrefsController</string>
 </dict>
 </plist>
