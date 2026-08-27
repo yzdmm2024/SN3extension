@@ -51,9 +51,9 @@ __attribute__((constructor)) static void sn3_prefs_init() {
             ((void(*)(id, SEL))superViewDidLoad)(self, viewDidLoadSel);
             
             // 设置标题
-            [self setTitle:@"SN3延伸板"];
+            [(UIViewController *)self setTitle:@"SN3延伸板"];
             
-            self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.96 blue:0.98 alpha:1];
+            ((UIViewController *)self).view.backgroundColor = [UIColor colorWithRed:0.95 green:0.96 blue:0.98 alpha:1];
             
             // 构建数据
             NSArray *sections = @[
@@ -75,13 +75,13 @@ __attribute__((constructor)) static void sn3_prefs_init() {
             
             object_setIvar(self, class_getInstanceVariable([self class], "_sections"), sections);
             
-            UITableView *tv = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
+            UITableView *tv = [[UITableView alloc] initWithFrame:((UIViewController *)self).view.bounds style:UITableViewStyleGrouped];
             tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             tv.backgroundColor = [UIColor clearColor];
             tv.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
             tv.dataSource = (id)self;
             tv.delegate = (id)self;
-            [self.view addSubview:tv];
+            [((UIViewController *)self).view addSubview:tv];
             
             object_setIvar(self, class_getInstanceVariable([self class], "_tableView"), tv);
         }), "v@:");
