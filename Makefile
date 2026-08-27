@@ -20,5 +20,8 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 BUNDLE_NAME = Snapper3ZhExtPrefs
 Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.m
 Snapper3ZhExtPrefs_INSTALL_PATH = /Library/PreferenceBundles
+Snapper3ZhExtPrefs_CFLAGS = -fobjc-arc
+Snapper3ZhExtPrefs_FRAMEWORKS = UIKit Foundation
+Snapper3ZhExtPrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk
