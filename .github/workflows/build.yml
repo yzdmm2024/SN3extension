@@ -18,11 +18,10 @@ jobs:
       - name: Install Theos
         run: |
           git clone --depth=1 https://github.com/theos/theos.git $HOME/theos
-          # Download iOS SDK for compatibility
-          curl -s https://api.github.com/repos/theos/sdks/releases/latest | grep "browser_download_url" | grep "iPhoneOS14" | cut -d '"' -f 4 | head -1 | xargs -I{} curl -L -o /tmp/sdk.tar.xz {}
+          # Download iOS 14.5 SDK for compatibility
           mkdir -p $HOME/theos/sdks
-          tar -xJf /tmp/sdk.tar.xz -C $HOME/theos/sdks/ 2>/dev/null || echo "SDK download/extract failed, will use Xcode SDK"
-          ls -la $HOME/theos/sdks/
+          gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp
+          tar -xJf /tmp/iPhoneOS14.5.sdk.tar.xz -C $HOME/theos/sdks/
 
       - name: Build with Theos
         run: |
