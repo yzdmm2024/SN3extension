@@ -20,24 +20,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git clone --depth=1 https://github.com/theos/theos.git $HOME/theos
+          $HOME/theos/bin/update-theos
           # Download iOS 14.5 SDK for compatibility
           mkdir -p $HOME/theos/sdks
           gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp
           tar -xJf /tmp/iPhoneOS14.5.sdk.tar.xz -C $HOME/theos/sdks/
+          # Create symlink for Makefile's TARGET
+          ln -sf "$HOME/theos/sdks/iPhoneOS14.5.sdk" "$HOME/theos/sdks/iPhoneOS14.0.sdk"
 
       - name: Build with Theos
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           export THEOS=$HOME/theos
-          # Re-download SDK (overwrite if exists)
-          gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp --clobber
-          mkdir -p $THEOS/sdks
-          tar -xJf /tmp/iPhoneOS14.5.sdk.tar.xz -C $THEOS/sdks/
-          # Create symlink for compatibility with Makefile's TARGET
-          ln -sf "$THEOS/sdks/iPhoneOS14.5.sdk" "$THEOS/sdks/iPhoneOS14.0.sdk"
-          ls -la $THEOS/sdks/
-          # Build
           rm -rf .theos
           make
           echo "=== Build output ==="
