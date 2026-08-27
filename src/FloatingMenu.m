@@ -2,15 +2,10 @@
 //  FloatingMenu.m — 浮动操作菜单
 //
 //  截屏后弹出半透明覆盖层，展示功能按钮网格。
-//  包含：OCR / 翻译 / 问AI / 长截图 / 自由截图 / 保存相册 / 复制 / 分享 / 悬浮贴图
+//  所有功能通过 NSClassFromString 运行时调用，避免编译时强依赖。
 //
 
 #import "FloatingMenu.h"
-#import "ImageUtils.h"
-#import "VisionOCR.h"
-#import "TranslateEngine.h"
-#import "AskAIEngine.h"
-#import "LongShotController.h"
 #import "Common.h"
 #import <objc/runtime.h>
 
@@ -30,12 +25,7 @@ typedef NS_ENUM(NSUInteger, XZAction) {
 
 static UIWindow *_menuWindow = nil;
 static UIImage *_currentImage = nil;
-static UIWindow *_overlayWindow = nil;
 static UIWindow *_floatingWindow = nil;
-
-@interface FloatingMenu ()
-@property (nonatomic, strong) UIImage *screenshot;
-@end
 
 @implementation FloatingMenu
 
@@ -49,7 +39,6 @@ static UIWindow *_floatingWindow = nil;
     win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
     win.userInteractionEnabled = YES;
     
-    // 内容容器
     UIView *content = [[UIView alloc] init];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     content.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.95];
@@ -57,7 +46,6 @@ static UIWindow *_floatingWindow = nil;
     content.clipsToBounds = YES;
     [win addSubview:content];
     
-    // 标题
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     title.text = @"选择操作";
@@ -66,7 +54,6 @@ static UIWindow *_floatingWindow = nil;
     title.textAlignment = NSTextAlignmentCenter;
     [content addSubview:title];
     
-    // 关闭按钮
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [closeBtn setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -93,7 +80,7 @@ static UIWindow *_floatingWindow = nil;
         @{@"icon": @"pin", @"label": @"悬浮贴图", @"color": @0xFF9500},
     ];
     
-    for (NSInteger i = 0; i < actions.count && i < actions.count; i++) {
+    for (NSInteger i = 0; i < actions.count; i++) {
         NSDictionary *a = actions[i];
         NSInteger row = i / cols;
         NSInteger col = i % cols;
@@ -106,14 +93,12 @@ static UIWindow *_floatingWindow = nil;
         btn.tag = i;
         [btn addTarget:self action:@selector(actionTapped:) forControlEvents:UIControlEventTouchUpInside];
         
-        // 图标
         UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(btnSize/2 - 16, 0, 32, 32)];
         iv.image = [UIImage systemImageNamed:a[@"icon"]];
         iv.tintColor = [self colorFromHex:[a[@"color"] unsignedIntegerValue]];
         iv.contentMode = UIViewContentModeScaleAspectFit;
         [btn addSubview:iv];
         
-        // 标签
         UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(-8, 38, btnSize + 16, 18)];
         lb.text = a[@"label"];
         lb.textColor = [UIColor whiteColor];
@@ -125,12 +110,10 @@ static UIWindow *_floatingWindow = nil;
         [content addSubview:btn];
     }
     
-    // 计算内容高度
     NSInteger rows = (actions.count + cols - 1) / cols;
     CGFloat contentH = 54 + rows * (btnSize + spacing + 8) + 20;
     CGFloat contentW = UIScreen.mainScreen.bounds.size.width - 80;
     
-    // 约束
     [NSLayoutConstraint activateConstraints:@[
         [content.centerXAnchor constraintEqualToAnchor:win.centerXAnchor],
         [content.centerYAnchor constraintEqualToAnchor:win.centerYAnchor],
@@ -147,7 +130,6 @@ static UIWindow *_floatingWindow = nil;
     _menuWindow = win;
     win.hidden = NO;
     
-    // 入场动画
     content.transform = CGAffineTransformMakeScale(0.8, 0.8);
     content.alpha = 0;
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.8
@@ -205,16 +187,22 @@ static UIWindow *_floatingWindow = nil;
 
 + (void)doOCR:(UIImage *)image {
     [Common toast:@"正在OCR识别中..."];
-    [VisionOCR recognizeImage:image
-                    languages:[Common ocrLanguages]
-                   completion:^(NSString *text) {
-        if (text.length) {
-            [UIPasteboard generalPasteboard].string = text;
-            [Common toast:[NSString stringWithFormat:@"OCR完成，已复制到剪贴板\n%@", [text substringToIndex:MIN(50, text.length)]]];
-        } else {
-            [Common toast:@"OCR未识别到文字"];
-        }
-    }];
+    Class visionOCR = NSClassFromString(@"VisionOCR");
+    if (!visionOCR) { [Common toast:@"OCR模块未加载"]; return; }
+    
+    // 运行时调用 VisionOCR
+    SEL sel = @selector(recognizeImage:languages:completion:);
+    if ([visionOCR respondsToSelector:sel]) {
+        void (*func)(id, SEL, UIImage*, NSArray*, void(^)(NSString*)) = (void(*)(id, SEL, UIImage*, NSArray*, void(^)(NSString*)))[visionOCR methodForSelector:sel];
+        func(visionOCR, sel, image, [Common ocrLanguages], ^(NSString *text) {
+            if (text.length) {
+                [UIPasteboard generalPasteboard].string = text;
+                [Common toast:[NSString stringWithFormat:@"OCR完成，已复制到剪贴板\n%@", [text substringToIndex:MIN(50, text.length)]]];
+            } else {
+                [Common toast:@"OCR未识别到文字"];
+            }
+        });
+    }
 }
 
 + (void)doTranslate:(UIImage *)image {
@@ -228,19 +216,26 @@ static UIWindow *_floatingWindow = nil;
     }
     
     [Common toast:@"正在翻译中..."];
-    [VisionOCR recognizeImage:image languages:[Common ocrLanguages] completion:^(NSString *text) {
+    Class visionOCR = NSClassFromString(@"VisionOCR");
+    Class transEngine = NSClassFromString(@"TranslateEngine");
+    if (!visionOCR || !transEngine) { [Common toast:@"翻译模块未加载"]; return; }
+    
+    SEL ocrSel = @selector(recognizeImage:languages:completion:);
+    void (*ocrFunc)(id, SEL, UIImage*, NSArray*, void(^)(NSString*)) = (void(*)(id, SEL, UIImage*, NSArray*, void(^)(NSString*)))[visionOCR methodForSelector:ocrSel];
+    ocrFunc(visionOCR, ocrSel, image, [Common ocrLanguages], ^(NSString *text) {
         if (!text.length) { [Common toast:@"未识别到文字"]; return; }
-        [TranslateEngine translateText:text fromLang:@"auto" toLang:target
-                                appid:appid appKey:key
-                           completion:^(NSString *translated, NSString *error) {
+        
+        SEL transSel = @selector(translateText:fromLang:toLang:appid:appKey:completion:);
+        void (*transFunc)(id, SEL, NSString*, NSString*, NSString*, NSString*, NSString*, void(^)(NSString*, NSString*)) = (void(*)(id, SEL, NSString*, NSString*, NSString*, NSString*, NSString*, void(^)(NSString*, NSString*)))[transEngine methodForSelector:transSel];
+        transFunc(transEngine, transSel, text, @"auto", target, appid, key, ^(NSString *translated, NSString *error) {
             if (translated.length) {
                 [UIPasteboard generalPasteboard].string = translated;
                 [Common toast:[NSString stringWithFormat:@"翻译完成：%@", [translated substringToIndex:MIN(40, translated.length)]]];
             } else {
                 [Common toast:error ?: @"翻译失败"];
             }
-        }];
-    }];
+        });
+    });
 }
 
 + (void)doAskAI:(UIImage *)image {
@@ -255,20 +250,29 @@ static UIWindow *_floatingWindow = nil;
     }
     
     [Common toast:@"正在询问AI..."];
-    [AskAIEngine askText:prompt baseURL:baseURL apiKey:apiKey model:model
-              completion:^(NSString *answer, NSString *error) {
+    Class aiEngine = NSClassFromString(@"AskAIEngine");
+    if (!aiEngine) { [Common toast:@"AI模块未加载"]; return; }
+    
+    SEL sel = @selector(askText:baseURL:apiKey:model:completion:);
+    void (*func)(id, SEL, NSString*, NSString*, NSString*, NSString*, void(^)(NSString*, NSString*)) = (void(*)(id, SEL, NSString*, NSString*, NSString*, NSString*, void(^)(NSString*, NSString*)))[aiEngine methodForSelector:sel];
+    func(aiEngine, sel, prompt, baseURL, apiKey, model, ^(NSString *answer, NSString *error) {
         if (answer.length) {
             [UIPasteboard generalPasteboard].string = answer;
             [Common toast:[NSString stringWithFormat:@"AI回复：%@", [answer substringToIndex:MIN(40, answer.length)]]];
         } else {
             [Common toast:error ?: @"AI请求失败"];
         }
-    }];
+    });
 }
 
 + (void)doLongShot {
     [Common toast:@"正在滚动截图..."];
-    [LongShotController captureFromKeyWindowCompletion:^(UIImage *stitched) {
+    Class longShot = NSClassFromString(@"LongShotController");
+    if (!longShot) { [Common toast:@"长截图模块未加载"]; return; }
+    
+    SEL sel = @selector(captureFromKeyWindowCompletion:);
+    void (*func)(id, SEL, void(^)(UIImage*)) = (void(*)(id, SEL, void(^)(UIImage*)))[longShot methodForSelector:sel];
+    func(longShot, sel, ^(UIImage *stitched) {
         if (stitched) {
             _currentImage = stitched;
             [Common toast:@"长截图完成，可继续操作"];
@@ -276,16 +280,14 @@ static UIWindow *_floatingWindow = nil;
         } else {
             [Common toast:@"长截图失败，未找到可滚动区域"];
         }
-    }];
+    });
 }
 
 + (void)doCrop:(UIImage *)image {
-    // 用预览方式展示裁剪工具
     UIWindow *cropWin = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     cropWin.windowLevel = UIWindowLevelAlert + 200;
     cropWin.backgroundColor = [UIColor blackColor];
     
-    // 图片预览
     CGFloat ratio = image.size.width / image.size.height;
     CGFloat ivW = cropWin.bounds.size.width;
     CGFloat ivH = ivW / ratio;
@@ -302,14 +304,12 @@ static UIWindow *_floatingWindow = nil;
     iv.userInteractionEnabled = YES;
     [cropWin addSubview:iv];
     
-    // 裁剪区域选择（简单实现：用一个可拖拽的矩形框）
     UIView *cropBox = [[UIView alloc] initWithFrame:CGRectMake(ivW*0.1, ivH*0.1, ivW*0.8, ivH*0.8)];
     cropBox.layer.borderColor = [UIColor whiteColor].CGColor;
     cropBox.layer.borderWidth = 2;
     cropBox.layer.cornerRadius = 4;
     [iv addSubview:cropBox];
     
-    // 底部按钮
     UIButton *saveBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     saveBtn.frame = CGRectMake(cropWin.bounds.size.width/2 - 80, cropWin.bounds.size.height - 80, 160, 44);
     saveBtn.backgroundColor = [UIColor systemBlueColor];
@@ -334,7 +334,6 @@ static UIWindow *_floatingWindow = nil;
     UIImage *image = objc_getAssociatedObject(btn, "cropImage");
     UIWindow *win = objc_getAssociatedObject(btn, "cropWindow");
     
-    // 计算裁剪区域
     CGRect boxInIV = [iv convertRect:cropBox.frame toView:iv];
     CGFloat scaleX = image.size.width / iv.bounds.size.width;
     CGFloat scaleY = image.size.height / iv.bounds.size.height;
@@ -356,13 +355,18 @@ static UIWindow *_floatingWindow = nil;
 
 + (void)doSaveAlbum:(UIImage *)image {
     [Common toast:@"正在保存到相册..."];
-    [ImageUtils saveToCustomAlbum:image completion:^(BOOL success, NSError *error) {
+    Class imgUtils = NSClassFromString(@"ImageUtils");
+    if (!imgUtils) { [Common toast:@"保存模块未加载"]; return; }
+    
+    SEL sel = @selector(saveToCustomAlbum:completion:);
+    void (*func)(id, SEL, UIImage*, void(^)(BOOL, NSError*)) = (void(*)(id, SEL, UIImage*, void(^)(BOOL, NSError*)))[imgUtils methodForSelector:sel];
+    func(imgUtils, sel, image, ^(BOOL success, NSError *error) {
         if (success) {
             [Common toast:@"已保存到「SN3截图」相册"];
         } else {
             [Common toast:[NSString stringWithFormat:@"保存失败: %@", error.localizedDescription ?: @"未知错误"]];
         }
-    }];
+    });
 }
 
 + (void)doCopy:(UIImage *)image {
@@ -377,7 +381,6 @@ static UIWindow *_floatingWindow = nil;
     UIActivityViewController *avc = [[UIActivityViewController alloc]
                                       initWithActivityItems:@[image] applicationActivities:nil];
     
-    // iPad 需要 popover
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         avc.popoverPresentationController.sourceView = keyWin;
         avc.popoverPresentationController.sourceRect = CGRectMake(keyWin.bounds.size.width/2, keyWin.bounds.size.height/2, 0, 0);
@@ -413,7 +416,6 @@ static UIWindow *_floatingWindow = nil;
     fiv.layer.borderWidth = 2;
     [fwin addSubview:fiv];
     
-    // 关闭按钮
     UIButton *fb = [UIButton buttonWithType:UIButtonTypeSystem];
     fb.frame = CGRectMake(fw - 28, 0, 28, 28);
     [fb setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
@@ -421,14 +423,12 @@ static UIWindow *_floatingWindow = nil;
     [fb addTarget:self action:@selector(closeFloating) forControlEvents:UIControlEventTouchUpInside];
     [fwin addSubview:fb];
     
-    // 拖拽手势
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panFloating:)];
     [fwin addGestureRecognizer:pan];
     
     _floatingWindow = fwin;
     fwin.hidden = NO;
     
-    // 入场动画
     fwin.transform = CGAffineTransformMakeScale(0.3, 0.3);
     fwin.alpha = 0;
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:0.8

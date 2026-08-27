@@ -7,8 +7,12 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Snapper3ZhExt
 
-Snapper3ZhExt_FILES = Tweak.xm
+Snapper3ZhExt_FILES = Tweak.xm \
+    src/Common.m \
+    src/FloatingMenu.m \
+    src/ImageUtils.m
 Snapper3ZhExt_FRAMEWORKS = UIKit Foundation
-Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations
+Snapper3ZhExt_WEAK_FRAMEWORKS = Photos
+Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Isrc
 
 include $(THEOS_MAKE_PATH)/tweak.mk

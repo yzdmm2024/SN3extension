@@ -1,29 +1,21 @@
 //
-//  Tweak.xm — 极简版 v2.04：仅截屏检测 + 弹窗，定位崩溃原因
+//  Tweak.xm — 独立插件 v2.05：截屏 → 浮动菜单
+//  所有功能模块通过运行时调用，避免编译时强依赖导致崩溃
 //
 
 #import <UIKit/UIKit.h>
+#import "Common.h"
+#import "FloatingMenu.h"
+#import "ImageUtils.h"
 
 #pragma mark - 截屏检测
 
 static void xz_screenshotDetected(CFNotificationCenterRef center, void *observer,
                                    CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        // 弹一个简单的提示框
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"SN3延伸板"
-                                                                       message:@"截屏已检测到"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        
-        UIWindow *keyWin = nil;
-        if (@available(iOS 15.0, *)) {
-            UIWindowScene *scene = (UIWindowScene *)[UIApplication sharedApplication].connectedScenes.anyObject;
-            keyWin = scene.keyWindow;
-        } else {
-            keyWin = [UIApplication sharedApplication].keyWindow;
-        }
-        if (keyWin && keyWin.rootViewController) {
-            [keyWin.rootViewController presentViewController:alert animated:YES completion:nil];
+        UIImage *screenshot = [ImageUtils captureScreen];
+        if (screenshot) {
+            [FloatingMenu showWithImage:screenshot];
         }
     });
 }
@@ -45,23 +37,12 @@ static void xz_init() {
     [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationUserDidTakeScreenshotNotification
                                                     object:nil queue:NSOperationQueue.mainQueue
                                                 usingBlock:^(NSNotification *note) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"SN3延伸板"
-                                                                           message:@"截屏已检测到 (备选)"
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            
-            UIWindow *keyWin = nil;
-            if (@available(iOS 15.0, *)) {
-                UIWindowScene *scene = (UIWindowScene *)[UIApplication sharedApplication].connectedScenes.anyObject;
-                keyWin = scene.keyWindow;
-            } else {
-                keyWin = [UIApplication sharedApplication].keyWindow;
-            }
-            if (keyWin && keyWin.rootViewController) {
-                [keyWin.rootViewController presentViewController:alert animated:YES completion:nil];
-            }
-        });
+        UIImage *screenshot = [ImageUtils captureScreen];
+        if (screenshot) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [FloatingMenu showWithImage:screenshot];
+            });
+        }
     }];
 }
 
@@ -70,7 +51,7 @@ __attribute__((constructor)) static void xz_ctor() {
     @autoreleasepool {
         NSString *procName = [NSProcessInfo processInfo].processName;
         if (![procName isEqualToString:@"SpringBoard"]) return;
-        NSLog(@"[SN3] v2.04 minimal tweak loaded in SpringBoard");
+        NSLog(@"[SN3] v2.05 loaded in SpringBoard");
         dispatch_async(dispatch_get_main_queue(), ^{
             @try {
                 xz_init();

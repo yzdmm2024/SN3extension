@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 2.04
+Version: 2.05
 Architecture: iphoneos-arm64
-Description: [v2.04] 极简版 - 截屏弹窗检测，定位崩溃问题
+Description: [v2.05] 截屏浮动菜单(OCR/翻译/AI/长截图/保存/复制/分享/悬浮贴图)
 Depends: mobilesubstrate, firmware(>=14.0)
 Maintainer: yzdmm2024
 Author: yzdmm2024
