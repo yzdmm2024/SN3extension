@@ -16,6 +16,8 @@ jobs:
           brew install ldid dpkg xz perl || true
 
       - name: Install Theos
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git clone --depth=1 https://github.com/theos/theos.git $HOME/theos
           # Download iOS 14.5 SDK for compatibility
