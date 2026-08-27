@@ -20,7 +20,9 @@ Snapper3ZhExt_FILES = Tweak.xm \
     src/AskAIEngine.m \
     src/AIChatWindow.m \
     src/ResultWindow.m \
-    src/Common.m
+    src/Common.m \
+    src/FloatingMenu.m \
+    src/ImageUtils.m
 Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision Photos
 Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Isrc
 

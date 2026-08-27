@@ -1,9 +1,9 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 1.1.7-1
+Version: 2.0.0-1
 Architecture: iphoneos-arm64
-Description: [修复面板空白 v2] Snapper3 功能扩展（中文优化）。功能：本地中文OCR(点框复制) / 翻译(多目标语言) / 长截图(预览保存,可调参数) / 问AI(多轮对话)。1.1.7 修复：改用 KVC 调用 PSListController 的 setSpecifiers: 方法，比直接操作 ivar 更可靠。
-Depends: mobilesubstrate, preferenceloader, firmware(>=14.0)
+Description: [v2.0.0] 独立插件：截屏弹出浮动菜单，OCR/翻译/AI/长截图/自由截图/保存/复制/分享/悬浮贴图
+Depends: mobilesubstrate, firmware(>=14.0)
 Maintainer: yzdmm2024
 Author: yzdmm2024
 Section: Tweaks
