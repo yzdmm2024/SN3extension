@@ -30,8 +30,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           export THEOS=$HOME/theos
-          # Re-download SDK
-          gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp
+          # Re-download SDK (overwrite if exists)
+          gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp --clobber
           mkdir -p $THEOS/sdks
           tar -xJf /tmp/iPhoneOS14.5.sdk.tar.xz -C $THEOS/sdks/
           # Create symlink for compatibility with Makefile's TARGET
