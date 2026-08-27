@@ -20,7 +20,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git clone --depth=1 https://github.com/theos/theos.git $HOME/theos
-          $HOME/theos/bin/update-theos
+          export THEOS=$HOME/theos
+          $THEOS/bin/update-theos
           # Download iOS 14.5 SDK for compatibility
           mkdir -p $HOME/theos/sdks
           gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp
