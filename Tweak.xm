@@ -87,11 +87,17 @@ static void xz_init() {
 
 // 构造函数
 __attribute__((constructor)) static void xz_ctor() {
-    // 仅 SpringBoard 中初始化，防止后台进程崩溃进安全模式
-    NSString *procName = [NSProcessInfo processInfo].processName;
-    if (![procName isEqualToString:@"SpringBoard"]) return;
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        xz_init();
-    });
+    @autoreleasepool {
+        // 仅 SpringBoard 中初始化
+        NSString *procName = [NSProcessInfo processInfo].processName;
+        if (![procName isEqualToString:@"SpringBoard"]) return;
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try {
+                xz_init();
+            } @catch (NSException *e) {
+                NSLog(@"[SN3] init crashed: %@ %@", e.name, e.reason);
+            }
+        });
+    }
 }

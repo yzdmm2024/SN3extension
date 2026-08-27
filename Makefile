@@ -23,8 +23,8 @@ Snapper3ZhExt_FILES = Tweak.xm \
     src/Common.m \
     src/FloatingMenu.m \
     src/ImageUtils.m
-Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision Photos
+Snapper3ZhExt_FRAMEWORKS = UIKit Foundation
+Snapper3ZhExt_WEAK_FRAMEWORKS = Vision Photos
 Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Isrc
-Snapper3ZhExt_FILTER = com.apple.springboard
 
 include $(THEOS_MAKE_PATH)/tweak.mk
