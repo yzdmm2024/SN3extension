@@ -75,6 +75,7 @@ jobs:
           echo "=== Stage layout ==="
           find stage -type f
 
+          mkdir -p packages
           dpkg-deb --root-owner-group -b stage packages/com.axs.snapper3zhext_${VERSION}_iphoneos-arm64.deb
           echo "=== Deb package ==="
           ls -la packages/
