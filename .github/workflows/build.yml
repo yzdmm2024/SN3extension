@@ -13,16 +13,17 @@ jobs:
 
       - name: Install Theos dependencies
         run: |
-          brew install ldid dpkg xz || true
+          brew install ldid dpkg xz perl || true
+          sudo cpan -i IPC::Run || true
 
       - name: Install Theos
         run: |
           git clone --depth=1 https://github.com/theos/theos.git $HOME/theos
-          # Theos on macOS-14 will use Xcode's bundled SDK
 
       - name: Build package
         run: |
           export THEOS=$HOME/theos
+          export PATH=$THEOS/vendor/dm.pl:$PATH
           make clean
           make package
 
