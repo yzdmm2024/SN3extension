@@ -2,7 +2,7 @@ Package: com.axs.snapper3zhext
 Name: SN3延伸板
 Version: 1.1.6-1
 Architecture: iphoneos-arm64
-Description: [Frida 调试] Snapper3 功能扩展（中文优化）。功能：本地中文OCR(点框复制) / 翻译(多目标语言) / 长截图(预览保存,可调参数) / 问AI(多轮对话)。1.1.6 添加 Frida 调试脚本，定位面板空白问题。
+Description: [修复面板空白] Snapper3 功能扩展（中文优化）。功能：本地中文OCR(点框复制) / 翻译(多目标语言) / 长截图(预览保存,可调参数) / 问AI(多轮对话)。1.1.6 修复：PSListController 内部用 _specifiers ivar 驱动 tableView，需同步设置父类 ivar 并 reloadSpecifiers。
 Depends: mobilesubstrate, preferenceloader, firmware(>=14.0)
 Maintainer: yzdmm2024
 Author: yzdmm2024
