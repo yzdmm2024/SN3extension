@@ -1,0 +1,39 @@
+name: build-sn3
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Theos dependencies
+        run: |
+          brew install ldid dpkg xz || true
+
+      - name: Install Theos
+        run: |
+          git clone --depth=1 https://github.com/theos/theos.git $HOME/theos
+          # Theos on macOS-14 will use Xcode's bundled SDK
+
+      - name: Build package
+        run: |
+          export THEOS=$HOME/theos
+          make clean
+          make package
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SN3extension-deb
+          path: packages/*.deb
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.deb
