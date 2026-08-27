@@ -30,19 +30,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           export THEOS=$HOME/theos
-          # Check if SDK was downloaded
-          ls -la $THEOS/sdks/
-          ls -la /tmp/iPhoneOS14.5.sdk.tar.xz 2>/dev/null || echo "SDK not found in /tmp"
-          # Force clean and rebuild
-          rm -rf "$THEOS/sdks/iPhoneOS14.5.sdk"
-          # Re-extract SDK
+          # Re-download SDK
           gh release download -R theos/sdks -p "iPhoneOS14.5.sdk.tar.xz" -D /tmp
           mkdir -p $THEOS/sdks
           tar -xJf /tmp/iPhoneOS14.5.sdk.tar.xz -C $THEOS/sdks/
+          # Create symlink for compatibility with Makefile's TARGET
+          ln -sf "$THEOS/sdks/iPhoneOS14.5.sdk" "$THEOS/sdks/iPhoneOS14.0.sdk"
           ls -la $THEOS/sdks/
           # Build
           rm -rf .theos
-          make TARGET="iphone:clang:14.0:14.5"
+          make
           echo "=== Build output ==="
           find .theos -type f 2>/dev/null | head -50
 
