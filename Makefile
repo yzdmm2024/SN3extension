@@ -26,5 +26,6 @@ SN3CCModule_FILES = src/SN3CCModule.m
 SN3CCModule_INSTALL_PATH = /Library/ControlCenter/Bundles
 SN3CCModule_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc
 SN3CCModule_FRAMEWORKS = UIKit Foundation
+SN3CCModule_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk
