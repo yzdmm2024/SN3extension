@@ -2,20 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>entry</key>
-    <dict>
-        <key>cell</key>
-        <string>PSLinkCell</string>
-        <key>label</key>
-        <string>SN3延伸板</string>
-        <key>icon</key>
-        <string>icon.png</string>
-        <key>isController</key>
-        <true/>
-    </dict>
-    <key>bundles</key>
-    <array>
-        <string>Snapper3ZhExtPrefs</string>
-    </array>
+	<key>entry</key>
+	<dict>
+		<key>bundle</key>
+		<string>Snapper3ZhExtPrefs</string>
+		<key>cell</key>
+		<string>PSLinkCell</string>
+		<key>detail</key>
+		<string>SN3PrefsController</string>
+		<key>isController</key>
+		<true/>
+		<key>icon</key>
+		<string>Snapper3ZhExtPrefs.bundle/icon.png</string>
+		<key>label</key>
+		<string>SN3延伸板</string>
+	</dict>
 </dict>
 </plist>

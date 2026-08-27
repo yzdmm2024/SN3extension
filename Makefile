@@ -21,9 +21,9 @@ BUNDLE_NAME = Snapper3ZhExtPrefs SN3CCModule
 
 Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.m
 Snapper3ZhExtPrefs_INSTALL_PATH = /Library/PreferenceBundles
-Snapper3ZhExtPrefs_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc
+Snapper3ZhExtPrefs_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc -Wno-deprecated-declarations
 Snapper3ZhExtPrefs_FRAMEWORKS = UIKit Foundation
-Snapper3ZhExtPrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
+Snapper3ZhExtPrefs_PRIVATE_FRAMEWORKS = Preferences
 
 SN3CCModule_FILES = src/SN3CCModule.m
 SN3CCModule_INSTALL_PATH = /Library/ControlCenter/Bundles
