@@ -17,8 +17,15 @@ Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-BUNDLE_NAME = Snapper3ZhExtPrefs
+BUNDLE_NAME = Snapper3ZhExtPrefs SN3CCModule
+
 Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.c
 Snapper3ZhExtPrefs_INSTALL_PATH = /Library/PreferenceBundles
+
+SN3CCModule_FILES = src/SN3CCModule.m
+SN3CCModule_INSTALL_PATH = /Library/ControlCenter/Bundles
+SN3CCModule_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc
+SN3CCModule_FRAMEWORKS = UIKit Foundation
+SN3CCModule_PRIVATE_FRAMEWORKS = ControlCenterUIKit
 
 include $(THEOS_MAKE_PATH)/bundle.mk

@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 2.08
+Version: 3.01
 Architecture: iphoneos-arm64
-Description: [v2.08] 修复设置面板(使用系统PSListController), 截屏浮动菜单
+Description: [v3.01] 大更新！新增控制中心截图模块，截屏浮动菜单
 Depends: mobilesubstrate, firmware(>=14.0)
 Maintainer: yzdmm2024
 Author: yzdmm2024

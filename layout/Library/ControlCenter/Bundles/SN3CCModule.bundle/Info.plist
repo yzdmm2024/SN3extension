@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>Chinese</string>
+    <key>CFBundleDisplayName</key>
+    <string>SN3截图</string>
+    <key>CFBundleExecutable</key>
+    <string>SN3CCModule</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.axs.snapper3zhext.ccmodule</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>SN3CCModule</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>MinimumOSVersion</key>
+    <string>14.0</string>
+    <key>NSPrincipalClass</key>
+    <string>SN3CCModule</string>
+    <key>CCSModuleSize</key>
+    <dict>
+        <key>Portrait</key>
+        <dict>
+            <key>Height</key>
+            <integer>1</integer>
+            <key>Width</key>
+            <integer>1</integer>
+        </dict>
+        <key>Landscape</key>
+        <dict>
+            <key>Height</key>
+            <integer>1</integer>
+            <key>Width</key>
+            <integer>1</integer>
+        </dict>
+    </dict>
+    <key>CCSGetModuleSizeAtRuntime</key>
+    <false/>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>iPhoneOS</string>
+    </array>
+    <key>UIDeviceFamily</key>
+    <array>
+        <integer>1</integer>
+    </array>
+</dict>
+</plist>
