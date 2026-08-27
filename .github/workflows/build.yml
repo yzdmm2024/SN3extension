@@ -22,6 +22,8 @@ jobs:
       - name: Build with Theos
         run: |
           export THEOS=$HOME/theos
+          # Override SDK to use Xcode's built-in SDK
+          export TARGET="iphone:clang:14.0:latest"
           make clean
           make
           echo "=== Build output ==="
