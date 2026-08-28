@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.10
+Version: 3.11
 Architecture: iphoneos-arm64
-Description: [v3.10] 修控制中心点按无反应:浮动菜单/裁剪/悬浮窗创建UIWindow时挂载windowScene(iOS13+不挂则不显示);截屏改优先UIGetScreenImage抓真实整屏
+Description: [v3.11] 控制中心点按→2图标选择器(长截图/自由截图);自由截图改交互裁剪(手绘/拖动/缩放);裁完弹一行操作栏(OCR/翻译/问AI/保存/复制/分享/悬浮贴图);编入VisionOCR(离线OCR)/TranslateEngine/AskAIEngine/LongShotController，修复"模块未加载"
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

@@ -23,7 +23,7 @@ static void xz_showMenu(void) {
     @try {
         UIImage *screenshot = [ImageUtils captureScreen];
         if (screenshot) {
-            [FloatingMenu showWithImage:screenshot];
+            [FloatingMenu showChooser:screenshot];
         }
     } @catch (NSException *e) {
         NSLog(@"[SN3] showMenu crashed: %@ %@", e.name, e.reason);

@@ -10,8 +10,12 @@ TWEAK_NAME = Snapper3ZhExt
 Snapper3ZhExt_FILES = Tweak.xm \
     src/Common.m \
     src/FloatingMenu.m \
-    src/ImageUtils.m
-Snapper3ZhExt_FRAMEWORKS = UIKit Foundation
+    src/ImageUtils.m \
+    src/VisionOCR.m \
+    src/TranslateEngine.m \
+    src/AskAIEngine.m \
+    src/LongShotController.m
+Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision
 Snapper3ZhExt_WEAK_FRAMEWORKS = Photos
 Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Isrc
 

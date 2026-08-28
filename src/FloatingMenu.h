@@ -6,10 +6,10 @@
 
 @interface FloatingMenu : NSObject
 
-// 显示浮动菜单（传入截屏图片）
-+ (void)showWithImage:(UIImage *)screenshot;
+// 显示选择器（传入截屏图片）：长截图 / 自由截图 两个图标
++ (void)showChooser:(UIImage *)screenshot;
 
-// 关闭菜单
-+ (void)dismiss;
+// 关闭所有 SN3 窗口
++ (void)dismissAll;
 
 @end
