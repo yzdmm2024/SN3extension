@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.08
+Version: 3.09
 Architecture: iphoneos-arm64
-Description: [v3.08] 修复设置面板空白(控制器去掉与父类冲突的_specifiers ivar重声明, 用标准theos懒加载getter); 控制中心模块安全模式已修(3.07); 截屏浮动菜单+总开关
+Description: [v3.09] 控制中心图标修复(覆盖glyphImageForState:+SF Symbol/CoreGraphics兜底, 解决iconGlyph只读导致空白/点不动); 设置面板空白已修(3.08); 截屏浮动菜单+总开关
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
