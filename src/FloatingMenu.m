@@ -58,7 +58,11 @@ typedef NS_ENUM(NSUInteger, XZRowAction) {
 
 #pragma mark - 自由截图状态（拖动暂存）
 
+// cropPan 模式：1=手绘, 2=移动, 3=4角缩放
+static NSInteger _cropMode = 0;
 static CGPoint _cropStart = {0, 0};
+static CGPoint _cropGrab = {0, 0};
+static NSInteger _cropCorner = 0;   // 0=左上 1=右上 2=左下 3=右下
 
 @implementation FloatingMenu
 
@@ -94,30 +98,24 @@ static UIImage *_currentImage;
     _currentImage = screenshot;
     [self dismissAll];
 
-    // v3.15 极简：无标题、无文字、无卡片外框，只有 2 个图标浮在屏幕底部
-    UIWindow *win = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    win.windowLevel = UIWindowLevelAlert + 100;
-    win.backgroundColor = [UIColor clearColor];
-    win.userInteractionEnabled = YES;
-    if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
-
     CGRect scr = UIScreen.mainScreen.bounds;
+    // v3.16：3 个图标——自由截图 / 整屏截图（类似 iOS 系统截图）/ 关闭
+    NSArray *acts = @[
+        @{@"img":@"freecut",  @"tag":@0},
+        @{@"icon":@"iphone.gen3",  @"tag":@1},
+        @{@"icon":@"xmark",   @"tag":@2},
+    ];
     CGFloat iconS = 46;
-    CGFloat gap = 30;
-    CGFloat totalW = iconS * 2 + gap;
+    CGFloat gap = 28;
+    CGFloat totalW = iconS * acts.count + gap * (acts.count - 1);
     CGFloat startX = (scr.size.width - totalW) / 2;
     CGFloat y = scr.size.height - iconS - 130;
 
-    NSArray *acts = @[
-        @{@"img":@"longshot", @"tag":@0},
-        @{@"img":@"freecut",  @"tag":@1},
-    ];
     for (NSInteger i = 0; i < acts.count; i++) {
         NSDictionary *a = acts[i];
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
         b.frame = CGRectMake(startX + i * (iconS + gap), y, iconS, iconS);
         b.tag = [a[@"tag"] integerValue];
-        // 半透明圆底（无文字、无外框），图标可辨
         b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
         b.layer.cornerRadius = iconS / 2;
         b.layer.shadowColor = [UIColor blackColor].CGColor;
@@ -127,7 +125,8 @@ static UIImage *_currentImage;
         [win addSubview:b];
 
         UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectInset(b.bounds, 7, 7)];
-        iv.image = [self _iconNamed:a[@"img"]];
+        NSString *key = a[@"img"] ?: a[@"icon"];
+        iv.image = [self _iconNamed:key];
         iv.tintColor = [UIColor whiteColor];
         iv.contentMode = UIViewContentModeScaleAspectFit;
         iv.userInteractionEnabled = NO;
@@ -151,16 +150,17 @@ static UIImage *_currentImage;
 }
 
 + (void)chooseTapped:(UIButton *)sender {
+    UIImage *img = _currentImage;
     [self dismissAll];
     if (sender.tag == 0) {
-        // 长截图：真正的「滚动拼接」。SB 进程拿不到前台 App 的 scrollview，
-        // 发 darwin 通知让前台 App 进程执行滚动拼接（LongShotController）。
-        // SB 收到 cc.longshot 后会给用户即时提示。
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-            CFSTR("com.axs.snapper3zhext.cc.longshot"), NULL, NULL, TRUE);
+        // 自由截图：冻结画面 + 框选（拖动/4角缩放）+ 两排功能按钮
+        if (img) [self doFreeCrop:img];
+    } else if (sender.tag == 1) {
+        // 整屏截图（iOS 系统截图风格）：截屏 + 保存相册 + 复制剪贴板
+        if (img) [self doRegularCapture:img];
     } else {
-        // 自由截图：控制中心已收起，直接进冻结画面手绘框选
-        [self doFreeCrop:_currentImage];
+        // 关闭
+        // dismissAll 已调
     }
 }
 
@@ -384,50 +384,54 @@ static UIImage *_currentImage;
     win.userInteractionEnabled = YES;
     if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
 
-    // 冻结画面：截图铺满全屏（截图尺寸=屏幕尺寸，ScaleToFill 无变形、无黑边）
+    // 冻结画面：截图全屏铺满
     UIImageView *iv = [[UIImageView alloc] initWithFrame:win.bounds];
     iv.image = image;
     iv.contentMode = UIViewContentModeScaleToFill;
     iv.userInteractionEnabled = YES;
     [win addSubview:iv];
 
-    // 初始无选区框（手绘才出现）
-    UIView *box = [[UIView alloc] initWithFrame:CGRectZero];
+    CGRect scr = win.bounds;
+    // 默认选区：屏幕 82% × 62% 居中（偏上给下方工具栏留空间）
+    CGFloat boxW = scr.size.width * 0.82;
+    CGFloat boxH = scr.size.height * 0.62;
+    CGFloat boxX = (scr.size.width - boxW) / 2;
+    CGFloat boxY = (scr.size.height - boxH) / 2 - 50;
+
+    UIView *box = [[UIView alloc] initWithFrame:CGRectMake(boxX, boxY, boxW, boxH)];
     box.layer.borderColor = [UIColor systemYellowColor].CGColor;
     box.layer.borderWidth = 2;
-    box.layer.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06].CGColor;
-    box.userInteractionEnabled = NO;
+    box.layer.backgroundColor = [UIColor colorWithWhite:0 alpha:0.12].CGColor;
     [iv addSubview:box];
 
-    // 手绘框选手势（松手自动裁剪）
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(cropPan:)];
-    [iv addGestureRecognizer:pan];
+    // 4 角调整点（黄圆白边）
+    UIView *hTL = [self _cornerAt:CGPointMake(boxX, boxY)];
+    UIView *hTR = [self _cornerAt:CGPointMake(boxX+boxW, boxY)];
+    UIView *hBL = [self _cornerAt:CGPointMake(boxX, boxY+boxH)];
+    UIView *hBR = [self _cornerAt:CGPointMake(boxX+boxW, boxY+boxH)];
+    [iv addSubview:hTL]; [iv addSubview:hTR]; [iv addSubview:hBL]; [iv addSubview:hBR];
+
+    // 统一手势：iv 上一个 pan 处理 draw/move/resize 三种模式
+    UIPanGestureRecognizer *ivPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(cropPan:)];
+    [iv addGestureRecognizer:ivPan];
 
     objc_setAssociatedObject(win, "cropIV", iv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(win, "cropBox", box, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(win, "cropImage", image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(win, "cropCorners", @[hTL, hTR, hBL, hBR], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    // 顶部提示条（不拦截触摸）
-    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(0, 54, win.bounds.size.width, 24)];
-    tip.text = @"在画面上拖动框选区域";
-    tip.textColor = [UIColor whiteColor];
-    tip.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    tip.textAlignment = NSTextAlignmentCenter;
-    tip.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
-    tip.layer.cornerRadius = 12;
-    tip.clipsToBounds = YES;
-    tip.userInteractionEnabled = NO;
-    [win addSubview:tip];
-
-    // 右上角小关闭按钮
+    // 顶部 X 关闭
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(win.bounds.size.width - 44, 40, 34, 34);
+    close.frame = CGRectMake(16, 50, 36, 36);
     [close setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
     close.tintColor = [UIColor whiteColor];
-    close.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
-    close.layer.cornerRadius = 17;
+    close.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+    close.layer.cornerRadius = 18;
     [close addTarget:self action:@selector(dismissAll) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:close];
+
+    // 两排功能按钮（在 box 下方，紧贴；空间不够则放框上方）
+    [self _installToolbarsForBox:box inContainer:iv];
 
     _cropWindow = win;
     win.hidden = NO;
@@ -443,44 +447,65 @@ static UIImage *_currentImage;
     UIView *box = objc_getAssociatedObject(_cropWindow, "cropBox");
     if (!box) return;
     CGPoint loc = [pan locationInView:iv];
+    CGRect bf = box.frame;
+    CGRect b = iv.bounds;
 
-    // v3.15：纯手绘——从按下位置拖出矩形，松手即自动裁剪弹操作行
+    // v3.16：单 pan 多模式——框外点=重选, 框内点=移动, 4 角=缩放
     if (pan.state == UIGestureRecognizerStateBegan) {
-        _cropStart = loc;
-        box.frame = CGRectMake(loc.x, loc.y, 0, 0);
-    } else if (pan.state == UIGestureRecognizerStateChanged) {
-        CGRect b = iv.bounds;
-        CGFloat x = MIN(_cropStart.x, loc.x);
-        CGFloat y = MIN(_cropStart.y, loc.y);
-        CGFloat w = fabs(loc.x - _cropStart.x);
-        CGFloat h = fabs(loc.y - _cropStart.y);
-        box.frame = CGRectMake(MAX(0, x), MAX(0, y), MIN(w, b.size.width), MIN(h, b.size.height));
-    } else if (pan.state == UIGestureRecognizerStateEnded) {
-        [self clampBox:box inView:iv];
-        // 松手：框有效则自动完成（不再需要点「裁剪并继续」）
-        if (box.frame.size.width >= 8 && box.frame.size.height >= 8) {
-            [self cropConfirm:nil];
+        CGFloat cornerR = 36;   // 4 角判定距离
+        BOOL inBox = CGRectContainsPoint(bf, loc);
+        if (!inBox && bf.size.width > 30 && bf.size.height > 30) {
+            // 框外 → 判断是 4 角还是空白
+            NSArray *corners = objc_getAssociatedObject(_cropWindow, "cropCorners");
+            __block NSInteger which = -1;
+            __block CGFloat minD = cornerR;
+            for (NSInteger i = 0; i < (NSInteger)corners.count; i++) {
+                UIView *h = corners[i];
+                CGFloat d = hypot(loc.x - h.center.x, loc.y - h.center.y);
+                if (d < minD) { minD = d; which = i; }
+            }
+            if (which >= 0) {
+                _cropMode = 3; _cropCorner = which; _cropStart = loc;  // resize
+            } else {
+                _cropMode = 1; _cropStart = loc;                       // 重画
+                box.frame = CGRectMake(loc.x, loc.y, 0, 0);
+            }
+        } else if (inBox) {
+            _cropMode = 2;                                            // 移动
+            _cropGrab = CGPointMake(loc.x - bf.origin.x, loc.y - bf.origin.y);
         } else {
-            box.frame = CGRectZero;  // 太小当作没选，回到无框状态
+            _cropMode = 1; _cropStart = loc;                            // 初始没选区 → 画
+            box.frame = CGRectMake(loc.x, loc.y, 0, 0);
         }
-    }
-}
-
-+ (void)cropResize:(UIPanGestureRecognizer *)pan {
-    UIView *handle = (UIView *)pan.view;
-    UIView *box = handle.superview;
-    UIImageView *iv = (UIImageView *)box.superview;
-    if (!box || !iv) return;
-    CGPoint loc = [pan locationInView:iv];
-
-    if (pan.state == UIGestureRecognizerStateChanged || pan.state == UIGestureRecognizerStateBegan) {
-        CGFloat w = MAX(30, loc.x - box.frame.origin.x);
-        CGFloat h = MAX(30, loc.y - box.frame.origin.y);
-        w = MIN(w, iv.bounds.size.width - box.frame.origin.x);
-        h = MIN(h, iv.bounds.size.height - box.frame.origin.y);
-        box.frame = CGRectMake(box.frame.origin.x, box.frame.origin.y, w, h);
+    } else if (pan.state == UIGestureRecognizerStateChanged) {
+        if (_cropMode == 1) {
+            CGFloat x = MIN(_cropStart.x, loc.x);
+            CGFloat y = MIN(_cropStart.y, loc.y);
+            CGFloat w = fabs(loc.x - _cropStart.x);
+            CGFloat h = fabs(loc.y - _cropStart.y);
+            box.frame = CGRectMake(MAX(0, x), MAX(0, y), MIN(w, b.size.width), MIN(h, b.size.height));
+            [self _updateCornersForBox:box];
+        } else if (_cropMode == 2) {
+            CGFloat x = loc.x - _cropGrab.x;
+            CGFloat y = loc.y - _cropGrab.y;
+            x = MAX(0, MIN(x, b.size.width - bf.size.width));
+            y = MAX(0, MIN(y, b.size.height - bf.size.height));
+            box.frame = CGRectMake(x, y, bf.size.width, bf.size.height);
+            [self _updateCornersForBox:box];
+        } else if (_cropMode == 3) {
+            CGFloat minS = 30;
+            CGFloat x0 = bf.origin.x, y0 = bf.origin.y, x1 = CGRectGetMaxX(bf), y1 = CGRectGetMaxY(bf);
+            if (_cropCorner == 0)      { x0 = MIN(loc.x, x1 - minS); y0 = MIN(loc.y, y1 - minS); }
+            else if (_cropCorner == 1) { x1 = MAX(loc.x, x0 + minS); y0 = MIN(loc.y, y1 - minS); }
+            else if (_cropCorner == 2) { x0 = MIN(loc.x, x1 - minS); y1 = MAX(loc.y, y0 + minS); }
+            else                       { x1 = MAX(loc.x, x0 + minS); y1 = MAX(loc.y, y0 + minS); }
+            box.frame = CGRectMake(MAX(0,x0), MAX(0,y0), MIN(x1-x0, b.size.width), MIN(y1-y0, b.size.height));
+            [self _updateCornersForBox:box];
+        }
     } else if (pan.state == UIGestureRecognizerStateEnded) {
         [self clampBox:box inView:iv];
+        [self _updateCornersForBox:box];
+        _cropMode = 0;
     }
 }
 
@@ -523,6 +548,184 @@ static UIImage *_currentImage;
     } @catch (NSException *e) {
         NSLog(@"[SN3] cropConfirm crashed: %@ %@", e.name, e.reason);
         [self dismissAll];
+    }
+}
+
+#pragma mark - v3.16: 4 角点 + 双排工具栏 + 整屏截图
+
+// 4 角调整点（黄圆白边）
++ (UIView *)_cornerAt:(CGPoint)center {
+    UIView *h = [[UIView alloc] initWithFrame:CGRectMake(center.x - 11, center.y - 11, 22, 22)];
+    h.backgroundColor = [UIColor systemYellowColor];
+    h.layer.cornerRadius = 11;
+    h.layer.borderColor = [UIColor whiteColor].CGColor;
+    h.layer.borderWidth = 2;
+    h.userInteractionEnabled = NO;
+    return h;
+}
+
++ (void)_updateCornersForBox:(UIView *)box {
+    if (!_cropWindow) return;
+    NSArray *corners = objc_getAssociatedObject(_cropWindow, "cropCorners");
+    if (corners.count != 4) return;
+    CGRect b = box.frame;
+    ((UIView *)corners[0]).center = CGPointMake(b.origin.x, b.origin.y);
+    ((UIView *)corners[1]).center = CGPointMake(CGRectGetMaxX(b), b.origin.y);
+    ((UIView *)corners[2]).center = CGPointMake(b.origin.x, CGRectGetMaxY(b));
+    ((UIView *)corners[3]).center = CGPointMake(CGRectGetMaxX(b), CGRectGetMaxY(b));
+}
+
+// 安装两排工具栏（4+3 布局，OCR/翻译/复制/贴图 / 保存/分享/更多），紧贴 box 下方
++ (void)_installToolbarsForBox:(UIView *)box inContainer:(UIView *)iv {
+    CGRect b = box.frame;
+    CGRect scr = UIScreen.mainScreen.bounds;
+    CGFloat bw = 56, bh = 70, gap = 12;
+    CGFloat row1W = 4*bw + 3*gap;
+    CGFloat row2W = 3*bw + 2*gap;
+    CGFloat y1 = CGRectGetMaxY(b) + 24;
+    CGFloat y2 = y1 + bh + 14;
+    if (y2 + bh > scr.size.height - 20) {
+        // 空间不够放框上方
+        y1 = b.origin.y - 2*bh - 14 - 24;
+        y2 = y1 + bh + 14;
+    }
+
+    NSArray *row1 = @[
+        @{@"icon":@"text.viewfinder",      @"label":@"OCR",   @"color":@0x007AFF, @"tag":@1},
+        @{@"icon":@"translate",            @"label":@"翻译", @"color":@0x34C759, @"tag":@2},
+        @{@"icon":@"doc.on.doc",           @"label":@"复制", @"color":@0x4CD964, @"tag":@3},
+        @{@"icon":@"pin",                  @"label":@"贴图", @"color":@0xFF9500, @"tag":@4},
+    ];
+    NSArray *row2 = @[
+        @{@"icon":@"square.and.arrow.down",@"label":@"保存", @"color":@0x5AC8FA, @"tag":@5},
+        @{@"icon":@"square.and.arrow.up",  @"label":@"分享", @"color":@0x007AFF, @"tag":@6},
+        @{@"icon":@"ellipsis",             @"label":@"更多", @"color":@0x8E8E93, @"tag":@7},
+    ];
+
+    CGFloat x1 = (scr.size.width - row1W) / 2;
+    for (NSInteger i = 0; i < row1.count; i++) {
+        NSDictionary *a = row1[i];
+        UIButton *btn = [self _makeToolButton:a];
+        btn.frame = CGRectMake(x1 + i*(bw+gap), y1, bw, bh);
+        [iv addSubview:btn];
+    }
+    CGFloat x2 = (scr.size.width - row2W) / 2;
+    for (NSInteger i = 0; i < row2.count; i++) {
+        NSDictionary *a = row2[i];
+        UIButton *btn = [self _makeToolButton:a];
+        btn.frame = CGRectMake(x2 + i*(bw+gap), y2, bw, bh);
+        [iv addSubview:btn];
+    }
+}
+
++ (UIButton *)_makeToolButton:(NSDictionary *)a {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.tag = [a[@"tag"] integerValue];
+    b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+    b.layer.cornerRadius = 14;
+    [b addTarget:self action:@selector(toolTapped:) forControlEvents:UIControlEventTouchUpInside];
+
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((56-26)/2, 8, 26, 26)];
+    iv.image = [UIImage systemImageNamed:a[@"icon"]];
+    iv.tintColor = [self _colorFromHex:[a[@"color"] unsignedIntegerValue]];
+    iv.contentMode = UIViewContentModeScaleAspectFit;
+    iv.userInteractionEnabled = NO;
+    [b addSubview:iv];
+
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 40, 56, 18)];
+    lb.text = a[@"label"];
+    lb.textColor = [UIColor whiteColor];
+    lb.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    lb.textAlignment = NSTextAlignmentCenter;
+    lb.userInteractionEnabled = NO;
+    [b addSubview:lb];
+    return b;
+}
+
+// 工具按钮点击：按选区裁剪后分发给对应功能
++ (void)toolTapped:(UIButton *)btn {
+    if (!_cropWindow) return;
+    UIImageView *iv = objc_getAssociatedObject(_cropWindow, "cropIV");
+    UIView *box = objc_getAssociatedObject(_cropWindow, "cropBox");
+    UIImage *image = objc_getAssociatedObject(_cropWindow, "cropImage");
+    if (!iv || !box || !image) return;
+
+    CGRect boxInIV = box.frame;
+    if (boxInIV.size.width < 4 || boxInIV.size.height < 4) {
+        [Common toast:@"请先框选区域"]; return;
+    }
+    CGFloat sx = image.size.width / MAX(1, iv.bounds.size.width);
+    CGFloat sy = image.size.height / MAX(1, iv.bounds.size.height);
+    CGRect cropRect = CGRectMake(boxInIV.origin.x*sx, boxInIV.origin.y*sy,
+                                 boxInIV.size.width*sx, boxInIV.size.height*sy);
+    cropRect = CGRectIntersection(cropRect, CGRectMake(0, 0, image.size.width, image.size.height));
+    if (cropRect.size.width < 4 || cropRect.size.height < 4) {
+        [Common toast:@"选区太小"]; return;
+    }
+    if (!image.CGImage) { [Common toast:@"裁剪失败"]; return; }
+    CGImageRef cg = CGImageCreateWithImageInRect(image.CGImage, cropRect);
+    if (!cg) { [Common toast:@"裁剪失败"]; return; }
+    UIImage *cropped = [UIImage imageWithCGImage:cg scale:image.scale orientation:image.imageOrientation];
+    CGImageRelease(cg);
+    _currentImage = cropped;
+
+    switch (btn.tag) {
+        case 1: [self doOCR:cropped];       break;
+        case 2: [self doTranslate:cropped]; break;
+        case 3: [self doCopy:cropped];      break;
+        case 4: [self doFloating:cropped];  break;
+        case 5: [self doSaveAlbum:cropped]; break;
+        case 6: [self doShare:cropped];     break;
+        case 7: [self showMoreMenuForImage:cropped]; break;
+    }
+}
+
+// 「更多」弹窗：问AI / 重选区域
++ (void)showMoreMenuForImage:(UIImage *)image {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"更多功能" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    [ac addAction:[UIAlertAction actionWithTitle:@"问AI" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [self doAskAI:image];
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"重选区域" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        // 拿原图重进 doFreeCrop
+        if (_cropWindow) {
+            UIImage *orig = objc_getAssociatedObject(_cropWindow, "cropImage");
+            if (orig) {
+                [self dismissAll];
+                [self doFreeCrop:orig];
+            }
+        }
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+
+    UIWindow *keyWin = [Common topWindow];
+    UIViewController *root = keyWin.rootViewController;
+    while (root.presentedViewController) root = root.presentedViewController;
+    if (root) {
+        [root presentViewController:ac animated:YES completion:nil];
+    } else {
+        // 兜底：toast 提示
+        [Common toast:@"问AI/重选：请在 App 内操作"];
+    }
+}
+
+// 整屏截图（iOS 系统截图风格）：保存到相册 + 复制到剪贴板
++ (void)doRegularCapture:(UIImage *)image {
+    if (!image) return;
+    [UIPasteboard generalPasteboard].image = image;
+
+    Class imgUtils = NSClassFromString(@"ImageUtils");
+    SEL sel = @selector(saveToCustomAlbum:completion:);
+    if (imgUtils && [imgUtils respondsToSelector:sel]) {
+        void (*func)(id, SEL, UIImage*, void(^)(BOOL, NSError*)) =
+            (void(*)(id, SEL, UIImage*, void(^)(BOOL, NSError*)))[imgUtils methodForSelector:sel];
+        func(imgUtils, sel, image, ^(BOOL success, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [Common toast:success ? @"已保存+已复制" : @"已复制（保存失败）"];
+            });
+        });
+    } else {
+        [Common toast:@"已复制到剪贴板"];
     }
 }
 
