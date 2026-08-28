@@ -29,8 +29,18 @@
 - (UIImage *)glyphImageForState:(UIControlState)state;
 @end
 
-// 保证返回一个非空图标：SF Symbol 优先，失败则用 Core Graphics 画一个蓝色圆底相机。
+// 图标加载：优先用用户提供的模板 PNG（"/var/jb/Library/Snapper3ZhExt.bundle/Resources/icon.png"），
+// 失败则用 SF Symbol 兜底，再失败则 Core Graphics 现场画一个蓝底相机。
 static UIImage *SN3GlyphImage(void) {
+    // 用户提供的模板图（黑前景 + 透明背景，可被 tintColor 染色）
+    NSString *bundlePath = @"/var/jb/Library/Snapper3ZhExt.bundle";
+    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+    if (bundle) {
+        UIImage *custom = [UIImage imageNamed:@"icon" inBundle:bundle compatibleWithTraitCollection:nil];
+        if (custom) {
+            return [custom imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        }
+    }
     UIImage *g = [UIImage systemImageNamed:@"camera.viewfinder"];
     if (g) return g;
     g = [UIImage systemImageNamed:@"camera.fill"];

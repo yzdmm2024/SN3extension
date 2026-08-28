@@ -186,7 +186,12 @@
     // 拖拽
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panFloating:)];
     [win addGestureRecognizer:pan];
-    
+
+    // 双击退出（与 FloatingMenu.doFloating 保持一致）
+    UITapGestureRecognizer *dt = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissFloating:)];
+    dt.numberOfTapsRequired = 2;
+    [win addGestureRecognizer:dt];
+
     return win;
 }
 
