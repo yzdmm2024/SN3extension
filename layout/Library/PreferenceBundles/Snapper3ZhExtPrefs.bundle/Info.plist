@@ -2,21 +2,23 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>Chinese</string>
-    <key>CFBundleExecutable</key>
-    <string>Snapper3ZhExtPrefs</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.axs.snapper3zhext.prefs</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundlePackageType</key>
-    <string>BNDL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>NSPrincipalClass</key>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>Chinese</string>
+	<key>CFBundleDisplayName</key>
+	<string>超级截图</string>
+	<key>CFBundleExecutable</key>
+	<string>Snapper3ZhExtPrefs</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.axs.snapper3zhext.prefs</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSPrincipalClass</key>
 	<string>SN3PrefsController</string>
 </dict>
 </plist>
