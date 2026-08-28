@@ -1,6 +1,6 @@
 //
 //  SuperTools.h — 窗口B 全部按钮的底层实现
-//  只使用 iOS 16 系统自带框架：Vision / PencilKit / PDFKit / Photos / CoreGraphics / UIKit
+//  只使用 iOS 16 系统自带框架：Vision / PDFKit / Photos / CoreGraphics / UIKit / CommonCrypto
 //  不引入任何第三方库。
 //
 
@@ -19,7 +19,7 @@
 // 2. 翻译：OCR 取文 → 网络翻译接口 → src=原文 dst=译文
 + (void)translate:(UIImage *)image completion:(void (^)(NSString *src, NSString *dst))completion;
 
-// 3. 画图：PencilKit 画板（画笔/箭头/矩形/文字/色块涂抹入口），edited=nil 表示取消
+// 3. 画图：自绘 CoreGraphics 画板（画笔/马克笔/橡皮/换色/撤销），edited=nil 表示取消
 + (void)draw:(UIImage *)image completion:(void (^)(UIImage *edited))completion;
 
 // 4. 识码：Vision 识别 QR / 条码，返回 payload 文本
@@ -41,6 +41,9 @@
 
 // 9. 分享：原生 UIActivityViewController
 + (void)share:(UIImage *)image fromWindow:(UIWindow *)win;
+
+// 9b. 加手机壳：给截图套一个 iPhone 外壳边框
++ (UIImage *)phoneCase:(UIImage *)image;
 
 #pragma mark 「更多」二级
 
