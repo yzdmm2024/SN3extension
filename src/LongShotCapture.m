@@ -202,6 +202,42 @@ static LongShotCapture *_shared = nil;
     return [self appendFrame:frame overlapPx:overlapPx];
 }
 
+// v5.3：精确模式入帧（重叠由 App 真实滚动增量算出，不靠 SAD 猜测）。
+- (BOOL)addExactFrame:(UIImage *)frame overlapPoints:(CGFloat)overlapPoints {
+    if (!frame || !frame.CGImage) return NO;
+
+    if (_frames.count == 0) {
+        [_frames addObject:frame];
+        [_overlaps addObject:@(0.0)];
+        _emaOverlap = (CGFloat)NAN;
+        _skipStreak = 0;
+        _lastMAD = 1e9f;
+        [self recomputeEstimatedHeight];
+        return YES;
+    }
+
+    UIImage *last = _frames.lastObject;
+    CGFloat lastHpts = last.size.height;
+    if (lastHpts < 1) {
+        CGFloat px = last.CGImage ? (CGFloat)CGImageGetHeight(last.CGImage) : 0;
+        CGFloat sc = [UIScreen mainScreen].scale; if (sc <= 0) sc = 2.0;
+        lastHpts = px / sc;
+    }
+    CGFloat regionH = lastHpts;                 // 与上一帧同高（采集区域固定）
+
+    CGFloat ov = overlapPoints;
+    if (ov < 2.0f) ov = 2.0f;                   // 极小重叠，防缝隙
+    if (ov >= regionH * 0.97f) {                // 几乎整帧重合 = 没滚 = 重复
+        NSLog(@"[SN3] 精确帧重叠 %.1f%%≈整帧，丢弃", ov / regionH * 100.0);
+        return NO;
+    }
+    [_frames addObject:frame];
+    [_overlaps addObject:@(ov)];
+    [self recomputeEstimatedHeight];
+    NSLog(@"[SN3] 精确帧：滚动增量=%.1fpt → 重叠=%.1fpt", regionH - overlapPoints, ov);
+    return YES;
+}
+
 - (void)recomputeEstimatedHeight {
     CGFloat h = 0;
     for (NSUInteger i = 0; i < _frames.count; i++) {

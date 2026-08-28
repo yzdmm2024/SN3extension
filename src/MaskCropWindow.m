@@ -27,6 +27,9 @@
 #import "EditToolbarWindow.h"
 #import "LongShotCapture.h"
 #import "SuperTools.h"
+#include <math.h>
+#include <notify.h>
+#import "SN3Notify.h"
 
 // ---------- 布局常量（pt） ----------
 static const CGFloat kButtonH  = 46.0;   // 按钮高
@@ -35,6 +38,10 @@ static const CGFloat kMinCrop  = 16.0;   // 有效选区最小边长
 // 长截图截取框留白（框全屏宽；上下留白给关闭按钮 / 底部两按钮）
 static const CGFloat kFrameTopInset  = 54.0;   // 框顶距安全区上沿（留给关闭按钮）
 static const CGFloat kFrameBotInset  = 86.0;   // 框底距屏幕底（留给底部两按钮）
+
+// ---- v5.3：精确模式跨进程 notify token（进程级，仅注册一次）----
+static int g_capTok = 0, g_offTok = 0, g_regionTok = 0;
+static BOOL g_lsReg = NO;
 
 typedef NS_ENUM(NSInteger, XZDragTarget) {
     XZDragNone       = 0,
@@ -67,10 +74,14 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UIButton *_closeBtn;            // 关闭（框右上角）
     UILabel  *_longCountLabel;      // 已采集帧数
 
-    // ---- v5.2：长截图自动/手动模式 ----
-    BOOL      _manualMode;          // YES=手动（滑完一屏点【下一屏】）；NO=自动（定时抓帧）
-    UIButton *_modeToggleBtn;       // 框左上角「模式:自动/手动」切换
+    // ---- v5.3：长截图算法（精确读offset / 自动SAD / 手动下一屏）----
+    NSInteger _lsAlgo;              // 0=精确(读offset) 1=自动(SAD) 2=手动(下一屏)
+    UIButton *_modeToggleBtn;       // 框左上角「模式:精确/自动/手动」切换
     UIButton *_nextBtn;             // 框左下「下一屏」（仅手动模式显示）
+    UIButton *_startBtn;            // 框顶部「▶开始采集」（仅精确模式显示）
+    BOOL     _lsActive;             // 精确模式已 arm、正在接收 App 偏移抓帧
+    CGFloat  _lsPrevOffsetY;        // 上一帧 contentOffset.y（点），首帧为 NAN
+    NSTimer *_lsWatchdog;           // 精确模式无响应→回退自动的看门狗
 
     // ---- 状态 ----
     XZMaskMode   _mode;
@@ -117,6 +128,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _cropRect = CGRectZero;
         _hasCrop = NO;
         _capturing = NO;
+        _lsAlgo = 0;                // v5.3：默认精确模式（读真实 offset）
     }
     return self;
 }
@@ -171,6 +183,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
     [self installCropUI];
     [self installLongControls];
+    [self registerLsCapture];
     [self setMode:XZMaskModeCrop];
     [self refreshChrome];
 
@@ -193,8 +206,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
             _longCountLabel.hidden = YES;
-            _modeToggleBtn.hidden = YES;   // v5.2
-            _nextBtn.hidden      = YES;    // v5.2
+            _modeToggleBtn.hidden = YES;
+            _nextBtn.hidden      = YES;
+            _startBtn.hidden     = YES;
             _win.passthrough      = NO;          // 面板阶段吃下全屏触摸
             _contentView.userInteractionEnabled = YES;
             _borderLayer.hidden = NO;            // 选区边框仍然可见
@@ -208,8 +222,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
             _longCountLabel.hidden = YES;
-            _modeToggleBtn.hidden = YES;   // v5.2
-            _nextBtn.hidden      = YES;    // v5.2
+            _modeToggleBtn.hidden = YES;
+            _nextBtn.hidden      = YES;
+            _startBtn.hidden     = YES;
             _win.passthrough      = NO;          // 框选阶段吃下全屏拖拽
             _contentView.userInteractionEnabled = YES;
             _borderLayer.hidden = !_hasCrop;
@@ -228,8 +243,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _copyLongBtn.hidden = NO;
         _closeBtn.hidden    = NO;
         _longCountLabel.hidden = NO;
-        _modeToggleBtn.hidden = NO;             // v5.2：模式切换常驻
-        _nextBtn.hidden      = !_manualMode;    // v5.2：仅手动模式显示
+        _modeToggleBtn.hidden = NO;             // v5.3：模式切换常驻
+        [_modeToggleBtn setTitle:(_lsAlgo == 0 ? @"模式:精确" : (_lsAlgo == 1 ? @"模式:自动" : @"模式:手动"))
+                         forState:UIControlStateNormal];
+        _nextBtn.hidden      = (_lsAlgo != 2); // 仅手动模式显示
+        _startBtn.hidden     = (_lsAlgo != 0); // 仅精确模式显示
         _win.passthrough      = YES;             // 长截图：框内穿透、框外吞咽
         _win.passRect        = _longFrameRect;   // 框内坐标 → 穿透给 App
         _contentView.userInteractionEnabled = NO; // 不拦截手势，交给 hitTest 决定
@@ -242,6 +260,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         [_win bringSubviewToFront:_longCountLabel];
         [_win bringSubviewToFront:_modeToggleBtn];
         [_win bringSubviewToFront:_nextBtn];
+        [_win bringSubviewToFront:_startBtn];
     }
     [_win layoutIfNeeded];
 }
@@ -255,9 +274,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _editingPanel = NO;
     _entryTile = nil;
     _lastAddedTile = nil;
-    _manualMode = NO;          // v5.2：退出长截图复位为自动模式
+    if (_lsActive) { _lsActive = NO; [self stopLsWatchdog]; notify_post(SN3_LS_DISARM); }
+    _lsAlgo = 0;               // v5.3：退出长截图复位为精确模式
     _modeToggleBtn = nil;      // v5.2
     _nextBtn = nil;            // v5.2
+    _startBtn = nil;           // v5.3
     _cropImage = nil;
     _cropScreenRect = CGRectZero;
     _localPanel = nil;
@@ -392,24 +413,35 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     // v5.2：手动模式「下一屏」按钮（底部保存/复制上方一行，仅手动模式显示）
     _nextBtn = [self makeBarButton:@"下一屏 ▼" bg:[UIColor systemOrangeColor] action:@selector(onNextScreen)];
     _nextBtn.frame = CGRectMake(pad, by - (kButtonH + 10), scr.size.width - pad * 2, kButtonH);
-    _nextBtn.hidden = YES;   // 默认自动模式隐藏
+    _nextBtn.hidden = YES;   // 默认精确模式隐藏
     [_win addSubview:_nextBtn];
     [_win addInteractiveView:_nextBtn];
+
+    // v5.3：精确模式「开始采集」按钮（框顶部，模式切换右侧；仅精确模式显示）
+    _startBtn = [self makeBarButton:@"▶ 开始采集" bg:[UIColor systemGreenColor] action:@selector(onStartLs)];
+    _startBtn.frame = CGRectMake(120, top - 38, scr.size.width - 120 - 52 - 8, 40);
+    _startBtn.hidden = YES;   // 由 refreshChrome 按算法控制
+    [_win addSubview:_startBtn];
+    [_win addInteractiveView:_startBtn];
 }
 
 #pragma mark - v5.2：自动 / 手动模式切换
 
 - (void)onToggleMode {
-    _manualMode = !_manualMode;
+    _lsAlgo = (_lsAlgo + 1) % 3;   // 0 精确 → 1 自动 → 2 手动 → 0
     [self refreshChrome];
-    if (_manualMode) {
+    if (_lsAlgo == 0) {
         [self stopCaptureTimer];
-        [_modeToggleBtn setTitle:@"模式:手动" forState:UIControlStateNormal];
-        [Common toast:@"已切手动：框内滑完一屏，点【下一屏】采集"];
-    } else {
+        [_startBtn setTitle:@"▶ 开始采集" forState:UIControlStateNormal];
+        _startBtn.enabled = YES;
+        [Common toast:@"精确模式：框好区域后点【开始采集】，再下滑"];
+    } else if (_lsAlgo == 1) {
+        [self stopCaptureTimer];
         [self startCaptureTimer];
-        [_modeToggleBtn setTitle:@"模式:自动" forState:UIControlStateNormal];
-        [Common toast:@"已切自动：框内滑动自动采集"];
+        [Common toast:@"自动(SAD)模式：框内滑动自动采集"];
+    } else {
+        [self stopCaptureTimer];
+        [Common toast:@"手动模式：框内滑完一屏点【下一屏】"];
     }
 }
 
@@ -441,6 +473,118 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     }
 }
 
+#pragma mark - v5.3：精确模式（注入 App 读真实 contentOffset）
+
+- (void)registerLsCapture {
+    if (g_lsReg) return;
+    notify_register_check(SN3_LS_OFFSET, &g_offTok);
+    notify_register_check(SN3_LS_REGIONH, &g_regionTok);
+    notify_register_dispatch(SN3_LS_CAPTURE, &g_capTok, dispatch_get_main_queue(), ^(int t) {
+        [[MaskCropWindow sharedInstance] onLsCapture];
+    });
+    g_lsReg = YES;
+    NSLog(@"[SN3] SB 精确模式 capture 通知已注册");
+}
+
+- (void)stopLsWatchdog {
+    if (_lsWatchdog) { [_lsWatchdog invalidate]; _lsWatchdog = nil; }
+}
+
+// 用户点【开始采集】：arm 前台 App，开始按真实滚动量逐屏精确采集
+- (void)onStartLs {
+    if (!_win || _mode != XZMaskModeLong || _lsActive) return;
+    _lsActive = YES;
+    _lsPrevOffsetY = (CGFloat)NAN;
+    [self stopCaptureTimer];
+    [[LongShotCapture sharedInstance] reset];
+    [self updateLongCounter];
+
+    // 把采集区域高度(点)告诉 App
+    CGFloat regionH = _longFrameRect.size.height;
+    uint64_t rh = (uint64_t)(round(regionH * 100.0));
+    notify_set_state(g_regionTok, rh);
+    notify_post(SN3_LS_ARM);
+
+    [_startBtn setTitle:@"采集中…" forState:UIControlStateNormal];
+    _startBtn.enabled = NO;
+
+    // 看门狗：2.5s 内未收到任何帧（非注入 App）→ 回退自动(SAD)
+    [self stopLsWatchdog];
+    _lsWatchdog = [NSTimer scheduledTimerWithTimeInterval:2.5
+                                                 target:self
+                                               selector:@selector(lsWatchdogFired)
+                                               userInfo:nil
+                                                repeats:NO];
+    [Common toast:@"精确模式：从顶部下滑，自动逐屏采集"];
+}
+
+- (void)lsWatchdogFired {
+    if (!_lsActive) return;
+    if ([[LongShotCapture sharedInstance] frameCount] == 0) {
+        // 无响应：当前 App 未注入精确监听，回退自动 SAD
+        _lsActive = NO;
+        _lsAlgo = 1;
+        [_startBtn setTitle:@"▶ 开始采集" forState:UIControlStateNormal];
+        _startBtn.enabled = YES;
+        [self refreshChrome];
+        [self startCaptureTimer];
+        [Common toast:@"精确模式无响应，已切自动(SAD)"];
+    }
+}
+
+// App 通知：抓一帧（偏移已写入 notify 状态）
+- (void)onLsCapture {
+    if (!_win || _mode != XZMaskModeLong || !_lsActive) return;
+
+    uint64_t st = 0;
+    notify_get_state(g_offTok, &st);
+    CGFloat offset = (CGFloat)st / 100.0;
+
+    BOOL borderHidden = _borderLayer.hidden;
+    _borderLayer.hidden = YES;                 // 抓帧时去掉边框，避免被截进长图
+    UIImage *screen = [ImageUtils captureScreen];
+    _borderLayer.hidden = borderHidden;
+    if (!screen) return;
+
+    CGRect clip = CGRectInset(_longFrameRect, 3, 3);
+    UIImage *tile = [ImageUtils cropImage:screen screenRect:clip];
+    if (!tile) return;
+
+    if (isnan(_lsPrevOffsetY)) {
+        // 第 1 屏：无增量，作为基准
+        [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:0];
+        _lsPrevOffsetY = offset;
+        [self stopLsWatchdog];
+        _startBtn.hidden = YES;                 // 已开工，隐藏开始按钮
+        [self updateLongCounter];
+        [Common toast:@"已采第1屏，继续下滑"];
+        return;
+    }
+
+    CGFloat delta = offset - _lsPrevOffsetY;    // 真实滚动增量（点）
+    _lsPrevOffsetY = offset;
+    if (delta <= 1.0f) return;                  // 基本没滑，仅更新基准
+
+    CGFloat regionH = tile.size.height;         // 采集区域高（点）
+    CGFloat ov = regionH - delta;               // 精确重叠 = 区域高 − 滚动增量
+    BOOL accepted = [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:ov];
+    if (accepted) [self updateLongCounter];
+}
+
+// 保存/复制前：若精确模式仍激活，先 disarm 让 App 补抓末屏，再拼接
+- (void)lsDisarmAndProceed:(void (^)(void))block {
+    if (_lsActive) {
+        _lsActive = NO;
+        [self stopLsWatchdog];
+        notify_post(SN3_LS_DISARM);
+        // 等待 App 补抓最后一屏（~0.35s）后再拼接
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), block);
+    } else {
+        block();
+    }
+}
+
 #pragma mark - 模式切换
 
 - (void)setMode:(XZMaskMode)mode {
@@ -449,12 +593,15 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _entryTile = nil;
         _lastAddedTile = nil;
         [self refreshChrome];
-        if (_manualMode) {
-            [self stopCaptureTimer];
-            [Common toast:@"长截图·手动模式：框内滑完一屏点【下一屏】"];
-        } else {
+        if (_lsAlgo == 1) {
             [self startCaptureTimer];
-            [Common toast:@"长截图：框内从顶部向下滑动页面，开始采集后显示屏数"];
+            [Common toast:@"长截图·自动(SAD)：框内从顶部向下滑动，自动采集"];
+        } else if (_lsAlgo == 2) {
+            [self stopCaptureTimer];
+            [Common toast:@"长截图·手动：框内滑完一屏点【下一屏】"];
+        } else {
+            [self stopCaptureTimer];   // 精确模式：等用户点【开始采集】再 arm
+            [Common toast:@"长截图·精确：先滚到顶，框好区域点【开始采集】，再下滑"];
         }
     } else {
         [self stopCaptureTimer];
@@ -593,20 +740,22 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         return;
     }
     [Common toast:@"正在拼接长图..."];
-    [self stopCaptureTimer];
-    __weak typeof(self) ws = self;
-    [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
-        __strong typeof(ws) ss = ws;
-        if (!ss) return;
-        UIImage *img = result ?: [[LongShotCapture sharedInstance] stitchFallback];
-        [ss dismiss];
-        if (img) {
-            [ImageUtils saveToCustomAlbum:img completion:^(BOOL ok, NSError *e) {
-                [Common toast: ok ? @"长图已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
-            }];
-        } else {
-            [Common toast:@"拼接失败，请重试"];
-        }
+    [self lsDisarmAndProceed:^{
+        [self stopCaptureTimer];
+        __weak typeof(self) ws = self;
+        [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
+            __strong typeof(ws) ss = ws;
+            if (!ss) return;
+            UIImage *img = result ?: [[LongShotCapture sharedInstance] stitchFallback];
+            [ss dismiss];
+            if (img) {
+                [ImageUtils saveToCustomAlbum:img completion:^(BOOL ok, NSError *e) {
+                    [Common toast: ok ? @"长图已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+                }];
+            } else {
+                [Common toast:@"拼接失败，请重试"];
+            }
+        }];
     }];
 }
 
@@ -617,19 +766,21 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         return;
     }
     [Common toast:@"正在拼接长图..."];
-    [self stopCaptureTimer];
-    __weak typeof(self) ws = self;
-    [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
-        __strong typeof(ws) ss = ws;
-        if (!ss) return;
-        UIImage *img = result ?: [[LongShotCapture sharedInstance] stitchFallback];
-        [ss dismiss];
-        if (img) {
-            [[UIPasteboard generalPasteboard] setImage:img];
-            [Common toast:@"长图已复制到剪贴板"];
-        } else {
-            [Common toast:@"拼接失败，请重试"];
-        }
+    [self lsDisarmAndProceed:^{
+        [self stopCaptureTimer];
+        __weak typeof(self) ws = self;
+        [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
+            __strong typeof(ws) ss = ws;
+            if (!ss) return;
+            UIImage *img = result ?: [[LongShotCapture sharedInstance] stitchFallback];
+            [ss dismiss];
+            if (img) {
+                [[UIPasteboard generalPasteboard] setImage:img];
+                [Common toast:@"长图已复制到剪贴板"];
+            } else {
+                [Common toast:@"拼接失败，请重试"];
+            }
+        }];
     }];
 }
 

@@ -5,11 +5,11 @@
 //    以固定左右范围 + 两条标尺划定的 Y 轴垂直区间，自动分段多次抓取屏幕画面，
 //    Vision 特征匹配，帧与帧保留重叠，自动拼接生成完整长图；做最大高度限制防 OOM。
 //
-//  【关于「不做 App 自动滚动」】
-//    本 tweak 只注入 SpringBoard（Bundles = com.apple.springboard），
-//    无法访问前台 App 的 UIScrollView，因此严格遵循规格书第 4 条：
-//    不自动滚动页面，由用户手动滑动；MaskCropWindow 按固定节拍采样抓帧，
-//    本类负责「去重 + 配准 + 重叠裁剪 + 拼接」。
+//  【v5.3 精确模式】
+//    本 tweak 现已向 QQ/微信注入 dylib（AppScrollReporter）读取真实 UIScrollView
+//    contentOffset，按精确滚动增量拼接（重叠 = 采集区域高 − 滚动量），100% 准确。
+//    该路径走 addExactFrame:overlapPoints:，不依赖本类的 SAD 配准。
+//    旧 addFrame:/addManualFrame: 仍保留，作为非注入 App 的自动/手动回退。
 //
 //  调用关系：
 //    MaskCropWindow.captureTick
@@ -40,6 +40,11 @@
 // v5.2：手动长截图模式追加一帧（用户滑完一屏后主动点【下一屏】）。
 //   有可靠 SAD 接缝则用之；配不准时按极小保守重叠(10%)拼入，避免重复堆叠。
 - (BOOL)addManualFrame:(UIImage *)frame;
+
+// v5.3：精确模式追加一帧（App 注入读真实 contentOffset，重叠由滚动增量精确算出）。
+//   overlapPoints = 采集区域高(点) − 滚动增量(点)，100% 准确、不靠像素比对猜测。
+//   overlapPoints<2 夹到 2（防缝隙）；overlapPoints≥0.97×帧高视为几乎没滑 → 丢弃。
+- (BOOL)addExactFrame:(UIImage *)frame overlapPoints:(CGFloat)overlapPoints;
 
 // 是否已达最大高度上限（到顶即停止采集，防 OOM）
 - (BOOL)isOverHeightLimit;

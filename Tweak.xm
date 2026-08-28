@@ -1,5 +1,5 @@
 //
-//  Tweak.xm — 超级截图 v5.2 入口（SpringBoard Tweak）
+//  Tweak.xm — 超级截图 v5.3 入口（SpringBoard + 聊天 App 双注入）
 //
 //  ────────────────────────────────────────────────────────────────────────
 //  触发链：
@@ -14,16 +14,20 @@
 //    （v3.14 的教训：cc.capture 是广播，若 App 进程也响应会同时弹两套窗口，
 //      两边窗口状态互相干扰导致确认裁剪时闪退。）
 //
-//  注入范围：layout/.../Snapper3ZhExt.plist 的 Filter 只写 com.apple.springboard，
-//    不要再加 "*"——那会把 dylib 灌进每一个 App 进程，既拖慢启动又容易触发安全模式。
+//  注入范围：layout/.../Snapper3ZhExt.plist 的 Filter 写 com.apple.springboard（主逻辑）
+//    + com.tencent.mqq / com.tencent.xin（v5.3 精确长截图：读真实 UIScrollView contentOffset）。
+//    仍不要加 "*"——只注入必要的聊天 App，避免拖慢启动 / 触发安全模式。
 //  ────────────────────────────────────────────────────────────────────────
 //
 
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
+#include <notify.h>
 #import "Common.h"
 #import "MaskCropWindow.h"
 #import "EditToolbarWindow.h"
+#import "SN3Notify.h"
+#import "AppScrollReporter.h"
 
 // 控制中心点按 → 拉起窗口A（遮罩镂空框选）
 static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
@@ -47,26 +51,34 @@ static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
     });
 }
 
-// 构造函数：只在 SpringBoard 注册 darwin 通知
+// 构造函数：SpringBoard 侧注册控制中心通知；QQ/微信侧注册精确滚动监听
 __attribute__((constructor)) static void xz_ctor() {
     @autoreleasepool {
         NSString *procName = [NSProcessInfo processInfo].processName;
-        if (![procName isEqualToString:@"SpringBoard"]) return;
-
-        NSLog(@"[SN3] 超级截图 v5.2 loaded in SpringBoard");
-        dispatch_async(dispatch_get_main_queue(), ^{
-            @try {
-                CFNotificationCenterAddObserver(
-                    CFNotificationCenterGetDarwinNotifyCenter(),
-                    NULL,
-                    &xz_ccCapture,
-                    CFSTR("com.axs.snapper3zhext.cc.capture"),
-                    NULL,
-                    CFNotificationSuspensionBehaviorDeliverImmediately
-                );
-            } @catch (NSException *e) {
-                NSLog(@"[SN3] init failed: %@ %@", e.name, e.reason);
+        if ([procName isEqualToString:@"SpringBoard"]) {
+            NSLog(@"[SN3] 超级截图 v5.3 loaded in SpringBoard");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                @try {
+                    CFNotificationCenterAddObserver(
+                        CFNotificationCenterGetDarwinNotifyCenter(),
+                        NULL,
+                        &xz_ccCapture,
+                        CFSTR("com.axs.snapper3zhext.cc.capture"),
+                        NULL,
+                        CFNotificationSuspensionBehaviorDeliverImmediately
+                    );
+                } @catch (NSException *e) {
+                    NSLog(@"[SN3] init failed: %@ %@", e.name, e.reason);
+                }
+            });
+        } else {
+            // v5.3：精确长截图 —— 仅对目标聊天 App 注入，读真实 UIScrollView contentOffset
+            NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+            if ([bid isEqualToString:@"com.tencent.mqq"] ||
+                [bid isEqualToString:@"com.tencent.xin"]) {
+                [AppScrollReporter setup];
+                NSLog(@"[SN3] v5.3 AppScrollReporter enabled in %@", bid);
             }
-        });
+        }
     }
 }

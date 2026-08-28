@@ -18,7 +18,8 @@ Snapper3ZhExt_FILES = Tweak.xm \
     src/MaskCropWindow.m \
     src/LongShotCapture.m \
     src/EditToolbarWindow.m \
-    src/SuperTools.m
+    src/SuperTools.m \
+    src/AppScrollReporter.m
 Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision PencilKit PDFKit
 Snapper3ZhExt_WEAK_FRAMEWORKS = Photos
 Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Wno-error -Isrc

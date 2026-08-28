@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.2
+Version: 5.3
 Architecture: iphoneos-arm64
-Description: [v5.2] 长截图双重增强：①自动模式放宽聊天等重复纹理的 SAD 判定（次优接近且最佳差已很低时不拒绝），安全阀强制重叠从 35% 降到 25%，大幅减少跳帧导致的重复块；②新增「手动长截图」模式（框左上角切「模式:手动」，滑完一屏点【下一屏】精确采集，绕过自动配准）。超长内容不再压缩每帧高度，改为整体降分辨率拼接（放宽硬上限到 60k px、内存预算 120MB），从根本上消除叠影。局部/正常截图交互不变。
+Description: [v5.3] 长截图彻底治本：新增「精确模式」——给 QQ/微信注入 dylib 读取真实 UIScrollView contentOffset，按精确滚动增量拼接（重叠=区域高−滚动量），100% 准确、零叠影、不靠像素比对猜测；先滚到顶、框好区域点【开始采集】、下滑即自动逐屏采集。非注入 App 自动回退旧 SAD 自动模式；仍保留手动【下一屏】模式。局部/正常截图交互不变。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

@@ -5,9 +5,11 @@
     <key>Filter</key>
     <dict>
         <key>Bundles</key>
-        <array>
-            <string>com.apple.springboard</string>
-        </array>
+		<array>
+			<string>com.apple.springboard</string>
+			<string>com.tencent.mqq</string>
+			<string>com.tencent.xin</string>
+		</array>
     </dict>
 </dict>
 </plist>
