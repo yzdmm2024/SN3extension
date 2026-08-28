@@ -335,6 +335,18 @@ static CGRect XZRectFromValue(id v) {
             Class handlerCls = NSClassFromString(@"VNImageRequestHandler");
             if (reqCls && handlerCls) {
                 id req = [[reqCls alloc] init];
+                // v5.7：Vision 默认 symbologies 可能为空 → 显式指定二维码/常用条码，否则扫不到任何码
+                Class symCls = NSClassFromString(@"VNSymbology");
+                if (symCls) {
+                    NSMutableArray *syms = [NSMutableArray array];
+                    for (NSString *nm in @[@"QR", @"EAN13", @"EAN8", @"Code128", @"Code39",
+                                          @"Code93", @"PDF417", @"Aztec", @"DataMatrix", @"UPCE",
+                                          @"Code39FullASCII", @"ITF14", @"Interleaved2of5"]) {
+                        id s = [symCls valueForKey:nm];
+                        if (s) [syms addObject:s];
+                    }
+                    if (syms.count) { @try { [req setValue:syms forKey:@"symbologies"]; } @catch (NSException *e) {} }
+                }
                 id handler = [[handlerCls alloc] init];
                 SEL hSel = NSSelectorFromString(@"initWithCGImage:options:");
                 if ([handler respondsToSelector:hSel]) {
@@ -513,18 +525,39 @@ static CGRect XZRectFromValue(id v) {
 
 static UIWindow *_floatWin = nil;
 
+// 贴图：浮窗尺寸默认匹配所选拖选框（rect，屏幕坐标）；rect 为空则用 120 默认
 + (void)floating:(UIImage *)image {
+    [self floating:image withScreenRect:CGRectZero];
+}
+
++ (void)floating:(UIImage *)image withScreenRect:(CGRect)rect {
     if (!image) return;
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
 
-    CGFloat fw = 120.0;
-    CGFloat fh = 120.0 * image.size.height / MAX(1, image.size.width);
-    if (fh > 200) { fh = 200; fw = 200 * image.size.width / MAX(1, image.size.height); }
     CGRect scr = [UIScreen mainScreen].bounds;
+    CGFloat fw, fh;
+    BOOL useRect = (rect.size.width >= 20 && rect.size.height >= 20);
+    if (useRect) {
+        // 按选框尺寸（并限制在屏幕内），与所选区域等大
+        fw = MIN(rect.size.width,  scr.size.width  - 20);
+        fh = MIN(rect.size.height, scr.size.height - 120);
+    } else {
+        fw = 120.0;
+        fh = 120.0 * image.size.height / MAX(1, image.size.width);
+        if (fh > 200) { fh = 200; fw = 200 * image.size.width / MAX(1, image.size.height); }
+    }
 
-    UIWindow *win = [[UIWindow alloc] initWithFrame:
-                     CGRectMake(scr.size.width - fw - 20,
-                                scr.size.height / 2 - fh / 2, fw, fh)];
+    CGFloat ox, oy;
+    if (useRect) {
+        // 定位到选框原位（夹在屏幕内），与所选区域重合
+        ox = MIN(MAX(rect.origin.x, 8.0),                       scr.size.width  - fw - 8);
+        oy = MIN(MAX(rect.origin.y, [Common screenSafeInsets].top + 4), scr.size.height - fh - 8);
+    } else {
+        ox = scr.size.width - fw - 20;
+        oy = scr.size.height / 2 - fh / 2;
+    }
+
+    UIWindow *win = [[UIWindow alloc] initWithFrame:CGRectMake(ox, oy, fw, fh)];
     win.windowLevel = UIWindowLevelAlert + 300;
     win.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
@@ -594,16 +627,36 @@ static UIWindow *_floatWin = nil;
 
 #pragma mark - 9. 分享
 
+static UIWindow *_shareWin = nil;
+
 + (void)share:(UIImage *)image fromWindow:(UIWindow *)win {
     if (!image) return;
     UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[image]
                                                                      applicationActivities:nil];
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad && win) {
-        avc.popoverPresentationController.sourceView = win;
-        avc.popoverPresentationController.sourceRect = CGRectMake(win.bounds.size.width / 2,
-                                                                  win.bounds.size.height / 2, 0, 0);
+    // v5.7：分享面板用独立「顶层窗口」弹出（windowLevel 高于编辑/截图工具栏），
+    //        工具栏不再压在分享面板之上，点分享后功能菜单主动避让。
+    if (_shareWin) { _shareWin.hidden = YES; _shareWin = nil; }
+    UIWindow *sheetWin = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    sheetWin.windowLevel = UIWindowLevelAlert + 400;   // 高于编辑/截图工具栏(Alert+200)
+    sheetWin.backgroundColor = [UIColor clearColor];
+    if (@available(iOS 13.0, *)) sheetWin.windowScene = [Common activeWindowScene];
+    UIViewController *host = [[UIViewController alloc] init];
+    host.view.backgroundColor = [UIColor clearColor];
+    sheetWin.rootViewController = host;
+    sheetWin.hidden = NO;
+    _shareWin = sheetWin;
+
+    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
+        avc.popoverPresentationController.sourceView = win ?: sheetWin;
+        avc.popoverPresentationController.sourceRect = CGRectMake((win ? win.bounds.size.width : sheetWin.bounds.size.width) / 2,
+                                                                  (win ? win.bounds.size.height : sheetWin.bounds.size.height) / 2, 0, 0);
     }
-    [Common present:avc fromWindow:win];
+    avc.completionWithItemsHandler = ^(UIActivityType type, BOOL completed, NSArray *items, NSError *err) {
+        _shareWin.hidden = YES;
+        _shareWin.rootViewController = nil;
+        _shareWin = nil;
+    };
+    [host presentViewController:avc animated:YES completion:nil];
 }
 
 #pragma mark - 9b. 加手机壳
@@ -1010,11 +1063,7 @@ static UIWindow *_floatWin = nil;
 
     CGFloat bw = (scr.size.width - 50) / 2.0;
 
-    UIButton *smart = [self mkBtn:@"智能脱敏" frame:CGRectMake(20, 10, bw, 40) sel:@selector(onSmart)
-                            color:[UIColor systemPurpleColor]];
-    [bar addSubview:smart];
-
-    UIButton *undo = [self mkBtn:@"撤销一笔" frame:CGRectMake(30 + bw, 10, bw, 40) sel:@selector(onUndo)
+    UIButton *undo = [self mkBtn:@"撤销一笔" frame:CGRectMake(20, 10, bw, 40) sel:@selector(onUndo)
                            color:[UIColor systemGrayColor]];
     [bar addSubview:undo];
 
@@ -1027,7 +1076,7 @@ static UIWindow *_floatWin = nil;
     [bar addSubview:done];
 
     UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(20, safe.top + 12, scr.size.width - 40, 30)];
-    tip.text = @"手指涂抹要打码的位置，或点「智能脱敏」自动识别手机号/身份证";
+    tip.text = @"用手指在要打码的位置涂抹即可（自动马赛克）";
     tip.textColor = [UIColor colorWithWhite:1 alpha:0.75];
     tip.font = [UIFont systemFontOfSize:12];
     tip.textAlignment = NSTextAlignmentCenter;
@@ -1049,24 +1098,6 @@ static UIWindow *_floatWin = nil;
     b.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
     return b;
-}
-
-// 智能脱敏：OCR → 正则 → 命中框
-- (void)onSmart {
-    _tipLabel.text = @"正在识别敏感信息...";
-    __weak typeof(self) ws = self;
-    [SuperTools detectSensitiveRects:_source completion:^(NSArray<NSValue *> *rects) {
-        __strong typeof(ws) ss = ws;
-        if (!ss) return;
-        if (rects.count == 0) {
-            ss->_tipLabel.text = @"没有识别到手机号/身份证等敏感信息，可手动涂抹";
-            return;
-        }
-        [ss->_smartRects addObjectsFromArray:rects];
-        ss->_tipLabel.text = [NSString stringWithFormat:@"已自动识别 %lu 处敏感信息，可继续手动涂抹",
-                              (unsigned long)rects.count];
-        [ss->_paintView setNeedsDisplay];
-    }];
 }
 
 - (void)onUndo {

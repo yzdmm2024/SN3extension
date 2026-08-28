@@ -36,8 +36,8 @@ static const CGFloat kButtonH  = 46.0;   // 按钮高
 static const CGFloat kMinCrop  = 16.0;   // 有效选区最小边长
 
 // 长截图截取框留白（框全屏宽；上下留白给关闭按钮 / 底部两按钮）
-static const CGFloat kFrameTopInset  = 54.0;   // 框顶距安全区上沿（留给关闭按钮）
-static const CGFloat kFrameBotInset  = 86.0;   // 框底距屏幕底（留给底部两按钮）
+static const CGFloat kFrameTopInset  = 54.0;   // 框顶距安全区上沿：仅避状态栏；导航条由大重叠在拼接时丢弃（长图顶部导航条只出现一次）
+static const CGFloat kFrameBotInset  = 140.0;  // 框底距屏幕底：避开底部固定输入条/标签栏（防止长截图重复）
 
 // ---- v5.3：精确模式跨进程 notify token（进程级，仅注册一次）----
 static int g_capTok = 0, g_offTok = 0, g_regionTok = 0, g_doneTok = 0;
@@ -690,6 +690,8 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
     CGPoint loc = [pan locationInView:_contentView];
     CGRect b = _contentView.bounds;
+    // v5.7：选框顶部不低于安全区上沿，避免手柄被状态栏/刘海遮住导致「顶部无法正常使用」
+    CGFloat topLimit = [Common screenSafeInsets].top;
 
     if (pan.state == UIGestureRecognizerStateBegan) {
         XZResizeMask m = [self hasSelection] ? [self resizeMaskAtPoint:loc inRect:_cropRect] : XZResizeNone;
@@ -711,7 +713,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             CGFloat y = MIN(_panStart.y, loc.y);
             CGFloat w = fabs(loc.x - _panStart.x);
             CGFloat h = fabs(loc.y - _panStart.y);
-            x = MAX(0, x); y = MAX(0, y);
+            x = MAX(0, x); y = MAX(topLimit, y);
             w = MIN(w, b.size.width - x);
             h = MIN(h, b.size.height - y);
             _cropRect = CGRectMake(x, y, MAX(0, w), MAX(0, h));
@@ -719,7 +721,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             CGFloat nx = loc.x - _panGrab.x;
             CGFloat ny = loc.y - _panGrab.y;
             nx = MAX(0, MIN(nx, b.size.width - _cropRect.size.width));
-            ny = MAX(0, MIN(ny, b.size.height - _cropRect.size.height));
+            ny = MAX(topLimit, MIN(ny, b.size.height - _cropRect.size.height));
             _cropRect = CGRectMake(nx, ny, _cropRect.size.width, _cropRect.size.height);
         } else if (_drag == XZDragResize) {   // v5.6：拖边/角缩放
             CGFloat left  = _cropRect.origin.x, top = _cropRect.origin.y;
@@ -731,7 +733,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             if (_resizeMask & XZResizeBottom) bot   = MAX(loc.y, top + minS);
             left  = MAX(0, left);
             right = MIN(b.size.width, right);
-            top   = MAX(0, top);
+            top   = MAX(topLimit, top);
             bot   = MIN(b.size.height, bot);
             if (right - left < minS) { if (left <= 0) right = minS; else left = right - minS; }
             if (bot - top  < minS) { if (top  <= 0) bot  = minS; else top  = bot  - minS; }
@@ -1060,7 +1062,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     XZLocalFloating = 7,
     XZLocalSave     = 8,
     XZLocalShare    = 9,
-    XZLocalMore     = 10,
     XZLocalClose    = 11,
 };
 
@@ -1086,7 +1087,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @{@"icon":@"pin",                    @"label":@"贴图", @"tag":@(XZLocalFloating)},
         @{@"icon":@"square.and.arrow.down",  @"label":@"保存", @"tag":@(XZLocalSave)},
         @{@"icon":@"square.and.arrow.up",    @"label":@"分享", @"tag":@(XZLocalShare)},
-        @{@"icon":@"ellipsis",               @"label":@"更多", @"tag":@(XZLocalMore)},
     ];
 
     CGFloat gap = 6.0;
@@ -1217,7 +1217,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [Common toast:@"已复制到剪贴板"];
         [self dismiss];
     } else if (tag == XZLocalFloating) {
-        [SuperTools floating:img];
+        [SuperTools floating:img withScreenRect:_cropRect];
         [self dismiss];
     } else if (tag == XZLocalSave) {
         [SuperTools save:img completion:^(BOOL ok) {
@@ -1226,8 +1226,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         }];
     } else if (tag == XZLocalShare) {
         [SuperTools share:img fromWindow:(_panelWin ?: _win)];
-    } else if (tag == XZLocalMore) {
-        [self showLocalMore:img];
     }
 }
 
@@ -1293,43 +1291,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         }]];
     }
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:(_panelWin ?: _win)];
-}
-
-- (void)showLocalMore:(UIImage *)img {
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"更多功能"
-                                                               message:nil
-                                                        preferredStyle:UIAlertControllerStyleActionSheet];
-    [ac addAction:[UIAlertAction actionWithTitle:@"导出 PDF" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSString *p = [SuperTools exportPDF:img];
-        if (p) {
-            NSURL *url = [NSURL fileURLWithPath:p];
-            UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-            [Common present:avc fromWindow:_win];
-        } else { [Common toast:@"导出失败"]; }
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"压缩图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSData *before = UIImagePNGRepresentation(img);
-        UIImage *c = [SuperTools compress:img quality:0.6];
-        if (c) {
-            self->_cropImage = c;
-            NSData *after = UIImageJPEGRepresentation(c, 0.6);
-            [Common toast:[NSString stringWithFormat:@"已压缩：%.0fKB → %.0fKB", before.length/1024.0, after.length/1024.0]];
-        } else { [Common toast:@"压缩失败"]; }
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"去除状态栏" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        UIImage *s = [SuperTools stripStatusBar:img];
-        if (s) { self->_cropImage = s; [Common toast:@"已去除顶部状态栏"]; }
-        else [Common toast:@"处理失败"];
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"取色器" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [SuperTools colorPicker:img fromWindow:_win];
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
-        ac.popoverPresentationController.sourceView = _localPanel;
-        ac.popoverPresentationController.sourceRect = _localPanel.bounds;
-    }
     [Common present:ac fromWindow:(_panelWin ?: _win)];
 }
 

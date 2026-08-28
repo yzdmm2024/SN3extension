@@ -6,7 +6,7 @@
 //    高度(点)写入 notify 状态 SN3_LS_REGIONH。本类收到 arm 后：
 //      1. 在 keyWindow 视图树里找 contentSize 最大的 UIScrollView（聊天消息列表）；
 //      2. 先把当前屏作为第 1 帧：write offset、notify_post(capture)；
-//      3. 启动定时循环：每次把 scrollView 的 contentOffset 向下推「约一屏高×92%」
+//      3. 启动定时循环：每次把 scrollView 的 contentOffset 向下推「约一屏高×90%（快速 94%）」
 //         （setContentOffset:animated:NO，确定性、无惯性），等 ~0.55s 渲染后把新屏作为
 //         下一帧：write offset、notify_post(capture)；
 //      4. 当 contentOffset 到达底部(maxY)时，发最后一屏（底部剩余部分）后 notify_post(done)
@@ -106,10 +106,11 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_do
     _armed = YES;
     _autoStarted = NO;
 
-    // 快速模式：更短间隔 + 更大步进（更少帧、更快到底）
+    // v5.7：步进下调到 0.82（重叠 ~18%）——重叠大于常见导航条高度，拼接时后续帧顶部导航条被整段丢弃，
+    //        仅首帧保留导航条一次；底部输入条靠 MaskCropWindow 框 inset 排除。彻底解决长图重复。
     BOOL quick = [Common boolPref:@"LongShot_Quick" default:NO];
     _tickInterval = quick ? 0.28 : 0.42;
-    _stepRatio   = quick ? 0.985f : 0.97f;
+    _stepRatio   = quick ? 0.82f : 0.82f;
 
     // 第 1 帧：当前滚动位置作为基准
     [self sendCaptureAt:_sv.contentOffset.y];
@@ -134,7 +135,7 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_do
 // 把 scrollView 向下推「约一屏高 × _stepRatio」；返回实际滚动增量（点）
 - (CGFloat)scrollOneStep {
     if (!_sv) return 0;
-    CGFloat step = MAX(40.0f, _regionH * _stepRatio);   // 每次滚 ~97% 区域高 → 相邻帧重叠仅 ~3%
+    CGFloat step = MAX(40.0f, _regionH * _stepRatio);   // 每次滚 ~90% 区域高 → 相邻帧重叠 ~10%（遮接缝）
     CGFloat cur = _sv.contentOffset.y;
     CGFloat maxY = [self maxOffsetY];
     CGFloat newOff = cur + step;

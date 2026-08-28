@@ -268,7 +268,7 @@ static EditToolbarWindow *_shared = nil;
     } else if (tag == ETBTagCopy) {
         [SuperTools copy:img];
     } else if (tag == ETBTagFloating) {
-        [SuperTools floating:img];
+        [SuperTools floating:img withScreenRect:_imageView.frame];
         [EditToolbarWindow dismiss];
     } else if (tag == ETBTagSave) {
         [SuperTools save:img completion:^(BOOL ok) {

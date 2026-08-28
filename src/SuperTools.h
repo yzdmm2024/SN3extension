@@ -33,8 +33,9 @@
 // 6. 复制：UIPasteboard 直接写剪贴板，不强制保存相册
 + (void)copy:(UIImage *)image;
 
-// 7. 贴图：新建悬浮 UIWindow 贴纸，支持拖拽摆放
+// 7. 贴图：新建悬浮 UIWindow 贴纸，支持拖拽摆放；rect 为所选拖选框（屏幕坐标），为空则用默认尺寸
 + (void)floating:(UIImage *)image;
++ (void)floating:(UIImage *)image withScreenRect:(CGRect)rect;
 
 // 8. 保存：PHPhotoLibrary 写入相册
 + (void)save:(UIImage *)image completion:(void (^)(BOOL ok))completion;
