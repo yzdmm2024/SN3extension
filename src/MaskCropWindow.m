@@ -385,7 +385,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     [_modeToggleBtn setTitle:@"模式:自动" forState:UIControlStateNormal];
     [_modeToggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     _modeToggleBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-    [_modeToggleBtn addTarget:self action:@selector(onToggleMode) forEvents:UIControlEventTouchUpInside];
+    [_modeToggleBtn addTarget:self action:@selector(onToggleMode) forControlEvents:UIControlEventTouchUpInside];
     [_win addSubview:_modeToggleBtn];
     [_win addInteractiveView:_modeToggleBtn];
 
