@@ -100,4 +100,16 @@
     return [UIApplication sharedApplication].keyWindow;
 }
 
++ (UIWindowScene *)activeWindowScene {
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (scene.activationState == UISceneActivationStateForegroundActive &&
+                [scene isKindOfClass:[UIWindowScene class]]) {
+                return (UIWindowScene *)scene;
+            }
+        }
+    }
+    return nil;
+}
+
 @end

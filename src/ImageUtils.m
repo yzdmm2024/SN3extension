@@ -3,16 +3,28 @@
 //
 
 #import "ImageUtils.h"
+#import "Common.h"
 #import <Photos/Photos.h>
+#import <dlfcn.h>
 
 @implementation ImageUtils
 
 #pragma mark - 截屏
 
 + (UIImage *)captureScreen {
+    // 优先：私有 UIGetScreenImage 抓真实整屏（含控制中心下层 App 内容）。
+    // 用 dlsym 动态解析，避免链接私有符号导致编译/链接失败；符号不存在时回退。
+    UIImage *(*getScreenImage)(void) = NULL;
+    getScreenImage = (UIImage *(*)(void))dlsym(RTLD_DEFAULT, "UIGetScreenImage");
+    if (getScreenImage) {
+        UIImage *img = getScreenImage();
+        if (img) return img;
+    }
+
+    // 回退：抓关键 window 层级（SpringBoard 内通常抓到的是控制中心自身，仅作兜底）
     UIWindow *keyWin = [self topWindow];
     if (!keyWin) return nil;
-    
+
     UIGraphicsBeginImageContextWithOptions(keyWin.bounds.size, NO, 0);
     [keyWin drawViewHierarchyInRect:keyWin.bounds afterScreenUpdates:NO];
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
@@ -152,6 +164,7 @@
     win.windowLevel = UIWindowLevelAlert + 300;
     win.backgroundColor = [UIColor clearColor];
     win.userInteractionEnabled = YES;
+    if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
     
     UIImageView *iv = [[UIImageView alloc] initWithFrame:win.bounds];
     iv.image = image;

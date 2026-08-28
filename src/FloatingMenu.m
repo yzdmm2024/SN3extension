@@ -38,6 +38,7 @@ static UIWindow *_floatingWindow = nil;
     win.windowLevel = UIWindowLevelAlert + 100;
     win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
     win.userInteractionEnabled = YES;
+    if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
     
     UIView *content = [[UIView alloc] init];
     content.translatesAutoresizingMaskIntoConstraints = NO;
@@ -287,6 +288,7 @@ static UIWindow *_floatingWindow = nil;
     UIWindow *cropWin = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     cropWin.windowLevel = UIWindowLevelAlert + 200;
     cropWin.backgroundColor = [UIColor blackColor];
+    if (@available(iOS 13.0, *)) cropWin.windowScene = [Common activeWindowScene];
     
     CGFloat ratio = image.size.width / image.size.height;
     CGFloat ivW = cropWin.bounds.size.width;
@@ -406,6 +408,7 @@ static UIWindow *_floatingWindow = nil;
     fwin.windowLevel = UIWindowLevelAlert + 300;
     fwin.backgroundColor = [UIColor clearColor];
     fwin.userInteractionEnabled = YES;
+    if (@available(iOS 13.0, *)) fwin.windowScene = [Common activeWindowScene];
     
     UIImageView *fiv = [[UIImageView alloc] initWithFrame:fwin.bounds];
     fiv.image = image;

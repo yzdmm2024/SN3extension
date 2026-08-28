@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.09
+Version: 3.10
 Architecture: iphoneos-arm64
-Description: [v3.09] 控制中心图标修复(覆盖glyphImageForState:+SF Symbol/CoreGraphics兜底, 解决iconGlyph只读导致空白/点不动); 设置面板空白已修(3.08); 截屏浮动菜单+总开关
+Description: [v3.10] 修控制中心点按无反应:浮动菜单/裁剪/悬浮窗创建UIWindow时挂载windowScene(iOS13+不挂则不显示);截屏改优先UIGetScreenImage抓真实整屏
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

@@ -43,4 +43,5 @@
 + (void)toast:(NSString *)msg;              // 顶部轻量提示
 + (UIColor *)accentColor;
 + (UIWindow *)topWindow;
++ (UIWindowScene *)activeWindowScene;   // iOS 13+：弹窗必须挂到 scene 才能显示
 @end
