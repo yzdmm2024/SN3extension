@@ -8,6 +8,9 @@
 
 #define XZ_PREFS_DOMAIN     @"com.axs.snapper3zhext"
 
+// 总开关（设置面板 Root.plist 第一项，Tweak.xm 中生效）
+#define XZ_KEY_MENU_ENABLED     @"Menu_Enabled"
+
 // 各插件开关
 #define XZ_KEY_OCR_ENABLED      @"OCR_Enabled"
 #define XZ_KEY_OCR_LANGS        @"OCR_Languages"

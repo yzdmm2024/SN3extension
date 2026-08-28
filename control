@@ -1,9 +1,9 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.05
+Version: 3.06
 Architecture: iphoneos-arm64
-Description: [v3.05] 设置面板: 编译期PSViewController子类(完全参照通知管理), 控制中心截图模块, 截屏浮动菜单
-Depends: mobilesubstrate, firmware(>=14.0)
+Description: [v3.06] 设置面板(类名对齐+Root.plist), 控制中心截图模块(编译期CCUIToggleModule子类), 截屏浮动菜单, 总开关
+Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
 Section: Tweaks

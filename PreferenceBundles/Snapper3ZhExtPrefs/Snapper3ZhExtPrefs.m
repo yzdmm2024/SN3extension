@@ -1,25 +1,27 @@
+//
+//  Snapper3ZhExtPrefs.m — 设置面板控制器（旧子工程副本，保持与 src/ 版本一致）
+//
+//  注意：顶层 Makefile 实际使用的是 src/Snapper3ZhExtPrefs.m，本文件是历史遗留的
+//  独立子工程（PreferenceBundles/Snapper3ZhExtPrefs/Makefile）源文件，并不参与构建。
+//  两份必须保持同步，类名统一为 SN3PrefsController，且必须用懒加载 specifiers getter。
+//
+
 @interface PSListController : UIViewController
 - (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
-- (void)setSpecifiers:(NSArray *)specifiers;
-- (void)reloadSpecifiers;
-@property (nonatomic, retain, readonly) NSArray *specifiers;
-@property (nonatomic, retain, readonly) UITableView *tableView;
 @end
 
-@interface Snapper3ZhExtPrefsController : PSListController
+@interface SN3PrefsController : PSListController {
+    NSArray *_specifiers;
+}
 @end
 
-@implementation Snapper3ZhExtPrefsController
+@implementation SN3PrefsController
 
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"SN3延伸板";
-    // 手动加载 Root.plist 中的 specifiers
-    NSArray *s = [self loadSpecifiersFromPlistName:@"Root" target:self];
-    if (s.count) {
-        [self setSpecifiers:s];
-        [self.tableView reloadData];
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
     }
+    return _specifiers;
 }
 
 @end

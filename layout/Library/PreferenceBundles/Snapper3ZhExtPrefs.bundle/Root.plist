@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key>
+	<string>SN3延伸板</string>
+	<key>items</key>
+	<array>
+		<!-- ============ 总开关 ============ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>总开关</string>
+			<key>footerText</key>
+			<string>关闭后截屏不再弹出浮动菜单。控制中心按钮仍可手动触发截屏。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>启用浮动菜单</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Menu_Enabled</string>
+			<key>default</key>
+			<true/>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+
+		<!-- ============ 文字识别 OCR ============ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>文字识别 (OCR)</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>启用 OCR</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>OCR_Enabled</string>
+			<key>default</key>
+			<true/>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>识别语言</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>OCR_Languages</string>
+			<key>default</key>
+			<string>zh-Hans,zh-Hant,en-US</string>
+			<key>placeholder</key>
+			<string>zh-Hans,zh-Hant,en-US</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+
+		<!-- ============ 翻译 ============ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>翻译</string>
+			<key>footerText</key>
+			<string>使用百度翻译 API，需在百度智能云开通通用文本翻译服务。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>启用翻译</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Translate_Enabled</string>
+			<key>default</key>
+			<false/>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>APP ID</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Translate_APIAppID</string>
+			<key>placeholder</key>
+			<string>输入百度翻译 APP ID</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSecureEditTextCell</string>
+			<key>label</key>
+			<string>APP KEY</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Translate_APIKey</string>
+			<key>placeholder</key>
+			<string>输入百度翻译密钥</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>目标语言</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Translate_TargetLang</string>
+			<key>default</key>
+			<string>zh</string>
+			<key>placeholder</key>
+			<string>zh</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+
+		<!-- ============ 长截图 ============ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>长截图</string>
+			<key>footerText</key>
+			<string>帧重叠比例 0~0.3，数值越大拼接越稳但截图越长；每帧间隔有效范围 0.03~0.15 秒。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>启用长截图</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LongShot_Enabled</string>
+			<key>default</key>
+			<false/>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>帧重叠比例</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LongShot_Overlap</string>
+			<key>default</key>
+			<real>0.15</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>max</key>
+			<real>0.3</real>
+			<key>showValue</key>
+			<true/>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>最大高度(px)</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LongShot_MaxHeight</string>
+			<key>default</key>
+			<string>20000</string>
+			<key>placeholder</key>
+			<string>20000</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>每帧间隔(秒)</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LongShot_Interval</string>
+			<key>default</key>
+			<string>0.05</string>
+			<key>placeholder</key>
+			<string>0.05</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+
+		<!-- ============ 问 AI ============ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>问 AI</string>
+			<key>footerText</key>
+			<string>兼容 OpenAI 接口格式（/v1/chat/completions）。API Key 仅保存在本机。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>启用问 AI</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>AskAI_Enabled</string>
+			<key>default</key>
+			<false/>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>Base URL</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>AskAI_BaseURL</string>
+			<key>placeholder</key>
+			<string>https://api.openai.com</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSecureEditTextCell</string>
+			<key>label</key>
+			<string>API Key</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>AskAI_APIKey</string>
+			<key>placeholder</key>
+			<string>sk-...</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>模型</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>AskAI_Model</string>
+			<key>placeholder</key>
+			<string>gpt-4o-mini</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>label</key>
+			<string>提问词</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>AskAI_Prompt</string>
+			<key>default</key>
+			<string>请描述这张图片中的内容</string>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+
+		<!-- ============ 控制中心 ============ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>控制中心</string>
+			<key>footerText</key>
+			<string>需安装 CCSupport（Snapper3 的控制中心模块同样依赖它）。装好后下拉控制中心，在编辑模式里找到「SN3截图」添加，点按即可截屏并弹出浮动菜单。</string>
+		</dict>
+	</array>
+</dict>
+</plist>
