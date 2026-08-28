@@ -1,19 +1,26 @@
 //
-//  AppScrollReporter.m — 精确长截图 · App 侧滚动监听（超级截图 v5.3）
+//  AppScrollReporter.m — 精确长截图 · App 侧【自动滚动】驱动（超级截图 v5.4）
 //
-//  原理：
-//    SpringBoard 的长截图「精确模式」点【开始采集】时 notify_post(arm)，并把采集区域
+//  原理（方案 A：自动滚动，用户完全不用手动滑）：
+//    SpringBoard 长截图「自动滚动」模式点【开始采集】时 notify_post(arm)，并把采集区域
 //    高度(点)写入 notify 状态 SN3_LS_REGIONH。本类收到 arm 后：
-//      1. 在 keyWindow 的视图树里找 contentSize 最大的 UIScrollView（聊天消息列表）；
-//      2. 每 0.1s 轮询它的 contentOffset.y（不用 KVO，避免滚动视图释放导致崩溃）；
-//      3. 累计滚动量 ≥ 半屏 且 停止滚动 0.2s（用户停手）→ 把当前 contentOffset.y 写入
-//         SN3_LS_OFFSET 状态、notify_post(capture)，SpringBoard 据此抓当前屏并按精确
-//         增量拼接。
-//    用户滑到顶/底不动时不会重复抓（累计量不够）；快速连滑会在每次停手时抓一屏。
-//    disarm 时若还有少量未抓的增量（≥5% 屏高）补抓最后一屏。
+//      1. 在 keyWindow 视图树里找 contentSize 最大的 UIScrollView（聊天消息列表）；
+//      2. 先把当前屏作为第 1 帧：write offset、notify_post(capture)；
+//      3. 启动定时循环：每次把 scrollView 的 contentOffset 向下推「约一屏高×92%」
+//         （setContentOffset:animated:NO，确定性、无惯性），等 ~0.55s 渲染后把新屏作为
+//         下一帧：write offset、notify_post(capture)；
+//      4. 当 contentOffset 到达底部(maxY)时，发最后一屏（底部剩余部分）后 notify_post(done)
+//         通知 SpringBoard 自动采集结束。
+//    SpringBoard 收到每帧时读取精确 offset，重叠 = 采集区域高 − 滚动增量（点），100% 准确，
+//    不靠任何像素比对猜测，从根本上消除聊天重复纹理导致的叠影。
+//
+//  为什么用「App 自己滚」而不是「SpringBoard 合成触摸」：
+//    iOS16 上 SpringBoard 合成的触摸事件能否真的驱动前台 App 滚动不可验证（风险高）；
+//    而直接驱动 App 自身的 UIScrollView.contentOffset 是确定性可靠的，且滚动量精确可知。
+//    注入范围仅 QQ/微信（见 plist），非全局。
 //
 //  为什么不用 KVO：arm 后用户可能退出聊天（滚动视图释放），KVO 在 dealloc 时会崩溃；
-//  改为轮询并在 _sv 变 nil 时自动 disarm，安全。
+//    改为轮询并在 _sv 变 nil 时自动 finishAuto，安全。
 //
 
 #include <notify.h>
@@ -21,15 +28,13 @@
 #import "SN3Notify.h"
 
 static AppScrollReporter *g_inst = nil;
-static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0;
+static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_doneTok = 0;
 
 @implementation AppScrollReporter {
     __weak UIScrollView *_sv;        // 主滚动视图（弱引用，释放即失效）
-    CGFloat _lastObs;                // 上一 tick 的 contentOffset.y
-    CGFloat _accum;                  // 自上次抓帧累计的滚动量（点）
-    NSTimeInterval _lastChange;      // 最近一次发生滚动的时间
-    BOOL   _armed;
     CGFloat _regionH;                // 采集区域高（点），来自 SB
+    BOOL   _armed;
+    BOOL   _autoStarted;             // 是否已经发出过第1帧并做过第一次滚动
     NSTimer *_timer;
 }
 
@@ -63,7 +68,6 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0;
     UIView *root = win.rootViewController ? win.rootViewController.view : win;
     UIScrollView *best = nil;
     CGFloat bestH = 0;
-    // 迭代遍历（聊天界面层级可能很深，避免递归爆栈）
     NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:root];
     while (stack.count) {
         UIView *v = stack.lastObject;
@@ -78,11 +82,17 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0;
     return best;
 }
 
+- (CGFloat)maxOffsetY {
+    if (!_sv) return 0;
+    CGFloat maxY = _sv.contentSize.height - _sv.bounds.size.height;
+    return maxY < 0 ? 0 : maxY;
+}
+
 - (void)arm {
-    _armed = YES;
+    [self disarm];                 // 先清掉残留
     _sv = [self findMainScrollView];
     if (!_sv) {
-        NSLog(@"[SN3] app: 未找到可滚动视图，精确模式将由 SB 看门狗回退自动");
+        NSLog(@"[SN3] app: 未找到可滚动视图，自动滚动无效（SB 看门狗将回退 SAD）");
         return;
     }
     uint64_t rh = 0;
@@ -90,50 +100,71 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0;
     _regionH = (CGFloat)rh / 100.0f;
     if (_regionH < 100.0f) _regionH = [UIScreen mainScreen].bounds.size.height;
 
-    _lastObs = _sv.contentOffset.y;
-    _accum = 0;
-    _lastChange = [[NSDate date] timeIntervalSince1970];
+    _armed = YES;
+    _autoStarted = NO;
 
-    [_timer invalidate]; _timer = nil;
-    _timer = [NSTimer scheduledTimerWithTimeInterval:0.1
+    // 第 1 帧：当前滚动位置作为基准
+    [self sendCaptureAt:_sv.contentOffset.y];
+
+    // 滚动 + 采集循环（间隔 0.55s：足够 UITableView/UICollectionView 加载并渲染新单元格）
+    _timer = [NSTimer scheduledTimerWithTimeInterval:0.55
                                              target:self
-                                           selector:@selector(poll)
+                                           selector:@selector(tick)
                                            userInfo:nil
                                             repeats:YES];
-    // 立即抓第 1 屏（当前滚动位置）
-    [self sendCaptureAt:_sv.contentOffset.y];
-    NSLog(@"[SN3] app: armed, regionH=%.0f, scrollView contentSize=%.0f",
-          _regionH, _sv.contentSize.height);
+    NSLog(@"[SN3] app: 自动滚动开始, regionH=%.0f, contentSize=%.0f, maxY=%.0f",
+          _regionH, _sv.contentSize.height, [self maxOffsetY]);
 }
 
 - (void)disarm {
     _armed = NO;
     [_timer invalidate]; _timer = nil;
-    // 收尾：若还有少量未抓增量（≥5% 屏高）补抓最后一屏
-    if (_sv && _accum >= _regionH * 0.05f) {
-        [self sendCaptureAt:_sv.contentOffset.y];
-    }
     _sv = nil;
-    NSLog(@"[SN3] app: disarmed");
+    NSLog(@"[SN3] app: 自动滚动已停止");
 }
 
-- (void)poll {
-    if (!_armed) return;
-    if (!_sv) { [self disarm]; return; }   // 滚动视图已释放，安全退出
+// 把 scrollView 向下推「约一屏高×92%」；返回实际滚动增量（点）
+- (CGFloat)scrollOneStep {
+    if (!_sv) return 0;
+    CGFloat step = MAX(40.0f, _regionH * 0.92f);   // 每次滚 ~92% 区域高 → 相邻帧重叠 ~8%
+    CGFloat cur = _sv.contentOffset.y;
+    CGFloat maxY = [self maxOffsetY];
+    CGFloat newOff = cur + step;
+    if (newOff > maxY) newOff = maxY;
+    [_sv setContentOffset:CGPointMake(_sv.contentOffset.x, newOff) animated:NO];
+    return newOff - cur;
+}
 
-    CGFloat now = _sv.contentOffset.y;
-    CGFloat d = now - _lastObs;
-    NSTimeInterval t = [[NSDate date] timeIntervalSince1970];
-    if (fabs(d) > 0.5f) {                   // 这一 tick 发生了滚动
-        _accum += fabs(d);
-        _lastObs = now;
-        _lastChange = t;
+- (void)tick {
+    if (!_armed) return;
+    if (!_sv) { [self finishAuto]; return; }        // 滚动视图已释放，安全退出
+
+    if (!_autoStarted) {
+        // 第 1 帧已发，这里做第一次滚动，下一次 tick 再抓滚动后的屏
+        _autoStarted = YES;
+        [self scrollOneStep];
+        return;
     }
-    // 累计滚够半屏 且 已停手 0.2s → 抓一屏并清零累计
-    if (_accum >= _regionH * 0.5f && (t - _lastChange) > 0.2) {
-        [self sendCaptureAt:now];
-        _accum = 0;
+
+    // 抓当前屏（上一轮滚动已渲染完毕）
+    [self sendCaptureAt:_sv.contentOffset.y];
+
+    CGFloat maxY = [self maxOffsetY];
+    if (_sv.contentOffset.y >= maxY - 1.0f) {
+        // 已滚到底：最后一屏（底部剩余部分）已发出，通知 SB 结束
+        [self finishAuto];
+        return;
     }
+    // 继续向下滚
+    [self scrollOneStep];
+}
+
+- (void)finishAuto {
+    _armed = NO;
+    [_timer invalidate]; _timer = nil;
+    _sv = nil;
+    notify_post(SN3_LS_DONE);          // 通知 SB：自动采集结束，可拼接/保存
+    NSLog(@"[SN3] app: 自动滚动采集完成（已到底）");
 }
 
 - (void)sendCaptureAt:(CGFloat)offset {

@@ -8,9 +8,10 @@
 #ifndef SN3Notify_h
 #define SN3Notify_h
 
-#define SN3_LS_ARM      "com.axs.snapper3zhext.ls.arm"       // SB -> App：开始监听滚动
-#define SN3_LS_DISARM   "com.axs.snapper3zhext.ls.disarm"    // SB -> App：停止监听
-#define SN3_LS_CAPTURE  "com.axs.snapper3zhext.ls.capture"  // App -> SB：请抓一帧
+#define SN3_LS_ARM      "com.axs.snapper3zhext.ls.arm"       // SB -> App：开始（自动滚动）采集
+#define SN3_LS_DISARM   "com.axs.snapper3zhext.ls.disarm"    // SB -> App：停止（提前结束）
+#define SN3_LS_CAPTURE  "com.axs.snapper3zhext.ls.capture"  // App -> SB：请抓一帧（偏移已写入 OFFSET 状态）
+#define SN3_LS_DONE     "com.axs.snapper3zhext.ls.done"      // App -> SB：已滚到底，自动采集结束
 #define SN3_LS_OFFSET   "com.axs.snapper3zhext.ls.offset"    // App 写入 / SB 读取：当前 contentOffset.y(点)*100
 #define SN3_LS_REGIONH  "com.axs.snapper3zhext.ls.regionh"   // SB 写入 / App 读取：采集区域高(点)*100
 

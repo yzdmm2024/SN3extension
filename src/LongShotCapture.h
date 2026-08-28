@@ -5,11 +5,11 @@
 //    以固定左右范围 + 两条标尺划定的 Y 轴垂直区间，自动分段多次抓取屏幕画面，
 //    Vision 特征匹配，帧与帧保留重叠，自动拼接生成完整长图；做最大高度限制防 OOM。
 //
-//  【v5.3 精确模式】
-//    本 tweak 现已向 QQ/微信注入 dylib（AppScrollReporter）读取真实 UIScrollView
-//    contentOffset，按精确滚动增量拼接（重叠 = 采集区域高 − 滚动量），100% 准确。
+//  【v5.4 自动滚动模式】
+//    本 tweak 向 QQ/微信注入 dylib（AppScrollReporter）自动驱动 UIScrollView 逐屏下滚，
+//    按精确滚动增量拼接（重叠 = 采集区域高 − 滚动量），100% 准确、零叠影。
 //    该路径走 addExactFrame:overlapPoints:，不依赖本类的 SAD 配准。
-//    旧 addFrame:/addManualFrame: 仍保留，作为非注入 App 的自动/手动回退。
+//    旧 addFrame:/addManualFrame: 仍保留，作为非注入 App 的自动(SAD)/手动回退。
 //
 //  调用关系：
 //    MaskCropWindow.captureTick

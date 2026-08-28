@@ -40,7 +40,7 @@ static const CGFloat kFrameTopInset  = 54.0;   // 框顶距安全区上沿（留
 static const CGFloat kFrameBotInset  = 86.0;   // 框底距屏幕底（留给底部两按钮）
 
 // ---- v5.3：精确模式跨进程 notify token（进程级，仅注册一次）----
-static int g_capTok = 0, g_offTok = 0, g_regionTok = 0;
+static int g_capTok = 0, g_offTok = 0, g_regionTok = 0, g_doneTok = 0;
 static BOOL g_lsReg = NO;
 
 typedef NS_ENUM(NSInteger, XZDragTarget) {
@@ -75,11 +75,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UILabel  *_longCountLabel;      // 已采集帧数
 
     // ---- v5.3：长截图算法（精确读offset / 自动SAD / 手动下一屏）----
-    NSInteger _lsAlgo;              // 0=精确(读offset) 1=自动(SAD) 2=手动(下一屏)
+    NSInteger _lsAlgo;              // 0=自动滚动(驱动App滚动) 1=自动(SAD) 2=手动(下一屏)
     UIButton *_modeToggleBtn;       // 框左上角「模式:精确/自动/手动」切换
     UIButton *_nextBtn;             // 框左下「下一屏」（仅手动模式显示）
     UIButton *_startBtn;            // 框顶部「▶开始采集」（仅精确模式显示）
-    BOOL     _lsActive;             // 精确模式已 arm、正在接收 App 偏移抓帧
+    BOOL     _lsActive;             // 自动滚动模式已 arm、正在接收 App 偏移抓帧
     CGFloat  _lsPrevOffsetY;        // 上一帧 contentOffset.y（点），首帧为 NAN
     NSTimer *_lsWatchdog;           // 精确模式无响应→回退自动的看门狗
 
@@ -128,7 +128,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _cropRect = CGRectZero;
         _hasCrop = NO;
         _capturing = NO;
-        _lsAlgo = 0;                // v5.3：默认精确模式（读真实 offset）
+        _lsAlgo = 0;                // v5.4：默认自动滚动模式（驱动 App 滚动）
     }
     return self;
 }
@@ -244,7 +244,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _closeBtn.hidden    = NO;
         _longCountLabel.hidden = NO;
         _modeToggleBtn.hidden = NO;             // v5.3：模式切换常驻
-        [_modeToggleBtn setTitle:(_lsAlgo == 0 ? @"模式:精确" : (_lsAlgo == 1 ? @"模式:自动" : @"模式:手动"))
+        [_modeToggleBtn setTitle:(_lsAlgo == 0 ? @"模式:自动滚动" : (_lsAlgo == 1 ? @"模式:自动(SAD)" : @"模式:手动"))
                          forState:UIControlStateNormal];
         _nextBtn.hidden      = (_lsAlgo != 2); // 仅手动模式显示
         _startBtn.hidden     = (_lsAlgo != 0); // 仅精确模式显示
@@ -275,7 +275,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _entryTile = nil;
     _lastAddedTile = nil;
     if (_lsActive) { _lsActive = NO; [self stopLsWatchdog]; notify_post(SN3_LS_DISARM); }
-    _lsAlgo = 0;               // v5.3：退出长截图复位为精确模式
+    _lsAlgo = 0;               // v5.4：退出长截图复位为自动滚动模式
     _modeToggleBtn = nil;      // v5.2
     _nextBtn = nil;            // v5.2
     _startBtn = nil;           // v5.3
@@ -403,7 +403,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _modeToggleBtn.frame = CGRectMake(12, top - 38, 100, 40);
     _modeToggleBtn.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
     _modeToggleBtn.layer.cornerRadius = 10;
-    [_modeToggleBtn setTitle:@"模式:自动" forState:UIControlStateNormal];
+    [_modeToggleBtn setTitle:@"模式:自动滚动" forState:UIControlStateNormal];
     [_modeToggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     _modeToggleBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     [_modeToggleBtn addTarget:self action:@selector(onToggleMode) forControlEvents:UIControlEventTouchUpInside];
@@ -434,11 +434,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         [self stopCaptureTimer];
         [_startBtn setTitle:@"▶ 开始采集" forState:UIControlStateNormal];
         _startBtn.enabled = YES;
-        [Common toast:@"精确模式：框好区域后点【开始采集】，再下滑"];
+        [Common toast:@"自动滚动：框好区域后点【开始采集】，自动逐屏滚到底"];
     } else if (_lsAlgo == 1) {
         [self stopCaptureTimer];
         [self startCaptureTimer];
-        [Common toast:@"自动(SAD)模式：框内滑动自动采集"];
+        [Common toast:@"自动(SAD)模式：框内手动滑动自动采集"];
     } else {
         [self stopCaptureTimer];
         [Common toast:@"手动模式：框内滑完一屏点【下一屏】"];
@@ -482,8 +482,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     notify_register_dispatch(SN3_LS_CAPTURE, &g_capTok, dispatch_get_main_queue(), ^(int t) {
         [[MaskCropWindow sharedInstance] onLsCapture];
     });
+    notify_register_dispatch(SN3_LS_DONE, &g_doneTok, dispatch_get_main_queue(), ^(int t) {
+        [[MaskCropWindow sharedInstance] onLsDone];
+    });
     g_lsReg = YES;
-    NSLog(@"[SN3] SB 精确模式 capture 通知已注册");
+    NSLog(@"[SN3] SB 自动滚动模式 capture/done 通知已注册");
 }
 
 - (void)stopLsWatchdog {
@@ -515,7 +518,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
                                                selector:@selector(lsWatchdogFired)
                                                userInfo:nil
                                                 repeats:NO];
-    [Common toast:@"精确模式：从顶部下滑，自动逐屏采集"];
+    [Common toast:@"自动滚动采集中…（你不用动手）"];
 }
 
 - (void)lsWatchdogFired {
@@ -569,6 +572,16 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CGFloat ov = regionH - delta;               // 精确重叠 = 区域高 − 滚动增量
     BOOL accepted = [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:ov];
     if (accepted) [self updateLongCounter];
+}
+
+// App 通知：已自动滚到底，采集结束。标记完成，等待用户点保存。
+- (void)onLsDone {
+    if (!_win || _mode != XZMaskModeLong) return;
+    if (!_lsActive) return;
+    _lsActive = NO;
+    [self stopLsWatchdog];
+    [Common toast:@"已到底，可点【保存长图】"];
+    NSLog(@"[SN3] SB：自动滚动采集结束，共 %ld 屏", (long)[[LongShotCapture sharedInstance] frameCount]);
 }
 
 // 保存/复制前：若精确模式仍激活，先 disarm 让 App 补抓末屏，再拼接

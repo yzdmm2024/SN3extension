@@ -1,5 +1,5 @@
 //
-//  Tweak.xm — 超级截图 v5.3 入口（SpringBoard + 聊天 App 双注入）
+//  Tweak.xm — 超级截图 v5.4 入口（SpringBoard + 聊天 App 双注入）
 //
 //  ────────────────────────────────────────────────────────────────────────
 //  触发链：
@@ -10,12 +10,10 @@
 //                    ├─ 正常截图 → 抓屏裁剪 → 销毁A → [EditToolbarWindow showWithImage:] ← 窗口B
 //                    └─ 长截图   → 双标尺调节 → 分段抓帧 → 拼接 → 销毁A → 窗口B
 //
-//  进程分流：只在 SpringBoard 注册与响应。
-//    （v3.14 的教训：cc.capture 是广播，若 App 进程也响应会同时弹两套窗口，
-//      两边窗口状态互相干扰导致确认裁剪时闪退。）
+//  进程分流：SpringBoard 注册与响应；QQ/微信仅注册 AppScrollReporter（自动滚动驱动）。
 //
 //  注入范围：layout/.../Snapper3ZhExt.plist 的 Filter 写 com.apple.springboard（主逻辑）
-//    + com.tencent.mqq / com.tencent.xin（v5.3 精确长截图：读真实 UIScrollView contentOffset）。
+//    + com.tencent.mqq / com.tencent.xin（v5.4 自动滚动长截图：驱动 UIScrollView 上报精确偏移）。
 //    仍不要加 "*"——只注入必要的聊天 App，避免拖慢启动 / 触发安全模式。
 //  ────────────────────────────────────────────────────────────────────────
 //
@@ -56,7 +54,7 @@ __attribute__((constructor)) static void xz_ctor() {
     @autoreleasepool {
         NSString *procName = [NSProcessInfo processInfo].processName;
         if ([procName isEqualToString:@"SpringBoard"]) {
-            NSLog(@"[SN3] 超级截图 v5.3 loaded in SpringBoard");
+            NSLog(@"[SN3] 超级截图 v5.4 loaded in SpringBoard");
             dispatch_async(dispatch_get_main_queue(), ^{
                 @try {
                     CFNotificationCenterAddObserver(
@@ -72,12 +70,12 @@ __attribute__((constructor)) static void xz_ctor() {
                 }
             });
         } else {
-            // v5.3：精确长截图 —— 仅对目标聊天 App 注入，读真实 UIScrollView contentOffset
+            // v5.4：自动滚动长截图 —— 仅对目标聊天 App 注入，驱动 UIScrollView 上报精确偏移
             NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
             if ([bid isEqualToString:@"com.tencent.mqq"] ||
                 [bid isEqualToString:@"com.tencent.xin"]) {
                 [AppScrollReporter setup];
-                NSLog(@"[SN3] v5.3 AppScrollReporter enabled in %@", bid);
+                NSLog(@"[SN3] v5.4 AppScrollReporter enabled in %@", bid);
             }
         }
     }
