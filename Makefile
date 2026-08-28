@@ -29,11 +29,9 @@ SN3CCModule_FILES = src/SN3CCModule.m
 SN3CCModule_INSTALL_PATH = /Library/ControlCenter/Bundles
 SN3CCModule_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc
 SN3CCModule_FRAMEWORKS = UIKit Foundation
-# 必须显式链接 ControlCenterUIKit（私有框架），否则 ObjC 运行时注册
-# SN3CCModule 时找不到父类 CCUIToggleModule —— Snapper3 官方模块同样如此。
-# 若所用 SDK 缺该私有框架导致链接失败，可删掉此行（退回运行时解析，
-# 前提是加载顺序上 ControlCenterUIKit 已先被 CCSupport 载入）。
-SN3CCModule_PRIVATE_FRAMEWORKS = ControlCenterUIKit
+# 不显式链接 ControlCenterUIKit：该私有框架不一定在 CI 的 theos SDK 里，
+# 且本模块靠 -undefined,dynamic_lookup 运行时解析父类（CCSupport 载入时
+# ControlCenterUIKit 已在控制中心进程内，符号必然可用）。
 SN3CCModule_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk

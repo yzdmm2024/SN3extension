@@ -15,6 +15,9 @@
 //    找 Root.plist，返回 nil，结果面板空白（有入口、点进去啥也没有）。
 //
 
+#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
+
 @interface PSListController : UIViewController
 - (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 @end
