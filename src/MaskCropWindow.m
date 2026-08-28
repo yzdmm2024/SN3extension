@@ -1,16 +1,21 @@
 //
-//  MaskCropWindow.m — 窗口A：遮罩镂空框选 + 长截图悬浮调节面板（超级截图 v4.5）
+//  MaskCropWindow.m — 窗口A：遮罩镂空框选 + 长截图实时预览框（超级截图 v4.6）
 //
 //  ────────────────────────────────────────────────────────────────────────
-//  v4.5 交互重设计（依据用户实测反馈）：
-//    · 三种截图入口彻底分离，互不打扰：
-//        - 正常截图：仿系统电源+音量键，截【整屏全屏】，直接保存到相册「SN3截图」，
-//                   不弹任何编辑工具栏（原生行为，截图完即结束）。
-//        - 局部截图：先拖框选区域，点「局部截图」→ 销毁窗口A → 弹窗口B 两排编辑工具栏。
-//        - 长截图：点「长截图」直接弹出【独立悬浮在屏幕中间的调节面板】，不再要求先画矩形；
-//                  宽度恒为整机全屏宽；面板里上下两个滑杆决定截取的垂直起始/结束范围；
-//                  用户滑动底层 App 后点「采集下一屏」逐帧采集，点「生成长图」拼接 → 窗口B。
-//    · 抓屏前必隐藏遮罩/面板，绝不把暗色/控件截进图片。
+//  v4.6 交互重设计（依据用户实测反馈）：
+//    · 局部截图 = 默认模式：
+//        - 进入遮罩即局部截图模式，直接拖框；
+//        - 松手【立即】裁出选区 → 销毁窗口A → 弹窗口B 两排编辑工具栏；
+//        - 不再需要「再点一次截图按钮」确认（去掉底部确认栏）。
+//        - 顶部保留三个小入口：【正常截图】【长截图】【取消】。
+//    · 正常截图：仿系统电源+音量键，截整屏直接存相册「SN3截图」，不弹编辑（原生行为）。
+//    · 长截图 = 独立实时预览框：
+//        - 点【长截图】直接弹出全屏宽「截取框」；
+//        - 框内触摸穿透，底层 App 可上下滑动，实时预览长截图内容；
+//        - 框外只有 2 个按钮：【生成长图】【取消】；
+//        - 取消上下标尺、取消手动「采集下一屏」：进入即启动自动抓帧定时器（~0.4s），
+//          框内滑动期间逐帧采集、重叠去重，松手静止即停采；看到满意的起止内容后点【生成长图】。
+//    · 抓屏前必隐藏边框/遮罩，绝不把暗色/控件截进图片。
 //    · 退出时完整销毁窗口并置空，防 SpringBoard 泄漏。
 //
 //  ────────────────────────────────────────────────────────────────────────
@@ -23,14 +28,14 @@
 #import "LongShotCapture.h"
 
 // ---------- 布局常量（pt） ----------
-static const CGFloat kToolbarH  = 96.0;   // 底部按钮区总高（含安全区外留白）
-static const CGFloat kButtonH   = 46.0;   // 按钮高
-static const CGFloat kMinCrop   = 16.0;   // 有效选区最小边长
+static const CGFloat kTopBarH  = 44.0;   // 顶部小入口栏高
+static const CGFloat kButtonH  = 46.0;   // 按钮高
+static const CGFloat kMinCrop  = 16.0;   // 有效选区最小边长
 
-// 长截图悬浮面板
-static const CGFloat kPanelW    = 300.0;
-static const CGFloat kPanelH    = 396.0;
-static const CGFloat kPanelBtnH = 42.0;
+// 长截图截取框留白
+static const CGFloat kFrameTopInset  = 64.0;   // 框顶距安全区上沿
+static const CGFloat kFrameSideInset = 6.0;    // 框左右留白（≈全屏宽）
+static const CGFloat kFrameBotInset  = 96.0;   // 框底距按钮区
 
 typedef NS_ENUM(NSInteger, XZDragTarget) {
     XZDragNone       = 0,
@@ -42,32 +47,26 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (void)setWindowHidden:(BOOL)hidden;
 - (void)captureShotAndEditWithRect:(CGRect)rect;   // 局部截图 → 窗口B
 - (void)captureFullScreenAndSave;                  // 正常截图 → 相册（无编辑）
-- (void)refreshChrome;                             // 强制刷新底部按钮栏
+- (void)refreshChrome;                             // 强制刷新 UI
 @end
 
 @implementation MaskCropWindow {
     XZPassThroughWindow *_win;      // 窗口A（可穿透）
-    UIView      *_contentView;      // 全屏容器
+    UIView      *_contentView;      // 全屏容器（承载遮罩/边框图层）
     CAShapeLayer *_dimLayer;        // 半透明黑遮罩（evenOdd 镂空）
-    CAShapeLayer *_borderLayer;     // 蓝色描边
+    CAShapeLayer *_borderLayer;     // 描边（局部选区 / 长截图框）
 
-    // ---- 底部按钮区（框选模式） ----
-    UIView   *_toolbar;
-    UIButton *_btnLong;             // 长截图
-    UIButton *_btnNormal;           // 正常截图
-    UIButton *_btnCrop;             // 局部截图（v4.5 新增）
-    UIButton *_btnCancel;           // 取消
-    UILabel  *_hintLabel;           // 顶部提示
+    // ---- 顶部小入口栏（框选模式） ----
+    UIView   *_topBar;
+    UIButton *_btnTopNormal;        // 正常截图
+    UIButton *_btnTopLong;          // 长截图
+    UIButton *_btnTopCancel;        // 取消
+    UILabel  *_hintLabel;           // 提示
 
-    // ---- 长截图悬浮面板（独立窗口，居中） ----
-    UIView      *_longPanel;
-    UISlider    *_startSlider;      // 起始 Y（0~1）
-    UISlider    *_endSlider;        // 结束 Y（0~1）
-    UILabel     *_bandLabel;        // 区间提示
-    UILabel     *_longCountLabel;   // 已采集帧数
-    UIButton    *_btnCaptureFrame;  // 采集下一屏
-    UIButton    *_btnGenerate;      // 生成长图
-    UIButton    *_btnLongCancel;    // 取消
+    // ---- 长截图：框外 2 按钮 + 计数 ----
+    UIButton *_btnGen;              // 生成长图
+    UIButton *_btnLongCancel;       // 取消
+    UILabel  *_longCountLabel;      // 已采集帧数
 
     // ---- 状态 ----
     XZMaskMode   _mode;
@@ -77,13 +76,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CGPoint _panStart;              // 画框起点
     CGPoint _panGrab;               // 拖动时手指在框内的相对偏移
 
-    // 长截图锁定量（v4.5：宽度恒为全屏宽，由滑杆决定上下范围）
-    CGFloat _longX;                 // 锁死左边界（恒 0）
-    CGFloat _longW;                 // 锁死宽度（恒全屏宽）
-    CGFloat _topY;                  // 起始 Y（点）
-    CGFloat _bottomY;               // 结束 Y（点）
-    CGFloat _startRatio;            // 起始比例 0~1
-    CGFloat _endRatio;              // 结束比例 0~1
+    CGRect   _longFrameRect;        // 长截图截取框（窗口/屏幕坐标）
+    NSTimer *_captureTimer;         // 自动抓帧定时器
+    BOOL     _capturing;            // 抓帧防重入
 }
 
 #pragma mark - 单例 / 生命周期
@@ -102,8 +97,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _drag = XZDragNone;
         _cropRect = CGRectZero;
         _hasCrop = NO;
-        _startRatio = 0.0;
-        _endRatio = 1.0;
+        _capturing = NO;
     }
     return self;
 }
@@ -135,7 +129,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _dimLayer.frame = _win.bounds;
     [_contentView.layer addSublayer:_dimLayer];
 
-    // 蓝色描边
+    // 描边
     _borderLayer = [CAShapeLayer layer];
     _borderLayer.strokeColor = [UIColor systemBlueColor].CGColor;
     _borderLayer.lineWidth = 2.0;
@@ -149,26 +143,48 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     pan.delegate = self;
     [_contentView addGestureRecognizer:pan];
 
-    [self installToolbar];
-    [self installLongPanel];
+    [self installTopBar];
+    [self installLongControls];
     [self setMode:XZMaskModeCrop];
     [self refreshChrome];
 
     _win.hidden = NO;
-    NSLog(@"[SN3] mask window A shown");
+    [Common toast:@"拖出要截取的区域，松手即弹出编辑菜单"];
+    NSLog(@"[SN3] mask window A shown (v4.6)");
 }
 
 - (void)refreshChrome {
-    if (!_win || !_toolbar) return;
+    if (!_win) return;
+
     if (_mode == XZMaskModeCrop) {
-        _toolbar.hidden = NO;
-        _hintLabel.hidden = NO;
-        _longPanel.hidden = YES;
-        [self layoutButtons:@[_btnLong, _btnNormal, _btnCrop, _btnCancel]];
-        [_win bringSubviewToFront:_toolbar];
+        _topBar.hidden        = NO;
+        _hintLabel.hidden     = NO;
+        _btnGen.hidden        = YES;
+        _btnLongCancel.hidden = YES;
+        _longCountLabel.hidden = YES;
+        _win.passthrough      = NO;              // 框选阶段吃下全屏拖拽
+        _contentView.userInteractionEnabled = YES;
+        _borderLayer.hidden = !_hasCrop;
+        [self updateMask];
+        [_win bringSubviewToFront:_topBar];
         [_win bringSubviewToFront:_hintLabel];
-        [_win layoutIfNeeded];
+    } else {
+        _topBar.hidden        = YES;
+        _hintLabel.hidden     = YES;
+        _btnGen.hidden        = NO;
+        _btnLongCancel.hidden = NO;
+        _longCountLabel.hidden = NO;
+        _win.passthrough      = YES;             // 长截图：框内穿透、框外吞咽
+        _win.passRect        = _longFrameRect;   // 框内坐标 → 穿透给 App
+        _contentView.userInteractionEnabled = NO; // 不拦截手势，交给 hitTest 决定
+        _borderLayer.hidden = NO;
+        [self updateMask];
+        [self updateLongCounter];
+        [_win bringSubviewToFront:_btnGen];
+        [_win bringSubviewToFront:_btnLongCancel];
+        [_win bringSubviewToFront:_longCountLabel];
     }
+    [_win layoutIfNeeded];
 }
 
 - (void)dismiss {
@@ -176,6 +192,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _drag = XZDragNone;
     _hasCrop = NO;
     _cropRect = CGRectZero;
+    _capturing = NO;
+
+    if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
 
     if (_win) {
         _win.hidden = YES;          // UIWindow 必须先隐藏再从视图树摘除，直接置 nil 会留下可见层
@@ -185,15 +204,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _dimLayer = nil;
     _borderLayer = nil;
 
-    _toolbar = nil;
-    _btnLong = _btnNormal = _btnCrop = _btnCancel = nil;
+    _topBar = nil;
+    _btnTopNormal = _btnTopLong = _btnTopCancel = nil;
     _hintLabel = nil;
-
-    _longPanel = nil;
-    _startSlider = _endSlider = nil;
-    _bandLabel = nil;
+    _btnGen = _btnLongCancel = nil;
     _longCountLabel = nil;
-    _btnCaptureFrame = _btnGenerate = _btnLongCancel = nil;
 
     [[LongShotCapture sharedInstance] reset];
     NSLog(@"[SN3] mask window A destroyed");
@@ -202,36 +217,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (CGRect)cropRect { return _cropRect; }
 - (BOOL)hasSelection { return _hasCrop && _cropRect.size.width >= kMinCrop && _cropRect.size.height >= kMinCrop; }
 
-#pragma mark - 底部按钮区（框选模式）
+#pragma mark - 顶部小入口栏 + 长截图按钮
 
-- (void)installToolbar {
-    CGRect scr = [UIScreen mainScreen].bounds;
-    UIEdgeInsets safe = [Common screenSafeInsets];
-    CGFloat barH = kToolbarH;
-    CGFloat barY = scr.size.height - safe.bottom - barH;
-    barY = MIN(MAX(barY, 0), scr.size.height - barH);   // 硬钳制进屏幕，避免 safeArea 异常送出屏
-
-    _toolbar = [[UIView alloc] initWithFrame:CGRectMake(0, barY, scr.size.width, barH)];
-    _toolbar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
-    [_win addSubview:_toolbar];
-    [_win addInteractiveView:_toolbar];
-
-    // 框选模式：长截图 / 正常截图 / 局部截图 / 取消
-    _btnLong   = [self makeButton:@"长截图"   bg:[UIColor systemYellowColor] action:@selector(onLongShot)];
-    _btnNormal = [self makeButton:@"正常截图" bg:[UIColor systemBlueColor]   action:@selector(onNormalShot)];
-    _btnCrop   = [self makeButton:@"局部截图" bg:[UIColor systemTealColor]   action:@selector(onFreeCrop)];
-    _btnCancel = [self makeButton:@"取消"     bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
-
-    _hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, safe.top + 8, scr.size.width, 24)];
-    _hintLabel.textColor = [UIColor whiteColor];
-    _hintLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    _hintLabel.textAlignment = NSTextAlignmentCenter;
-    _hintLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
-    [_win addSubview:_hintLabel];
-    [_win addInteractiveView:_hintLabel];
-}
-
-- (UIButton *)makeButton:(NSString *)title bg:(UIColor *)bg action:(SEL)sel {
+- (UIButton *)makeBarButton:(NSString *)title bg:(UIColor *)bg action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.backgroundColor = bg;
     b.layer.cornerRadius = 10;
@@ -241,195 +229,113 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     b.titleLabel.adjustsFontSizeToFitWidth = YES;
     b.titleLabel.minimumScaleFactor = 0.8;
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
-    [_toolbar addSubview:b];
+    [_win addSubview:b];
+    [_win addInteractiveView:b];
     return b;
 }
 
-// 把 N 个按钮等宽排进底部栏
-- (void)layoutButtons:(NSArray<UIButton *> *)btns {
-    CGFloat pad = 12.0, gap = 8.0;
-    CGFloat totalW = _toolbar.bounds.size.width - pad * 2;
-    CGFloat bw = (totalW - gap * (btns.count - 1)) / MAX(1, (CGFloat)btns.count);
-    CGFloat y = (kToolbarH - kButtonH) / 2.0;
+- (void)installTopBar {
+    CGRect scr = [UIScreen mainScreen].bounds;
+    UIEdgeInsets safe = [Common screenSafeInsets];
+    CGFloat y = safe.top;
+    _topBar = [[UIView alloc] initWithFrame:CGRectMake(0, y, scr.size.width, kTopBarH)];
+    _topBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    [_win addSubview:_topBar];
+    [_win addInteractiveView:_topBar];
+
+    _btnTopNormal = [self makeBarButton:@"正常截图" bg:[UIColor systemBlueColor]   action:@selector(onNormalShot)];
+    _btnTopLong   = [self makeBarButton:@"长截图"   bg:[UIColor systemYellowColor] action:@selector(onLongShot)];
+    _btnTopCancel = [self makeBarButton:@"取消"     bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
+    [self layoutTopBar];
+
+    _hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, y + kTopBarH, scr.size.width, 22)];
+    _hintLabel.textColor = [UIColor whiteColor];
+    _hintLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    _hintLabel.textAlignment = NSTextAlignmentCenter;
+    _hintLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
+    _hintLabel.text = @"拖框选区域，松手即编辑 · 顶部可切「正常截图/长截图」";
+    [_win addSubview:_hintLabel];
+    [_win addInteractiveView:_hintLabel];
+}
+
+- (void)layoutTopBar {
+    CGFloat pad = 10.0, gap = 8.0;
+    CGFloat totalW = _topBar.bounds.size.width - pad * 2;
+    CGFloat bw = (totalW - gap * 2) / 3.0;
+    CGFloat y = (kTopBarH - (kButtonH - 8)) / 2.0;
     CGFloat x = pad;
-    for (UIButton *b in btns) {
-        b.frame = CGRectMake(x, y, bw, kButtonH);
+    for (UIButton *b in @[_btnTopNormal, _btnTopLong, _btnTopCancel]) {
+        b.frame = CGRectMake(x, y, bw, kButtonH - 8);
         x += bw + gap;
     }
 }
 
-#pragma mark - 长截图悬浮面板
-
-- (void)installLongPanel {
+- (void)installLongControls {
     CGRect scr = [UIScreen mainScreen].bounds;
-    CGFloat px = (scr.size.width - kPanelW) / 2.0;
-    CGFloat py = (scr.size.height - kPanelH) / 2.0;
-    _longPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, kPanelW, kPanelH)];
-    _longPanel.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.94];
-    _longPanel.layer.cornerRadius = 16;
-    _longPanel.clipsToBounds = YES;
-    _longPanel.hidden = YES;
-    [_win addSubview:_longPanel];
-    [_win addInteractiveView:_longPanel];          // 面板内所有子视图（按钮/滑杆）一并接收触摸
+    UIEdgeInsets safe = [Common screenSafeInsets];
 
-    // 标题
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 14, kPanelW, 26)];
-    title.text = @"长截图（全屏宽）";
-    title.textColor = [UIColor whiteColor];
-    title.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    title.textAlignment = NSTextAlignmentCenter;
-    [_longPanel addSubview:title];
+    // 长截图截取框（全屏宽，留上下边距给按钮/提示）
+    CGFloat top = safe.top + kFrameTopInset;
+    CGFloat bot = safe.bottom + kFrameBotInset;
+    _longFrameRect = CGRectMake(kFrameSideInset, top,
+                                scr.size.width - 2 * kFrameSideInset,
+                                MAX(40, scr.size.height - top - bot));
 
-    // 起点滑杆
-    UILabel *sl = [[UILabel alloc] initWithFrame:CGRectMake(16, 52, kPanelW - 32, 18)];
-    sl.text = @"起始位置"; sl.textColor = [UIColor systemGreenColor];
-    sl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-    [_longPanel addSubview:sl];
-    _startSlider = [[UISlider alloc] initWithFrame:CGRectMake(16, 74, kPanelW - 32, 30)];
-    _startSlider.minimumValue = 0; _startSlider.maximumValue = 1; _startSlider.value = 0;
-    _startSlider.minimumTrackTintColor = [UIColor systemGreenColor];
-    [_startSlider addTarget:self action:@selector(onSlider:) forControlEvents:UIControlEventValueChanged];
-    [_longPanel addSubview:_startSlider];
+    // 框外两按钮：生成长图 / 取消
+    CGFloat by = scr.size.height - safe.bottom - 84;
+    CGFloat pad = 16.0, gap = 12.0;
+    CGFloat bw = (scr.size.width - pad * 2 - gap) / 2.0;
+    _btnGen = [self makeBarButton:@"生成长图"
+                                bg:[UIColor systemGreenColor]
+                              action:@selector(onLongGenerate)];
+    _btnGen.frame = CGRectMake(pad, by, bw, kButtonH);
+    _btnLongCancel = [self makeBarButton:@"取消"
+                                      bg:[UIColor systemGrayColor]
+                                    action:@selector(onLongCancel)];
+    _btnLongCancel.frame = CGRectMake(pad + bw + gap, by, bw, kButtonH);
 
-    // 终点滑杆
-    UILabel *el = [[UILabel alloc] initWithFrame:CGRectMake(16, 116, kPanelW - 32, 18)];
-    el.text = @"结束位置"; el.textColor = [UIColor systemRedColor];
-    el.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-    [_longPanel addSubview:el];
-    _endSlider = [[UISlider alloc] initWithFrame:CGRectMake(16, 138, kPanelW - 32, 30)];
-    _endSlider.minimumValue = 0; _endSlider.maximumValue = 1; _endSlider.value = 1;
-    _endSlider.minimumTrackTintColor = [UIColor systemRedColor];
-    [_endSlider addTarget:self action:@selector(onSlider:) forControlEvents:UIControlEventValueChanged];
-    [_longPanel addSubview:_endSlider];
-
-    // 区间提示
-    _bandLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 178, kPanelW - 32, 20)];
-    _bandLabel.textColor = [UIColor whiteColor];
-    _bandLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-    _bandLabel.textAlignment = NSTextAlignmentCenter;
-    [_longPanel addSubview:_bandLabel];
-
-    // 已采集帧数
-    _longCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 202, kPanelW - 32, 20)];
-    _longCountLabel.textColor = [UIColor colorWithWhite:1 alpha:0.85];
-    _longCountLabel.font = [UIFont systemFontOfSize:12];
+    // 计数提示（框底内）
+    _longCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, _longFrameRect.origin.y + _longFrameRect.size.height - 24,
+                                                                scr.size.width, 20)];
+    _longCountLabel.textColor = [UIColor whiteColor];
+    _longCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     _longCountLabel.textAlignment = NSTextAlignmentCenter;
-    _longCountLabel.text = @"已采集 0 帧";
-    [_longPanel addSubview:_longCountLabel];
-
-    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(16, 226, kPanelW - 32, 32)];
-    tip.text = @"滑动底层页面换内容，点「采集下一屏」逐帧抓取";
-    tip.textColor = [UIColor colorWithWhite:1 alpha:0.7];
-    tip.font = [UIFont systemFontOfSize:11];
-    tip.numberOfLines = 2;
-    tip.textAlignment = NSTextAlignmentCenter;
-    [_longPanel addSubview:tip];
-
-    // 按钮行：采集下一屏 / 生成长图
-    CGFloat rowY = 296, bw = (kPanelW - 32 - 8) / 2.0;
-    _btnCaptureFrame = [self panelButton:@"采集下一屏" bg:[UIColor systemBlueColor]
-                                    frame:CGRectMake(16, rowY, bw, kPanelBtnH)
-                                   action:@selector(onLongCaptureFrame)];
-    _btnGenerate = [self panelButton:@"生成长图" bg:[UIColor systemGreenColor]
-                                frame:CGRectMake(16 + bw + 8, rowY, bw, kPanelBtnH)
-                               action:@selector(onLongGenerate)];
-    // 取消（整行）
-    _btnLongCancel = [self panelButton:@"取消" bg:[UIColor systemGrayColor]
-                                  frame:CGRectMake(16, rowY + kPanelBtnH + 10, kPanelW - 32, kPanelBtnH)
-                                 action:@selector(onLongCancel)];
-}
-
-- (UIButton *)panelButton:(NSString *)title bg:(UIColor *)bg frame:(CGRect)f action:(SEL)sel {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.frame = f;
-    b.backgroundColor = bg;
-    b.layer.cornerRadius = 10;
-    [b setTitle:title forState:UIControlStateNormal];
-    [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    b.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
-    [_longPanel addSubview:b];
-    return b;
+    _longCountLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+    _longCountLabel.text = @"已采集 0 屏";
+    [_win addSubview:_longCountLabel];
+    [_win addInteractiveView:_longCountLabel];
 }
 
 #pragma mark - 模式切换
 
 - (void)setMode:(XZMaskMode)mode {
     _mode = mode;
-    BOOL isLong = (mode == XZMaskModeLong);
-
-    _btnLong.hidden   = isLong;
-    _btnNormal.hidden = isLong;
-    _btnCrop.hidden   = isLong;
-    _btnCancel.hidden = isLong;
-
-    if (isLong) {
-        // 长截图：隐藏遮罩与底部栏，弹出悬浮面板；触摸穿透（面板外区域让位给底层 App 滑动）
-        _dimLayer.hidden = YES;
-        _borderLayer.hidden = YES;
-        _toolbar.hidden = YES;
-        _hintLabel.hidden = YES;
-        _longPanel.hidden = NO;
-        _win.passthrough = YES;
-        _contentView.userInteractionEnabled = NO;
-        [self setupLongDefaults];
-        [self updateLongCounter];
-        [_win bringSubviewToFront:_longPanel];
+    if (mode == XZMaskModeLong) {
+        // 进入长截图：显示截取框 + 启动自动抓帧
+        [self startCaptureTimer];
+        [self refreshChrome];
+        [Common toast:@"长截图：框内滑动页面预览，点「生成长图」"];
     } else {
-        // 框选：显示遮罩与底部栏，关闭穿透
-        _dimLayer.hidden = NO;
-        _borderLayer.hidden = !_hasCrop;
-        _toolbar.hidden = NO;
-        _hintLabel.hidden = NO;
-        _longPanel.hidden = YES;
-        _win.passthrough = NO;
-        _contentView.userInteractionEnabled = YES;
-        _hintLabel.text = @"拖框→点「局部截图」编辑；「正常截图」=整屏直接保存；「长截图」=全屏长图";
-        [self updateMask];
+        if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
+        [self refreshChrome];
     }
 }
 
-// 进入长截图：宽度恒为全屏宽，上下由滑杆决定
-- (void)setupLongDefaults {
-    CGRect scr = [UIScreen mainScreen].bounds;
-    _longX = 0;
-    _longW = scr.size.width;
-    _startRatio = 0.0;
-    _endRatio = 1.0;
-    _startSlider.value = 0;
-    _endSlider.value = 1;
-    [self syncLongBand];
-}
-
-- (void)onSlider:(UISlider *)s {
-    CGFloat v = s.value;
-    if (s == _startSlider) {
-        _startRatio = MIN(v, _endRatio - 0.05);
-        _startSlider.value = _startRatio;
-    } else {
-        _endRatio = MAX(v, _startRatio + 0.05);
-        _endSlider.value = _endRatio;
-    }
-    [self syncLongBand];
-}
-
-- (void)syncLongBand {
-    CGRect scr = [UIScreen mainScreen].bounds;
-    _topY = _startRatio * scr.size.height;
-    _bottomY = _endRatio * scr.size.height;
-    [self updateBandLabel];
-}
-
-- (void)updateBandLabel {
-    CGRect scr = [UIScreen mainScreen].bounds;
-    CGFloat h = (_endRatio - _startRatio) * scr.size.height;
-    _bandLabel.text = [NSString stringWithFormat:@"截取区间：全屏宽 · 高约 %.0f pt", h];
+- (void)startCaptureTimer {
+    if (_captureTimer) [_captureTimer invalidate];
+    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.4
+                                                    target:self
+                                                  selector:@selector(longCaptureTick)
+                                                  userInfo:nil
+                                                   repeats:YES];
+    // 立即采一帧（初始画面）
+    [self longCaptureTick];
 }
 
 - (void)updateLongCounter {
     NSInteger n = [[LongShotCapture sharedInstance] frameCount];
     CGFloat est = [[LongShotCapture sharedInstance] estimatedHeight];
-    _longCountLabel.text = [NSString stringWithFormat:@"已采集 %ld 帧 · 预计长图约 %.0f pt", (long)n, est];
+    _longCountLabel.text = [NSString stringWithFormat:@"已采集 %ld 屏 · 预计长图约 %.0f pt", (long)n, est];
 }
 
 #pragma mark - 手势（框选）
@@ -474,12 +380,15 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         if (_cropRect.size.width < kMinCrop || _cropRect.size.height < kMinCrop) {
             _hasCrop = NO;
             _cropRect = CGRectZero;
+            [self updateMask];
+            return;
         }
         [self updateMask];
-        [self refreshChrome];
-        NSLog(@"[SN3] crop pan ended: rect=(%.0f,%.0f,%.0f,%.0f) valid=%d",
+        // v4.6：松手【立即】进入编辑，不再需要二次确认
+        NSLog(@"[SN3] crop pan ended -> 立即唤起窗口B 编辑 rect=(%.0f,%.0f,%.0f,%.0f)",
               _cropRect.origin.x, _cropRect.origin.y,
-              _cropRect.size.width, _cropRect.size.height, (int)_hasCrop);
+              _cropRect.size.width, _cropRect.size.height);
+        [self captureShotAndEditWithRect:_cropRect];
     }
 }
 
@@ -488,13 +397,14 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (void)updateMask {
     CGRect full = _contentView ? _contentView.bounds : [UIScreen mainScreen].bounds;
     UIBezierPath *path = [UIBezierPath bezierPathWithRect:full];
-    if (_hasCrop) {
-        [path appendPath:[UIBezierPath bezierPathWithRect:_cropRect]];
+    CGRect hole = (_mode == XZMaskModeLong) ? _longFrameRect : (_hasCrop ? _cropRect : CGRectZero);
+    if (!CGRectIsEmpty(hole)) {
+        [path appendPath:[UIBezierPath bezierPathWithRect:hole]];
     }
     _dimLayer.path = path.CGPath;
 
-    if (_hasCrop) {
-        _borderLayer.path = [UIBezierPath bezierPathWithRect:_cropRect].CGPath;
+    if (!CGRectIsEmpty(hole)) {
+        _borderLayer.path = [UIBezierPath bezierPathWithRect:hole].CGPath;
         _borderLayer.hidden = NO;
     } else {
         _borderLayer.hidden = YES;
@@ -508,56 +418,25 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     [self captureFullScreenAndSave];
 }
 
-// 局部截图：先框选，再唤起窗口B 两排编辑工具栏
-- (void)onFreeCrop {
-    if (![self hasSelection]) {
-        [Common toast:@"请先拖动画框，确定局部截取区域"];
-        return;
-    }
-    [self captureShotAndEditWithRect:_cropRect];
-}
-
 - (void)onCancel {
     [self dismiss];
 }
 
-#pragma mark - 按钮动作（长截图面板）
+#pragma mark - 按钮动作（长截图）
 
-// 长截图：直接弹悬浮面板，无需先画矩形（宽度恒全屏宽）
+// 长截图：直接弹全屏宽截取框（取消先画矩形、取消标尺）
 - (void)onLongShot {
     [self setMode:XZMaskModeLong];
-    [Common toast:@"长截图：全屏宽。滑动页面→点采集下一屏→点生成长图"];
-}
-
-// 采集下一屏：隐藏面板 → 抓屏 → 按当前区间裁剪 → 加入长截图队列 → 恢复面板
-- (void)onLongCaptureFrame {
-    if (!_win) return;
-    [self setWindowHidden:YES];          // 关键：抓屏前隐藏面板，避免面板被截入
-    __weak typeof(self) ws = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        __strong typeof(ws) ss = ws;
-        if (!ss) return;
-        UIImage *screen = [ImageUtils captureScreen];
-        [ss setWindowHidden:NO];
-        if (!screen) { [Common toast:@"截屏失败"]; return; }
-        CGRect band = [ss bandScreenRect];
-        UIImage *frame = [ImageUtils cropImage:screen screenRect:band];
-        if (!frame) { [Common toast:@"裁剪失败"]; return; }
-        BOOL added = [[LongShotCapture sharedInstance] addFrame:frame];
-        [ss updateLongCounter];
-        if (!added) [Common toast:@"未检测到新内容，请先滑动页面"];
-    });
 }
 
 // 生成长图：拼接 → 销毁窗口A → 弹窗口B 两排编辑工具栏
 - (void)onLongGenerate {
-    if ([[LongShotCapture sharedInstance] frameCount] < 2) {
-        [Common toast:@"请先采集至少 2 帧（滑动页面后点采集下一屏）"];
+    if ([[LongShotCapture sharedInstance] frameCount] < 1) {
+        [Common toast:@"请先在框内滑动页面采集内容"];
         return;
     }
     [Common toast:@"正在拼接长图..."];
-    [self setWindowHidden:YES];
+    if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
     __weak typeof(self) ws = self;
     [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
         __strong typeof(ws) ss = ws;
@@ -576,9 +455,24 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     [self dismiss];
 }
 
-// 采集带：全屏宽 + 上下滑杆划定的 Y 轴垂直区间
-- (CGRect)bandScreenRect {
-    return CGRectMake(_longX, _topY, _longW, MAX(1, _bottomY - _topY));
+// 自动抓帧：隐藏边框 → 抓屏 → 按截取框裁剪 → 加入长截图队列（重叠去重）
+- (void)longCaptureTick {
+    if (!_win || _mode != XZMaskModeLong || _capturing) return;
+    _capturing = YES;
+
+    BOOL borderHidden = _borderLayer.hidden;
+    _borderLayer.hidden = YES;                 // 抓帧时去掉边框，避免被截进长图
+
+    UIImage *screen = [ImageUtils captureScreen];
+    _borderLayer.hidden = borderHidden;
+
+    if (!screen) { _capturing = NO; return; }
+    UIImage *tile = [ImageUtils cropImage:screen screenRect:_longFrameRect];
+    if (tile) {
+        [[LongShotCapture sharedInstance] addFrame:tile];
+        [self updateLongCounter];
+    }
+    _capturing = NO;
 }
 
 #pragma mark - 抓屏 + 裁剪 公共路径
