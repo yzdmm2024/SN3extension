@@ -105,6 +105,13 @@ static UIImage *_currentImage;
         @{@"icon":@"iphone.gen3",  @"tag":@1},
         @{@"icon":@"xmark",   @"tag":@2},
     ];
+
+    UIWindow *win = [[UIWindow alloc] initWithFrame:scr];
+    win.windowLevel = UIWindowLevelAlert + 100;
+    win.backgroundColor = [UIColor clearColor];
+    win.userInteractionEnabled = YES;
+    if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
+
     CGFloat iconS = 46;
     CGFloat gap = 28;
     CGFloat totalW = iconS * acts.count + gap * (acts.count - 1);
