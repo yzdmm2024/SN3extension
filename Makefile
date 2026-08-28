@@ -15,7 +15,7 @@ Snapper3ZhExt_FILES = Tweak.xm \
     src/TranslateEngine.m \
     src/AskAIEngine.m \
     src/LongShotController.m
-Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision
+Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision PencilKit
 Snapper3ZhExt_WEAK_FRAMEWORKS = Photos
 Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Isrc
 

@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.16
+Version: 3.17
 Architecture: iphoneos-arm64
-Description: [v3.16] 全新3图标选择器(自由截图/整屏截图/关闭)。自由截图=iOS风格:冻结当前画面+默认80%选区+4角黄点调整+全局拖动,框下两排功能按钮(OCR/翻译/复制/贴图/保存/分享/更多),工具栏4+3紧凑布局。整屏截图=直接保存相册+复制剪贴板+toast(模拟系统截屏)。更多弹窗含问AI/重选。识码/画图/打码留待v3.17。
+Description: [v3.17] 3图标=长截图/原生截图/关闭。长截图:冻结画面+滑杆拖选长度(1-10屏)→App进程自动滚动拼接。自由截图:5+5双排工具栏(OCR/翻译/画图/识码/打码/复制/贴图/保存/分享/更多)+图标协调,框选全局拖动+4角缩放。新增画图(PencilKit)/识码(Vision识别二维码条码)/打码(选区马赛克)。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

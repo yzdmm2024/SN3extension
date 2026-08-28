@@ -22,6 +22,8 @@
 #import "ImageUtils.h"
 #import <Photos/Photos.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <Vision/Vision.h>
+#import <PencilKit/PencilKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -70,6 +72,7 @@ static UIWindow *_menuWindow;
 static UIWindow *_cropWindow;
 static UIWindow *_actionWindow;
 static UIWindow *_longShotWindow;
+static UIWindow *_drawWindow;
 static UIWindow *_floatingWindow;
 static UIImage *_currentImage;
 
@@ -99,10 +102,10 @@ static UIImage *_currentImage;
     [self dismissAll];
 
     CGRect scr = UIScreen.mainScreen.bounds;
-    // v3.16：3 个图标——自由截图 / 整屏截图（类似 iOS 系统截图）/ 关闭
+    // v3.17：3 个图标——长截图 / 原生截图（iOS 系统截图）/ 关闭
     NSArray *acts = @[
-        @{@"img":@"freecut",  @"tag":@0},
-        @{@"icon":@"iphone.gen3",  @"tag":@1},
+        @{@"img":@"longshot", @"tag":@0},
+        @{@"icon":@"iphone.gen3", @"tag":@1},
         @{@"icon":@"xmark",   @"tag":@2},
     ];
 
@@ -160,14 +163,125 @@ static UIImage *_currentImage;
     UIImage *img = _currentImage;
     [self dismissAll];
     if (sender.tag == 0) {
-        // 自由截图：冻结画面 + 框选（拖动/4角缩放）+ 两排功能按钮
-        if (img) [self doFreeCrop:img];
+        // 长截图：冻结画面 + 滑杆拖选长度 → 确认后 App 进程滚动拼接
+        if (img) [self doLongShotPicker:img];
     } else if (sender.tag == 1) {
-        // 整屏截图（iOS 系统截图风格）：截屏 + 保存相册 + 复制剪贴板
+        // 原生截图（iOS 系统截图风格）：保存相册 + 复制剪贴板
         if (img) [self doRegularCapture:img];
     } else {
         // 关闭
-        // dismissAll 已调
+    }
+}
+
+#pragma mark - 长截图（v3.17：冻结画面 + 滑杆拖选长度）
+
++ (void)doLongShotPicker:(UIImage *)image {
+    UIWindow *win = nil;
+    @try {
+        if (!image) return;
+
+        win = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+        win.windowLevel = UIWindowLevelAlert + 200;
+        win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.85];
+        win.userInteractionEnabled = YES;
+        if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
+
+        CGRect scr = UIScreen.mainScreen.bounds;
+
+        // 冻结画面（缩小显示一屏，让用户看到起点）
+        CGFloat ratio = image.size.width / image.size.height;
+        CGFloat ivW = scr.size.width - 40;
+        CGFloat ivH = ivW / ratio;
+        CGFloat maxH = scr.size.height - 240;
+        if (ivH > maxH) { ivH = maxH; ivW = ivH * ratio; }
+        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((scr.size.width-ivW)/2, 30, ivW, ivH)];
+        iv.image = image;
+        iv.contentMode = UIViewContentModeScaleAspectFit;
+        iv.layer.borderColor = [UIColor whiteColor].CGColor;
+        iv.layer.borderWidth = 1;
+        [win addSubview:iv];
+
+        // 顶部说明
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, CGRectGetMaxY(iv.frame)+10, scr.size.width, 22)];
+        title.text = @"拖动滑杆选择长截图长度（屏数）";
+        title.textColor = [UIColor whiteColor];
+        title.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        title.textAlignment = NSTextAlignmentCenter;
+        [win addSubview:title];
+
+        // 长度滑杆（1~10 屏）
+        CGFloat slY = CGRectGetMaxY(title.frame) + 14;
+        UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(40, slY, scr.size.width - 80, 36)];
+        slider.minimumValue = 1;
+        slider.maximumValue = 10;
+        slider.value = 2;
+        slider.tintColor = [UIColor systemYellowColor];
+        slider.tag = 9001;
+        [slider addTarget:self action:@selector(lsSliderChanged:) forControlEvents:UIControlEventValueChanged];
+        [win addSubview:slider];
+
+        // 当前长度标签
+        UILabel *lenLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, CGRectGetMaxY(slider.frame)+2, scr.size.width, 20)];
+        lenLabel.text = @"约 2 屏";
+        lenLabel.tag = 9002;
+        lenLabel.textColor = [UIColor lightGrayColor];
+        lenLabel.font = [UIFont systemFontOfSize:12];
+        lenLabel.textAlignment = NSTextAlignmentCenter;
+        [win addSubview:lenLabel];
+
+        // 确认 / 关闭
+        UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
+        cancel.frame = CGRectMake(40, scr.size.height - 90, 130, 48);
+        cancel.backgroundColor = [UIColor systemGray3Color];
+        cancel.layer.cornerRadius = 24;
+        [cancel setTitle:@"关闭" forState:UIControlStateNormal];
+        [cancel setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        cancel.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        [cancel addTarget:self action:@selector(dismissAll) forControlEvents:UIControlEventTouchUpInside];
+        [win addSubview:cancel];
+
+        UIButton *confirm = [UIButton buttonWithType:UIButtonTypeSystem];
+        confirm.frame = CGRectMake(scr.size.width - 170, scr.size.height - 90, 130, 48);
+        confirm.backgroundColor = [UIColor systemBlueColor];
+        confirm.layer.cornerRadius = 24;
+        [confirm setTitle:@"生成" forState:UIControlStateNormal];
+        [confirm setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        confirm.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        [confirm addTarget:self action:@selector(lsConfirm:) forControlEvents:UIControlEventTouchUpInside];
+        [win addSubview:confirm];
+
+        objc_setAssociatedObject(win, "lsSlider", slider, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+        _longShotWindow = win;
+        win.hidden = NO;
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] doLongShotPicker crashed: %@ %@", e.name, e.reason);
+        if (win) win.hidden = YES;
+    }
+}
+
++ (void)lsSliderChanged:(UISlider *)slider {
+    if (_longShotWindow) {
+        UILabel *lb = [_longShotWindow viewWithTag:9002];
+        lb.text = [NSString stringWithFormat:@"约 %d 屏", (int)roundf(slider.value)];
+    }
+}
+
++ (void)lsConfirm:(UIButton *)btn {
+    @try {
+        if (!_longShotWindow) return;
+        UISlider *slider = objc_getAssociatedObject(_longShotWindow, "lsSlider");
+        double screens = slider ? roundf(slider.value) : 2;
+        // 存目标像素高度（屏数 × 屏幕高度像素）
+        double px = screens * UIScreen.mainScreen.bounds.size.height * UIScreen.mainScreen.scale;
+        [Common setPref:XZ_KEY_LONG_MAXH value:@(px)];
+        [self dismissAll];
+        // 通知 App 进程滚动拼接
+        [Common toast:@"正在滚动生成长截图..."];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+            CFSTR("com.axs.snapper3zhext.cc.longshot"), NULL, NULL, TRUE);
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] lsConfirm crashed: %@ %@", e.name, e.reason);
     }
 }
 
@@ -582,45 +696,44 @@ static UIImage *_currentImage;
     ((UIView *)corners[3]).center = CGPointMake(CGRectGetMaxX(b), CGRectGetMaxY(b));
 }
 
-// 安装两排工具栏（4+3 布局，OCR/翻译/复制/贴图 / 保存/分享/更多），紧贴 box 下方
+// 安装两排工具栏（5+5 布局，OCR/翻译/画图/识码/打码 / 复制/贴图/保存/分享/更多），紧贴 box 下方
 + (void)_installToolbarsForBox:(UIView *)box inContainer:(UIView *)iv {
     CGRect b = box.frame;
     CGRect scr = UIScreen.mainScreen.bounds;
-    CGFloat bw = 56, bh = 70, gap = 12;
-    CGFloat row1W = 4*bw + 3*gap;
-    CGFloat row2W = 3*bw + 2*gap;
-    CGFloat y1 = CGRectGetMaxY(b) + 24;
-    CGFloat y2 = y1 + bh + 14;
-    if (y2 + bh > scr.size.height - 20) {
+    CGFloat bw = 52, bh = 64, gap = 8;
+    CGFloat rowW = 5*bw + 4*gap;   // 292
+    CGFloat y1 = CGRectGetMaxY(b) + 22;
+    CGFloat y2 = y1 + bh + 12;
+    if (y2 + bh > scr.size.height - 16) {
         // 空间不够放框上方
-        y1 = b.origin.y - 2*bh - 14 - 24;
-        y2 = y1 + bh + 14;
+        y1 = b.origin.y - 2*bh - 12 - 22;
+        y2 = y1 + bh + 12;
     }
 
     NSArray *row1 = @[
-        @{@"icon":@"text.viewfinder",      @"label":@"OCR",   @"color":@0x007AFF, @"tag":@1},
-        @{@"icon":@"translate",            @"label":@"翻译", @"color":@0x34C759, @"tag":@2},
-        @{@"icon":@"doc.on.doc",           @"label":@"复制", @"color":@0x4CD964, @"tag":@3},
-        @{@"icon":@"pin",                  @"label":@"贴图", @"color":@0xFF9500, @"tag":@4},
+        @{@"icon":@"text.viewfinder", @"label":@"OCR",   @"color":@0x007AFF, @"tag":@1},
+        @{@"icon":@"translate",       @"label":@"翻译", @"color":@0x34C759, @"tag":@2},
+        @{@"icon":@"pencil.tip",      @"label":@"画图", @"color":@0xAF52DE, @"tag":@3},
+        @{@"icon":@"qrcode.viewfinder", @"label":@"识码", @"color":@0x32ADE6, @"tag":@4},
+        @{@"icon":@"rectangle.dashed",  @"label":@"打码", @"color":@0xFF3B30, @"tag":@5},
     ];
     NSArray *row2 = @[
-        @{@"icon":@"square.and.arrow.down",@"label":@"保存", @"color":@0x5AC8FA, @"tag":@5},
-        @{@"icon":@"square.and.arrow.up",  @"label":@"分享", @"color":@0x007AFF, @"tag":@6},
-        @{@"icon":@"ellipsis",             @"label":@"更多", @"color":@0x8E8E93, @"tag":@7},
+        @{@"icon":@"doc.on.doc",      @"label":@"复制", @"color":@0x4CD964, @"tag":@6},
+        @{@"icon":@"pin",             @"label":@"贴图", @"color":@0xFF9500, @"tag":@7},
+        @{@"icon":@"square.and.arrow.down", @"label":@"保存", @"color":@0x5AC8FA, @"tag":@8},
+        @{@"icon":@"square.and.arrow.up",   @"label":@"分享", @"color":@0x007AFF, @"tag":@9},
+        @{@"icon":@"ellipsis",        @"label":@"更多", @"color":@0x8E8E93, @"tag":@10},
     ];
 
-    CGFloat x1 = (scr.size.width - row1W) / 2;
+    CGFloat x = (scr.size.width - rowW) / 2;
     for (NSInteger i = 0; i < row1.count; i++) {
-        NSDictionary *a = row1[i];
-        UIButton *btn = [self _makeToolButton:a];
-        btn.frame = CGRectMake(x1 + i*(bw+gap), y1, bw, bh);
+        UIButton *btn = [self _makeToolButton:row1[i]];
+        btn.frame = CGRectMake(x + i*(bw+gap), y1, bw, bh);
         [iv addSubview:btn];
     }
-    CGFloat x2 = (scr.size.width - row2W) / 2;
     for (NSInteger i = 0; i < row2.count; i++) {
-        NSDictionary *a = row2[i];
-        UIButton *btn = [self _makeToolButton:a];
-        btn.frame = CGRectMake(x2 + i*(bw+gap), y2, bw, bh);
+        UIButton *btn = [self _makeToolButton:row2[i]];
+        btn.frame = CGRectMake(x + i*(bw+gap), y2, bw, bh);
         [iv addSubview:btn];
     }
 }
@@ -629,20 +742,20 @@ static UIImage *_currentImage;
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.tag = [a[@"tag"] integerValue];
     b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
-    b.layer.cornerRadius = 14;
+    b.layer.cornerRadius = 12;
     [b addTarget:self action:@selector(toolTapped:) forControlEvents:UIControlEventTouchUpInside];
 
-    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((56-26)/2, 8, 26, 26)];
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((52-22)/2, 6, 22, 22)];
     iv.image = [UIImage systemImageNamed:a[@"icon"]];
     iv.tintColor = [self _colorFromHex:[a[@"color"] unsignedIntegerValue]];
     iv.contentMode = UIViewContentModeScaleAspectFit;
     iv.userInteractionEnabled = NO;
     [b addSubview:iv];
 
-    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 40, 56, 18)];
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 34, 52, 18)];
     lb.text = a[@"label"];
     lb.textColor = [UIColor whiteColor];
-    lb.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    lb.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
     lb.textAlignment = NSTextAlignmentCenter;
     lb.userInteractionEnabled = NO;
     [b addSubview:lb];
@@ -656,6 +769,12 @@ static UIImage *_currentImage;
     UIView *box = objc_getAssociatedObject(_cropWindow, "cropBox");
     UIImage *image = objc_getAssociatedObject(_cropWindow, "cropImage");
     if (!iv || !box || !image) return;
+
+    // 打码：对完整画面的框选区域马赛克（不裁剪，合成回原图继续编辑）
+    if (btn.tag == 5) {
+        [self doMosaic:image];
+        return;
+    }
 
     CGRect boxInIV = box.frame;
     if (boxInIV.size.width < 4 || boxInIV.size.height < 4) {
@@ -677,13 +796,15 @@ static UIImage *_currentImage;
     _currentImage = cropped;
 
     switch (btn.tag) {
-        case 1: [self doOCR:cropped];       break;
-        case 2: [self doTranslate:cropped]; break;
-        case 3: [self doCopy:cropped];      break;
-        case 4: [self doFloating:cropped];  break;
-        case 5: [self doSaveAlbum:cropped]; break;
-        case 6: [self doShare:cropped];     break;
-        case 7: [self showMoreMenuForImage:cropped]; break;
+        case 1:  [self doOCR:cropped];       break;
+        case 2:  [self doTranslate:cropped]; break;
+        case 3:  [self doDraw:cropped];      break;   // 画图
+        case 4:  [self doCodeScan:cropped];  break;   // 识码
+        case 6:  [self doCopy:cropped];      break;
+        case 7:  [self doFloating:cropped];  break;
+        case 8:  [self doSaveAlbum:cropped]; break;
+        case 9:  [self doShare:cropped];     break;
+        case 10: [self showMoreMenuForImage:cropped]; break;
     }
 }
 
@@ -733,6 +854,189 @@ static UIImage *_currentImage;
         });
     } else {
         [Common toast:@"已复制到剪贴板"];
+    }
+}
+
+#pragma mark - v3.17: 画图 / 识码 / 打码
+
+// 画图（PencilKit 画板，对选区图）
++ (void)doDraw:(UIImage *)image {
+    @try {
+        if (!image) return;
+        if (@available(iOS 13.0, *)) {
+            UIWindow *win = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+            win.windowLevel = UIWindowLevelAlert + 260;
+            win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+            win.userInteractionEnabled = YES;
+            if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
+
+            UIImageView *bg = [[UIImageView alloc] initWithFrame:win.bounds];
+            bg.image = image;
+            bg.contentMode = UIViewContentModeScaleAspectFit;
+            bg.userInteractionEnabled = NO;
+            [win addSubview:bg];
+
+            PKCanvasView *canvas = [[PKCanvasView alloc] initWithFrame:win.bounds];
+            canvas.backgroundColor = [UIColor clearColor];
+            if (@available(iOS 14.0, *)) {
+                // drawingPolicy 与 tool 均 iOS 14+，iOS 13 默认仅 Apple Pencil
+                canvas.drawingPolicy = PKCanvasViewDrawingPolicyAnyInput;
+                canvas.tool = [PKInkingTool inkWithType:PKInkTypePen color:UIColor.redColor];
+            }
+            [win addSubview:canvas];
+
+            UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+            close.frame = CGRectMake(20, 50, 70, 40);
+            [close setTitle:@"关闭" forState:UIControlStateNormal];
+            close.backgroundColor = [UIColor systemGray3Color];
+            close.layer.cornerRadius = 20;
+            [close setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+            close.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+            close.tag = 8002;
+            [close addTarget:self action:@selector(drawDone:) forControlEvents:UIControlEventTouchUpInside];
+            [win addSubview:close];
+
+            UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem];
+            done.frame = CGRectMake(win.bounds.size.width - 90, 50, 70, 40);
+            [done setTitle:@"完成" forState:UIControlStateNormal];
+            done.backgroundColor = [UIColor systemBlueColor];
+            done.layer.cornerRadius = 20;
+            [done setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+            done.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+            done.tag = 8001;
+            [done addTarget:self action:@selector(drawDone:) forControlEvents:UIControlEventTouchUpInside];
+            [win addSubview:done];
+
+            objc_setAssociatedObject(win, "drawCanvas", canvas, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(win, "drawImage", image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            _drawWindow = win;
+            win.hidden = NO;
+        } else {
+            [Common toast:@"画图需 iOS 13+"];
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] doDraw crashed: %@ %@", e.name, e.reason);
+    }
+}
+
++ (void)drawDone:(UIButton *)btn {
+    @try {
+        UIWindow *win = _drawWindow;
+        if (!win) return;
+        PKCanvasView *canvas = objc_getAssociatedObject(win, "drawCanvas");
+        UIImage *base = objc_getAssociatedObject(win, "drawImage");
+
+        if (btn.tag == 8002 || !canvas || !base) {
+            win.hidden = YES; _drawWindow = nil;
+            return;
+        }
+        if (@available(iOS 13.0, *)) {
+            UIImage *drawing = canvas.drawing.image;
+            UIGraphicsBeginImageContextWithOptions(base.size, NO, base.scale);
+            [base drawAtPoint:CGPointZero];
+            if (drawing) {
+                // 画布是 aspectFit 显示，把绘制内容映射回 base 的实际显示区域
+                CGFloat ratio = base.size.width / base.size.height;
+                CGFloat w = win.bounds.size.width;
+                CGFloat h = w / ratio;
+                if (h > win.bounds.size.height) { h = win.bounds.size.height; w = h * ratio; }
+                CGFloat x = (win.bounds.size.width - w) / 2;
+                CGFloat y = (win.bounds.size.height - h) / 2;
+                [drawing drawInRect:CGRectMake(x, y, w, h)];
+            }
+            UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            _currentImage = result ?: base;
+        }
+        win.hidden = YES; _drawWindow = nil;
+        [self showActionRow:_currentImage ?: base];
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] drawDone crashed: %@ %@", e.name, e.reason);
+        if (_drawWindow) { _drawWindow.hidden = YES; _drawWindow = nil; }
+    }
+}
+
+// 识码（Vision 框架识别二维码/条码，结果复制到剪贴板）
++ (void)doCodeScan:(UIImage *)image {
+    [Common toast:@"正在识别码..."];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        @try {
+            if (@available(iOS 13.0, *)) {
+                if (!image.CGImage) { dispatch_async(dispatch_get_main_queue(), ^{ [Common toast:@"识别失败"]; }); return; }
+                CIImage *ci = [CIImage imageWithCGImage:image.CGImage];
+                VNDetectBarcodesRequest *req = [[VNDetectBarcodesRequest alloc] init];
+                VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCIImage:ci options:@{}];
+                NSError *err = nil;
+                [h performRequests:@[req] error:&err];
+                if (err) { dispatch_async(dispatch_get_main_queue(), ^{ [Common toast:@"识别失败"]; }); return; }
+                NSMutableString *txt = [NSMutableString string];
+                for (VNBarcodeObservation *obs in req.results) {
+                    if (obs.payloadStringValue.length) {
+                        [txt appendFormat:@"%@\n", obs.payloadStringValue];
+                    }
+                }
+                if (txt.length) {
+                    [UIPasteboard generalPasteboard].string = txt;
+                    NSString *snip = [txt substringToIndex:MIN(50, txt.length)];
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [Common toast:[NSString stringWithFormat:@"识别到 %lu 个码，已复制：%@",
+                                       (unsigned long)req.results.count, snip]];
+                    });
+                } else {
+                    dispatch_async(dispatch_get_main_queue(), ^{ [Common toast:@"未识别到二维码/条码"]; });
+                }
+            } else {
+                dispatch_async(dispatch_get_main_queue(), ^{ [Common toast:@"识码需 iOS 13+"]; });
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[SN3] doCodeScan crashed: %@ %@", e.name, e.reason);
+            dispatch_async(dispatch_get_main_queue(), ^{ [Common toast:@"识别失败"]; });
+        }
+    });
+}
+
+// 打码：对完整画面的框选区域做马赛克，合成回原图继续编辑
++ (void)doMosaic:(UIImage *)fullImage {
+    @try {
+        if (!_cropWindow || !fullImage) return;
+        UIImageView *iv = objc_getAssociatedObject(_cropWindow, "cropIV");
+        UIView *box = objc_getAssociatedObject(_cropWindow, "cropBox");
+        if (!iv || !box) return;
+        CGRect r = box.frame;
+        if (r.size.width < 4 || r.size.height < 4) { [Common toast:@"请先框选区域"]; return; }
+        if (!fullImage.CGImage) return;
+
+        CGFloat scale = fullImage.size.width / MAX(1, UIScreen.mainScreen.bounds.size.width);
+        CGRect realRect = CGRectMake(r.origin.x*scale, r.origin.y*scale,
+                                     r.size.width*scale, r.size.height*scale);
+        realRect = CGRectIntersection(realRect, CGRectMake(0, 0, fullImage.size.width, fullImage.size.height));
+        if (realRect.size.width < 4 || realRect.size.height < 4) { [Common toast:@"选区太小"]; return; }
+
+        CGImageRef cg = CGImageCreateWithImageInRect(fullImage.CGImage, realRect);
+        if (!cg) return;
+        UIImage *region = [UIImage imageWithCGImage:cg scale:fullImage.scale orientation:fullImage.imageOrientation];
+        CGImageRelease(cg);
+
+        // 像素化：缩到 1/10 再放大
+        CGSize small = CGSizeMake(MAX(1, realRect.size.width/10), MAX(1, realRect.size.height/10));
+        UIGraphicsBeginImageContextWithOptions(small, NO, 1);
+        [region drawInRect:CGRectMake(0, 0, small.width, small.height)];
+        UIImage *pix = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+
+        UIGraphicsBeginImageContextWithOptions(fullImage.size, NO, fullImage.scale);
+        [fullImage drawAtPoint:CGPointZero];
+        [pix drawInRect:realRect];
+        UIImage *mosaicked = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+
+        // 更新关联对象与显示，继续编辑
+        objc_setAssociatedObject(_cropWindow, "cropImage", mosaicked, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        iv.image = mosaicked;
+        _currentImage = mosaicked;
+        [Common toast:@"已打码，可继续编辑或保存"];
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] doMosaic crashed: %@ %@", e.name, e.reason);
     }
 }
 
@@ -1035,6 +1339,7 @@ static UIImage *_currentImage;
     if (_cropWindow)     { _cropWindow.hidden = YES;     _cropWindow = nil; }
     if (_actionWindow)   { _actionWindow.hidden = YES;   _actionWindow = nil; }
     if (_longShotWindow) { _longShotWindow.hidden = YES; _longShotWindow = nil; }
+    if (_drawWindow)     { _drawWindow.hidden = YES;     _drawWindow = nil; }
     // 悬浮贴图保留，由用户手动关闭（双击或点 X）
 }
 
