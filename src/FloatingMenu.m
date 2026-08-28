@@ -247,7 +247,7 @@ static UIImage *_currentImage;
         [confirm setTitle:@"生成" forState:UIControlStateNormal];
         [confirm setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         confirm.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-        [confirm addTarget:self action:@selector(lsConfirm:) forControlEvents:UIControlEventTouchUpInside];
+        [confirm addTarget:self action:@selector(lsLengthConfirm:) forControlEvents:UIControlEventTouchUpInside];
         [win addSubview:confirm];
 
         objc_setAssociatedObject(win, "lsSlider", slider, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -267,7 +267,7 @@ static UIImage *_currentImage;
     }
 }
 
-+ (void)lsConfirm:(UIButton *)btn {
++ (void)lsLengthConfirm:(UIButton *)btn {
     @try {
         if (!_longShotWindow) return;
         UISlider *slider = objc_getAssociatedObject(_longShotWindow, "lsSlider");
@@ -881,7 +881,7 @@ static UIImage *_currentImage;
             if (@available(iOS 14.0, *)) {
                 // drawingPolicy 与 tool 均 iOS 14+，iOS 13 默认仅 Apple Pencil
                 canvas.drawingPolicy = PKCanvasViewDrawingPolicyAnyInput;
-                canvas.tool = [PKInkingTool inkWithType:PKInkTypePen color:UIColor.redColor];
+                canvas.tool = [PKInkingTool new];
             }
             [win addSubview:canvas];
 
@@ -931,7 +931,8 @@ static UIImage *_currentImage;
             return;
         }
         if (@available(iOS 13.0, *)) {
-            UIImage *drawing = canvas.drawing.image;
+            // PKDrawing 没有 .image 属性，用 imageFromRect:scale: 导出
+            UIImage *drawing = [canvas.drawing imageFromRect:canvas.bounds scale:UIScreen.mainScreen.scale];
             UIGraphicsBeginImageContextWithOptions(base.size, NO, base.scale);
             [base drawAtPoint:CGPointZero];
             if (drawing) {
