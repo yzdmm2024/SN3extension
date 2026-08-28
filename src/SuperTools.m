@@ -34,7 +34,7 @@
 @class XZDrawCanvas;
 @class XZDrawStroke;
 @class XZDrawEditor;
-@interface XZDrawEditor
+@interface XZDrawEditor : NSObject
 + (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion;
 @end
 
@@ -753,10 +753,6 @@ static UIWindow *_floatWin = nil;
     }
     CGContextSetBlendMode(c, kCGBlendModeNormal);
 }
-@end
-
-@interface XZDrawEditor : NSObject
-+ (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion;
 @end
 
 @implementation XZDrawEditor {
