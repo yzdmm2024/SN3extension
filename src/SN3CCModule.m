@@ -1,12 +1,18 @@
 //
 //  SN3CCModule.m — 控制中心截图模块
 //
-//  架构与 Snapper3 官方 CC 模块（Snapper3CCSupportFreeze 等）完全一致：
-//    1. 编译期直接继承 CCUIToggleModule（符号延迟解析，加载时由
-//       ControlCenterUIKit 提供，Makefile 中 PRIVATE_FRAMEWORKS 显式链接）
+//  架构与 Snapper3 官方 CC 模块一致：
+//    1. 编译期继承 CCUIToggleModule（符号延迟解析，运行时由 ControlCenterUIKit 提供）
 //    2. 模块本身只做一件事：被点按时发一条 darwin 通知
 //       com.axs.snapper3zhext.cc.capture
 //    3. 真正的截屏 + 浮动菜单由主 tweak（Tweak.xm，SpringBoard 内）监听执行
+//
+//  关键修正（v3.07，修安全模式崩溃）：
+//    - 绝不再 @property / @synthesize 一个 selected！父类 CCUIToggleModule 自带
+//      selected 属性与 ivar，子类重复声明会改掉父类 ivar 布局，导致 setSelected:
+//      调用时状态机错乱、SpringBoard 原生崩溃 → 进安全模式。
+//    - setSelected: 只负责发通知，视觉状态交还给父类（始终回弹为未选中）。
+//    - iconGlyph / selectedColor 用 KVC 赋值，包 @try（部分 iOS 版本为只读，忽略即可）。
 //
 //  Info.plist 要求：NSPrincipalClass = SN3CCModule（与类名一致）。
 //  该 bundle 放 /var/jb/Library/ControlCenter/Bundles/，由 CCSupport 加载。
@@ -15,41 +21,46 @@
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
 
-// 私有类前向声明（不链接头文件，运行时由 ControlCenterUIKit 解析）
+// 父类由 ControlCenterUIKit 在运行时提供，只前向声明我们用到的方法，
+// 不要重复声明 selected 属性。
 @interface CCUIToggleModule : NSObject
+- (void)setSelected:(BOOL)arg1;
+- (BOOL)isSelected;
 @end
 
 @interface SN3CCModule : CCUIToggleModule
-@property (nonatomic, assign) BOOL selected;   // 覆盖父类 selected，自身持 ivar
 @end
 
 @implementation SN3CCModule
-@synthesize selected = _selected;
 
 - (instancetype)init {
-    if ((self = [super init])) {
-        // iconGlyph / selectedColor 是父类私有属性，用 KVC 赋值最稳
-        // （Snapper3 官方模块同样只用字符串 key，无 setter 选择器依赖）
-        UIImage *glyph = [UIImage systemImageNamed:@"camera.viewfinder"];
-        if (!glyph) glyph = [UIImage systemImageNamed:@"camera.fill"];
-        [self setValue:glyph forKey:@"iconGlyph"];
-        [self setValue:[UIColor systemBlueColor] forKey:@"selectedColor"];
-        _selected = NO;
+    self = [super init];
+    if (self) {
+        // 图标/颜色是父类私有属性，KVC 赋值；部分 iOS 版本只读或无此属性，
+        // 失败就忽略（按钮依然可点，只是没图标）。
+        @try {
+            UIImage *glyph = [UIImage systemImageNamed:@"camera.viewfinder"];
+            if (!glyph) glyph = [UIImage systemImageNamed:@"camera.fill"];
+            if (glyph) [self setValue:glyph forKey:@"iconGlyph"];
+            [self setValue:[UIColor systemBlueColor] forKey:@"selectedColor"];
+        } @catch (NSException *e) {
+            // 忽略：图标缺失不影响触发
+        }
     }
     return self;
 }
 
-// 控制中心点按 → CCUIToggleModule 内部调用 setSelected:YES
-// 这里拦截：发通知后立刻回弹为 NO（按钮型模块，不是状态开关）
+// 按钮型模块：点按一次即触发（不是持久开关）。
+// 只发通知，视觉状态交给父类管理，并始终回弹为未选中。
 - (void)setSelected:(BOOL)selected {
-    _selected = selected;
     if (selected) {
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFSTR("com.axs.snapper3zhext.cc.capture"),
             NULL, NULL, TRUE);
-        _selected = NO;
     }
+    // 交还父类维护视觉状态；触发型按钮始终回弹为“未选中”
+    [super setSelected:NO];
 }
 
 @end
