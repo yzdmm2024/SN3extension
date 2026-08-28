@@ -271,7 +271,7 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
     if (!cs) return nil;
     CGContextRef ctx = CGBitmapContextCreate(NULL, dsW, dsH, 8, dsW * 4,
-                                             cs, (CGBitmapInfo)kCGImageAlphaPremultiLast);
+                                             cs, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(cs);
     if (!ctx) return nil;
     CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
