@@ -47,7 +47,19 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     XZDragNone       = 0,
     XZDragDraw,          // 框选：画新矩形
     XZDragMove,          // 框选：整体拖动（宽高不变、不旋转）
+    XZDragResize,        // 框选：拖手柄缩放（边/角）
 };
+
+// 缩放手柄位掩码：组合表示被拖的是哪条边/角
+typedef NS_OPTIONS(NSInteger, XZResizeMask) {
+    XZResizeNone  = 0,
+    XZResizeLeft  = 1 << 0,
+    XZResizeRight = 1 << 1,
+    XZResizeTop   = 1 << 2,
+    XZResizeBottom= 1 << 3,
+};
+
+static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
 @interface MaskCropWindow () <UIGestureRecognizerDelegate>
 - (void)setWindowHidden:(BOOL)hidden;
@@ -61,12 +73,14 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UIView      *_contentView;      // 全屏容器（承载遮罩/边框图层）
     CAShapeLayer *_dimLayer;        // 半透明黑遮罩（evenOdd 镂空）
     CAShapeLayer *_borderLayer;     // 描边（局部选区 / 长截图框）
+    CAShapeLayer *_handleLayer;     // v5.6：缩放手柄（4 角 + 4 边中点的小方块）
 
     // ---- 框选模式：顶部提示 + 底部三按钮 ----
     UILabel  *_hintLabel;           // 顶部提示
     UIButton *_btnNormal;           // 正常截图
     UIButton *_btnLong;             // 长截图
     UIButton *_btnCancel;           // 取消
+    UIButton *_confirmBtn;          // v5.6：✓完成（确认选区、弹出功能面板）
 
     // ---- 长截图：框外 2 按钮 + 关闭 + 计数 ----
     UIButton *_saveLongBtn;         // 保存长图
@@ -90,6 +104,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     BOOL    _hasCrop;
     CGPoint _panStart;              // 画框起点
     CGPoint _panGrab;               // 拖动时手指在框内的相对偏移
+    XZResizeMask _resizeMask;       // v5.6：当前缩放手柄位掩码
 
     CGRect   _longFrameRect;        // 长截图截取框（屏幕坐标，全屏宽）
     NSTimer *_captureTimer;         // 自动抓帧定时器
@@ -175,6 +190,15 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _borderLayer.frame = _win.bounds;
     [_contentView.layer addSublayer:_borderLayer];
 
+    // v5.6：缩放手柄图层（8 个小方块，覆盖在描边之上）
+    _handleLayer = [CAShapeLayer layer];
+    _handleLayer.fillColor = [UIColor whiteColor].CGColor;
+    _handleLayer.strokeColor = [UIColor systemBlueColor].CGColor;
+    _handleLayer.lineWidth = 1.5;
+    _handleLayer.frame = _win.bounds;
+    _handleLayer.hidden = YES;
+    [_contentView.layer addSublayer:_handleLayer];
+
     // 框选手势：框外 = 重画，框内 = 整体移动
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self
                                                                          action:@selector(handleCropPan:)];
@@ -188,7 +212,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     [self refreshChrome];
 
     _win.hidden = NO;
-    [Common toast:@"拖出要截取的区域，松手即弹出功能面板"];
+    [Common toast:@"拖出要截取的区域，可拖动/缩放调整，点「✓完成」编辑"];
     NSLog(@"[SN3] mask window A shown (v4.8)");
 }
 
@@ -202,6 +226,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _btnNormal.hidden   = YES;
             _btnLong.hidden     = YES;
             _btnCancel.hidden   = YES;
+            _confirmBtn.hidden  = YES;           // v5.6：面板阶段隐藏完成按钮
             _saveLongBtn.hidden = YES;
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
@@ -218,6 +243,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _btnNormal.hidden   = NO;
             _btnLong.hidden     = NO;
             _btnCancel.hidden   = NO;
+            _confirmBtn.hidden  = !_hasCrop;     // v5.6：有选区才显示完成按钮
             _saveLongBtn.hidden = YES;
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
@@ -233,12 +259,14 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             [_win bringSubviewToFront:_btnNormal];
             [_win bringSubviewToFront:_btnLong];
             [_win bringSubviewToFront:_btnCancel];
+            [_win bringSubviewToFront:_confirmBtn];   // v5.6
         }
     } else {
         _hintLabel.hidden   = YES;
         _btnNormal.hidden   = YES;
         _btnLong.hidden     = YES;
         _btnCancel.hidden   = YES;
+        _confirmBtn.hidden  = YES;   // v5.6
         _saveLongBtn.hidden = NO;
         _copyLongBtn.hidden = NO;
         _closeBtn.hidden    = NO;
@@ -300,9 +328,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _contentView = nil;
     _dimLayer = nil;
     _borderLayer = nil;
+    _handleLayer = nil;          // v5.6
 
     _hintLabel = nil;
     _btnNormal = _btnLong = _btnCancel = nil;
+    _confirmBtn = nil;           // v5.6
     _saveLongBtn = _copyLongBtn = _closeBtn = nil;
     _longCountLabel = nil;
 
@@ -339,7 +369,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _hintLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     _hintLabel.textAlignment = NSTextAlignmentCenter;
     _hintLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
-    _hintLabel.text = @"拖框选区域，松手即编辑 · 底部可切「正常截图 / 长截图」";
+    _hintLabel.text = @"拖框选区域，可拖动/缩放调整，点「✓完成」编辑 · 底部可切「正常/长截图」";
     [_win addSubview:_hintLabel];
     [_win addInteractiveView:_hintLabel];
 
@@ -353,6 +383,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _btnLong.frame = CGRectMake(x, by, bw, kButtonH); x += bw + gap;
     _btnCancel = [self makeBarButton:@"取消"     bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
     _btnCancel.frame = CGRectMake(x, by, bw, kButtonH);
+
+    // v5.6：✓完成 —— 确认当前选区并弹出功能面板（之前是松手即弹，无法调整选框）
+    _confirmBtn = [self makeBarButton:@"✓ 完成" bg:[UIColor systemGreenColor] action:@selector(onConfirmCrop)];
+    _confirmBtn.frame = CGRectMake(scr.size.width - 12 - 72, safe.top + 4, 72, 36);
+    _confirmBtn.hidden = YES;   // 有选区后才显示
 }
 
 #pragma mark - 长截图 UI（全屏宽框 + 框外 2 按钮 + 关闭）
@@ -657,11 +692,15 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CGRect b = _contentView.bounds;
 
     if (pan.state == UIGestureRecognizerStateBegan) {
-        if ([self hasSelection] && CGRectContainsPoint(_cropRect, loc)) {
-            _drag = XZDragMove;
+        XZResizeMask m = [self hasSelection] ? [self resizeMaskAtPoint:loc inRect:_cropRect] : XZResizeNone;
+        if (m) {
+            _drag = XZDragResize;
+            _resizeMask = m;          // v5.6：拖手柄缩放
+        } else if ([self hasSelection] && CGRectContainsPoint(_cropRect, loc)) {
+            _drag = XZDragMove;       // 框内拖动：整体平移
             _panGrab = CGPointMake(loc.x - _cropRect.origin.x, loc.y - _cropRect.origin.y);
         } else {
-            _drag = XZDragDraw;
+            _drag = XZDragDraw;       // 框外：重新画新框（即「重选」）
             _panStart = loc;
             _cropRect = CGRectMake(loc.x, loc.y, 0, 0);
             _hasCrop = YES;
@@ -682,23 +721,33 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             nx = MAX(0, MIN(nx, b.size.width - _cropRect.size.width));
             ny = MAX(0, MIN(ny, b.size.height - _cropRect.size.height));
             _cropRect = CGRectMake(nx, ny, _cropRect.size.width, _cropRect.size.height);
+        } else if (_drag == XZDragResize) {   // v5.6：拖边/角缩放
+            CGFloat left  = _cropRect.origin.x, top = _cropRect.origin.y;
+            CGFloat right = left + _cropRect.size.width, bot = top + _cropRect.size.height;
+            CGFloat minS = kMinCrop;
+            if (_resizeMask & XZResizeLeft)   left  = MIN(loc.x, right - minS);
+            if (_resizeMask & XZResizeRight)  right = MAX(loc.x, left + minS);
+            if (_resizeMask & XZResizeTop)    top   = MIN(loc.y, bot - minS);
+            if (_resizeMask & XZResizeBottom) bot   = MAX(loc.y, top + minS);
+            left  = MAX(0, left);
+            right = MIN(b.size.width, right);
+            top   = MAX(0, top);
+            bot   = MIN(b.size.height, bot);
+            if (right - left < minS) { if (left <= 0) right = minS; else left = right - minS; }
+            if (bot - top  < minS) { if (top  <= 0) bot  = minS; else top  = bot  - minS; }
+            _cropRect = CGRectMake(left, top, right - left, bot - top);
         }
         [self updateMask];
     } else if (pan.state == UIGestureRecognizerStateEnded ||
                pan.state == UIGestureRecognizerStateCancelled) {
         _drag = XZDragNone;
+        // v5.6：选区过小则清空，否则保留选区并显示手柄 + ✓完成，让用户自由调整后再确认
         if (_cropRect.size.width < kMinCrop || _cropRect.size.height < kMinCrop) {
             _hasCrop = NO;
             _cropRect = CGRectZero;
-            [self updateMask];
-            return;
         }
         [self updateMask];
-        // v4.8：松手【立即】在选区下方原地弹出两排功能面板（不再跳转窗口B）
-        NSLog(@"[SN3] crop pan ended -> 原地弹出功能面板 rect=(%.0f,%.0f,%.0f,%.0f)",
-              _cropRect.origin.x, _cropRect.origin.y,
-              _cropRect.size.width, _cropRect.size.height);
-        [self presentLocalPanelForRect:_cropRect];
+        [self refreshChrome];
     }
 }
 
@@ -719,6 +768,50 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     } else {
         _borderLayer.hidden = YES;
     }
+
+    // v5.6：缩放手柄（仅局部框选、有选区、未弹面板时显示）
+    if (_mode == XZMaskModeCrop && _hasCrop && !_editingPanel && !CGRectIsEmpty(_cropRect)) {
+        _handleLayer.hidden = NO;
+        _handleLayer.path = [self handlePathForRect:_cropRect].CGPath;
+    } else {
+        _handleLayer.hidden = YES;
+    }
+}
+
+// v5.6：8 个缩放手柄的小方块路径（4 角 + 4 边中点）
+- (UIBezierPath *)handlePathForRect:(CGRect)r {
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    CGFloat s = 9.0;   // 手柄方块半边长
+    CGFloat hw = r.size.width, hh = r.size.height;
+    // 四角
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x - s,        r.origin.y - s,        s*2, s*2)]];
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x + hw - s,   r.origin.y - s,        s*2, s*2)]];
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x - s,        r.origin.y + hh - s,   s*2, s*2)]];
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x + hw - s,   r.origin.y + hh - s,   s*2, s*2)]];
+    // 四边中点
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x + hw/2 - s, r.origin.y - s,        s*2, s*2)]];
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x + hw/2 - s, r.origin.y + hh - s,   s*2, s*2)]];
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x - s,        r.origin.y + hh/2 - s, s*2, s*2)]];
+    [p appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(r.origin.x + hw - s,   r.origin.y + hh/2 - s, s*2, s*2)]];
+    return p;
+}
+
+// v5.6：判断点 p 落在哪个缩放手柄上（返回位掩码；0=不在手柄上）
+- (XZResizeMask)resizeMaskAtPoint:(CGPoint)p inRect:(CGRect)r {
+    CGFloat ha = kHandleHit;
+    CGFloat right = r.origin.x + r.size.width, bot = r.origin.y + r.size.height;
+    CGFloat midX = r.origin.x + r.size.width / 2.0, midY = r.origin.y + r.size.height / 2.0;
+    // 四角（优先，命中范围更大）
+    if (fabs(p.x - r.origin.x) <= ha && fabs(p.y - r.origin.y) <= ha) return XZResizeLeft | XZResizeTop;
+    if (fabs(p.x - right)       <= ha && fabs(p.y - r.origin.y) <= ha) return XZResizeRight | XZResizeTop;
+    if (fabs(p.x - r.origin.x) <= ha && fabs(p.y - bot)       <= ha) return XZResizeLeft | XZResizeBottom;
+    if (fabs(p.x - right)       <= ha && fabs(p.y - bot)       <= ha) return XZResizeRight | XZResizeBottom;
+    // 四边中点
+    if (fabs(p.x - midX) <= ha && fabs(p.y - r.origin.y) <= ha) return XZResizeTop;
+    if (fabs(p.x - midX) <= ha && fabs(p.y - bot)       <= ha) return XZResizeBottom;
+    if (fabs(p.x - r.origin.x) <= ha && fabs(p.y - midY) <= ha) return XZResizeLeft;
+    if (fabs(p.x - right)     <= ha && fabs(p.y - midY) <= ha) return XZResizeRight;
+    return XZResizeNone;
 }
 
 #pragma mark - 按钮动作（框选模式）
@@ -730,6 +823,12 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 - (void)onCancel {
     [self dismiss];
+}
+
+// v5.6：确认选区 → 弹出功能面板（不再松手即弹，先让用户在选框上自由拖动/缩放）
+- (void)onConfirmCrop {
+    if (![self hasSelection]) { [Common toast:@"请先拖出要截取的区域"]; return; }
+    [self presentLocalPanelForRect:_cropRect];
 }
 
 #pragma mark - 按钮动作（长截图）
@@ -1132,18 +1231,17 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     }
 }
 
-// 退出原地面板，回到框选模式（清空选区，恢复三按钮）
+// 退出原地面板，回到框选模式（v5.6：保留选区，可直接拖动/缩放调整，不必重新截图）
 - (void)exitLocalPanel {
     if (_localPanel) { [_localPanel removeFromSuperview]; _localPanel = nil; }
     if (_panelWin) { _panelWin.hidden = YES; }   // 隐藏独立面板窗口（保留以便复用）
     _editingPanel = NO;
     _cropImage = nil;
     _cropScreenRect = CGRectZero;
-    _hasCrop = NO;
-    _cropRect = CGRectZero;
+    // 注意：不再清空 _cropRect / _hasCrop —— 保留选区，用户可继续微调或点✓完成
     [self updateMask];
     [self refreshChrome];
-    [Common toast:@"已退出编辑，可重新框选"];
+    [Common toast:@"已退出编辑，可拖动选框调整或点「✓完成」"];
 }
 
 #pragma mark - 原地面板结果展示（复用窗口A 的 hostVC 弹窗）

@@ -1,5 +1,5 @@
 //
-//  Tweak.xm — 超级截图 v5.5 入口（SpringBoard + 聊天 App 双注入）
+//  Tweak.xm — 超级截图 v5.6 入口（SpringBoard + 聊天 App 双注入）
 //
 //  ────────────────────────────────────────────────────────────────────────
 //  触发链：
@@ -13,7 +13,7 @@
 //  进程分流：SpringBoard 注册与响应；QQ/微信仅注册 AppScrollReporter（自动滚动驱动）。
 //
 //  注入范围：layout/.../Snapper3ZhExt.plist 的 Filter 写 com.apple.springboard（主逻辑）
-//    + com.tencent.mqq / com.tencent.xin（v5.5 自动滚动长截图：驱动 UIScrollView 上报精确偏移）。
+//    + com.tencent.mqq / com.tencent.xin（v5.6 自动滚动长截图：驱动 UIScrollView 上报精确偏移）。
 //    仍不要加 "*"——只注入必要的聊天 App，避免拖慢启动 / 触发安全模式。
 //  ────────────────────────────────────────────────────────────────────────
 //
@@ -54,7 +54,7 @@ __attribute__((constructor)) static void xz_ctor() {
     @autoreleasepool {
         NSString *procName = [NSProcessInfo processInfo].processName;
         if ([procName isEqualToString:@"SpringBoard"]) {
-            NSLog(@"[SN3] 超级截图 v5.5 loaded in SpringBoard");
+            NSLog(@"[SN3] 超级截图 v5.6 loaded in SpringBoard");
             dispatch_async(dispatch_get_main_queue(), ^{
                 @try {
                     CFNotificationCenterAddObserver(
@@ -70,12 +70,12 @@ __attribute__((constructor)) static void xz_ctor() {
                 }
             });
         } else {
-            // v5.5：自动滚动长截图 —— 仅对目标聊天 App 注入，驱动 UIScrollView 上报精确偏移
+            // v5.6：自动滚动长截图 —— 仅对目标聊天 App 注入，驱动 UIScrollView 上报精确偏移
             NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
             if ([bid isEqualToString:@"com.tencent.mqq"] ||
                 [bid isEqualToString:@"com.tencent.xin"]) {
                 [AppScrollReporter setup];
-                NSLog(@"[SN3] v5.5 AppScrollReporter enabled in %@", bid);
+                NSLog(@"[SN3] v5.6 AppScrollReporter enabled in %@", bid);
             }
         }
     }
