@@ -87,7 +87,12 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UIImage  *_cropImage;           // 局部截图裁剪结果
     UIView   *_localPanel;          // 选区下方原地弹出的两排功能面板
     BOOL      _editingPanel;        // 面板已弹出（禁用框选手势 / 隐藏三按钮）
-    UIViewController *_hostVC;      // 承载 OCR/翻译等结果弹窗的 rootVC
+    UIViewController *_hostVC;      // 承载 OCR/翻译等结果弹窗的 rootVC（挂在窗口A）
+
+    // ---- v4.9：面板独立窗口（同步渲染，消除闪现/延迟）----
+    UIWindow       *_panelWin;      // 承载功能面板的独立 UIWindow（抓屏隐藏窗口A时面板不受影响）
+    UIViewController *_panelVC;     // 面板窗口的 rootVC（结果弹窗 present 落点）
+    CGRect          _cropScreenRect; // 当前选区屏幕坐标（后台抓屏裁剪用）
 }
 
 #pragma mark - 单例 / 生命周期
@@ -238,7 +243,14 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _entryTile = nil;
     _lastAddedTile = nil;
     _cropImage = nil;
+    _cropScreenRect = CGRectZero;
     _localPanel = nil;
+    if (_panelWin) {
+        _panelWin.hidden = YES;
+        _panelWin.rootViewController = nil;
+        _panelWin = nil;          // 交还内存（防 SpringBoard 泄漏 / respring）
+    }
+    _panelVC = nil;
 
     [self stopCaptureTimer];
 
@@ -638,46 +650,52 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _win.hidden = hidden;
 }
 
-// v4.8：局部截图 —— 隐藏遮罩抓屏裁剪后【不销毁窗口A】，在选区矩形下方原地弹出
-//        两排功能面板（图标更小），所有操作基于裁剪结果 _cropImage 进行；不做窗口跳转。
+// v4.9：局部截图 —— 选区下方【同步立刻】弹出功能面板（独立窗口，零延迟、无闪现），
+//        抓屏裁剪放到后台做（隐藏窗口A时面板在独立窗口不受影响，故无闪现/延迟）。
+//        不再像 v4.8 那样先藏起窗口再 dispatch_after 0.2s 才弹面板（那会导致裸屏闪一下）。
 - (void)presentLocalPanelForRect:(CGRect)rect {
     if (!_win) return;
+    _cropScreenRect = rect;                     // 记录选区屏幕坐标，后台抓屏用
     _editingPanel = YES;                        // 先锁手势，避免面板出现前误触发框选
+    [self refreshChrome];                        // 立即隐藏三按钮、保留选区边框（同步生效）
 
+    CGRect scr = [UIScreen mainScreen].bounds;
     CGRect screenRect = rect;
     if (_contentView) screenRect = [_contentView convertRect:rect toView:nil];
     NSLog(@"[SN3] free crop requested screenRect=(%.0f,%.0f,%.0f,%.0f)",
           screenRect.origin.x, screenRect.origin.y, screenRect.size.width, screenRect.size.height);
 
-    [self setWindowHidden:YES];                 // ① 先隐藏遮罩，避免暗色被截入裁剪图
+    // ① 立即（同步）在选区下方弹出面板：挂到独立窗口，渲染零延迟、不闪现
+    [self buildLocalPanelOnOwnWindowWithRect:screenRect];
+    [Common toast:@"已截取选区，点击下方功能面板处理"];
 
+    // ② 后台抓屏裁剪（隐藏窗口A，面板在独立窗口不受影响 → 无闪现）
     __weak typeof(self) ws = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         __strong typeof(ws) ss = ws;
-        if (!ss) return;
-
+        if (!ss || !ss->_win) return;
+        ss->_win.hidden = YES;                  // 隐藏遮罩，避免暗色被截入裁剪图
         UIImage *screen = [ImageUtils captureScreen];
-        if (!screen) {
-            ss->_editingPanel = NO;
-            [ss dismiss];
-            [Common toast:@"截图失败，请重试"];
-            return;
+        ss->_win.hidden = NO;                   // 立即恢复（面板在独立窗口，始终可见）
+        if (screen) {
+            UIImage *result = [ImageUtils cropImage:screen screenRect:screenRect];
+            if (result) ss->_cropImage = result;
+            else NSLog(@"[SN3] local crop failed, will recapture on demand");
         }
-
-        UIImage *result = [ImageUtils cropImage:screen screenRect:screenRect];
-        if (!result) {
-            NSLog(@"[SN3] crop failed, fallback to full-screen image");
-            result = screen;
-            [Common toast:@"选区裁剪失败，已用整屏图"];
-        }
-
-        ss->_cropImage = result;
-        [ss setWindowHidden:NO];                // ② 重新显示窗口A（选区边框仍可见）
-        [ss buildLocalPanel];                   // ③ 选区下方原地弹两排功能面板（不跳转）
-        [ss refreshChrome];
-        [Common toast:@"已截取选区，点击下方功能面板处理"];
     });
+}
+
+// 面板动作需要 _cropImage 但后台抓屏尚未完成时，立即同步补抓一次
+- (UIImage *)ensureCropImage {
+    if (_cropImage) return _cropImage;
+    if (!_win) return nil;
+    _win.hidden = YES;
+    UIImage *screen = [ImageUtils captureScreen];
+    _win.hidden = NO;
+    UIImage *r = screen ? [ImageUtils cropImage:screen screenRect:_cropScreenRect] : nil;
+    if (r) _cropImage = r;
+    return r;
 }
 
 #pragma mark - v4.8：局部截图原地面板
@@ -696,40 +714,16 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     XZLocalClose    = 11,
 };
 
-// 构建选区下方两排功能面板（图标尺寸更小）
-- (void)buildLocalPanel {
-    if (_localPanel) [_localPanel removeFromSuperview];
-    if (!_win) return;
+// 构建功能面板视图（给定已定位好的 frame）
+- (UIView *)makeLocalPanelViewWithFrame:(CGRect)pf
+                                iconSize:(CGFloat)iconS labelH:(CGFloat)labelH
+                                    rowH:(CGFloat)rowH rowGap:(CGFloat)rowGap vPad:(CGFloat)vPad {
+    UIView *panel = [[UIView alloc] initWithFrame:pf];
+    panel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.82];
+    panel.layer.cornerRadius = 14;
+    panel.userInteractionEnabled = YES;
 
-    CGRect scr = [UIScreen mainScreen].bounds;
-    UIEdgeInsets safe = [Common screenSafeInsets];
-
-    CGFloat iconS = 18.0;     // 图标更小（v4.8 需求）
-    CGFloat labelH = 13.0;
-    CGFloat rowH = iconS + labelH + 12.0;   // 单排高
-    CGFloat rowGap = 6.0;
-    CGFloat vPad = 8.0;
-    CGFloat panelH = vPad * 2 + rowH * 2 + rowGap;
-    CGFloat pad = 12.0;
-    CGFloat panelW = scr.size.width - pad * 2;
-
-    // 默认放在选区下方；若溢出底部则放到选区上方；都放不下则贴顶部
-    CGFloat belowY = _cropRect.origin.y + _cropRect.size.height + 12.0;
-    CGFloat aboveY = _cropRect.origin.y - panelH - 12.0;
-    CGFloat y = belowY;
-    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) {
-        y = aboveY;
-    }
-    if (y < safe.top + 4.0) y = safe.top + 4.0;
-
-    _localPanel = [[UIView alloc] initWithFrame:CGRectMake(pad, y, panelW, panelH)];
-    _localPanel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.78];
-    _localPanel.layer.cornerRadius = 14;
-    _localPanel.userInteractionEnabled = YES;
-    [_win addSubview:_localPanel];
-    [_win addInteractiveView:_localPanel];
-    [_win bringSubviewToFront:_localPanel];
-
+    CGFloat panelW = pf.size.width;
     NSArray *row1 = @[
         @{@"icon":@"text.viewfinder",   @"label":@"OCR",  @"tag":@(XZLocalOCR)},
         @{@"icon":@"translate",         @"label":@"翻译", @"tag":@(XZLocalTranslate)},
@@ -750,12 +744,12 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     for (NSInteger i = 0; i < row1.count; i++) {
         UIButton *b = [self makeLocalButton:row1[i] iconSize:iconS labelH:labelH width:bw];
         b.frame = CGRectMake(gap + i * (bw + gap), vPad, bw, rowH);
-        [_localPanel addSubview:b];
+        [panel addSubview:b];
     }
     for (NSInteger i = 0; i < row2.count; i++) {
         UIButton *b = [self makeLocalButton:row2[i] iconSize:iconS labelH:labelH width:bw];
         b.frame = CGRectMake(gap + i * (bw + gap), vPad + rowH + rowGap, bw, rowH);
-        [_localPanel addSubview:b];
+        [panel addSubview:b];
     }
 
     // 面板右上角关闭（✕）：退回框选模式
@@ -765,7 +759,52 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     close.tintColor = [UIColor whiteColor];
     close.titleLabel.font = [UIFont systemFontOfSize:13];
     [close addTarget:self action:@selector(exitLocalPanel) forControlEvents:UIControlEventTouchUpInside];
-    [_localPanel addSubview:close];
+    [panel addSubview:close];
+    return panel;
+}
+
+// v4.9：在【独立窗口】上、选区下方同步弹出功能面板（零延迟、不闪现）。
+//       面板窗口在抓屏隐藏窗口A时依然可见，故无「裸屏闪一下」现象。
+- (void)buildLocalPanelOnOwnWindowWithRect:(CGRect)rect {
+    if (!_win) return;
+    CGRect scr = [UIScreen mainScreen].bounds;
+    UIEdgeInsets safe = [Common screenSafeInsets];
+
+    CGFloat iconS = 16.0;     // 图标更小（用户要求缩小）
+    CGFloat labelH = 12.0;
+    CGFloat rowH = iconS + labelH + 12.0;   // 单排高
+    CGFloat rowGap = 6.0;
+    CGFloat vPad = 8.0;
+    CGFloat panelH = vPad * 2 + rowH * 2 + rowGap;
+    CGFloat pad = 12.0;
+    CGFloat panelW = scr.size.width - pad * 2;
+
+    // 默认放在选区下方；若溢出底部则放到选区上方；都放不下则贴顶部
+    CGFloat belowY = rect.origin.y + rect.size.height + 12.0;
+    CGFloat aboveY = rect.origin.y - panelH - 12.0;
+    CGFloat y = belowY;
+    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) y = aboveY;
+    if (y < safe.top + 4.0) y = safe.top + 4.0;
+
+    if (!_panelWin) {
+        _panelWin = [[XZPassThroughWindow alloc] initWithFrame:scr];
+        _panelWin.windowLevel = _win.windowLevel + 10;   // 永远盖在遮罩窗口之上
+        _panelWin.backgroundColor = [UIColor clearColor];
+        _panelWin.userInteractionEnabled = YES;
+        _panelWin.passthrough = NO;                       // 面板阶段吃下触摸（正常命中）
+        _panelVC = [[UIViewController alloc] init];
+        _panelVC.view.backgroundColor = [UIColor clearColor];
+        _panelVC.view.userInteractionEnabled = NO;
+        _panelWin.rootViewController = _panelVC;
+        if (@available(iOS 13.0, *)) _panelWin.windowScene = [Common activeWindowScene];
+    }
+    _panelWin.hidden = NO;
+
+    if (_localPanel) [_localPanel removeFromSuperview];
+    _localPanel = [self makeLocalPanelViewWithFrame:CGRectMake(pad, y, panelW, panelH)
+                                           iconSize:iconS labelH:labelH rowH:rowH rowGap:rowGap vPad:vPad];
+    [_panelWin addSubview:_localPanel];
+    [_panelWin bringSubviewToFront:_localPanel];
 }
 
 - (UIButton *)makeLocalButton:(NSDictionary *)spec iconSize:(CGFloat)iconS labelH:(CGFloat)labelH width:(CGFloat)bw {
@@ -795,7 +834,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 
 // 面板动作分发（作用于 _cropImage）
 - (void)localToolTapped:(UIButton *)btn {
-    UIImage *img = _cropImage;
+    UIImage *img = [self ensureCropImage];     // 后台抓屏未完成时同步补抓
     if (!img) { [Common toast:@"裁剪图为空，请重选"]; return; }
     NSInteger tag = btn.tag;
 
@@ -836,7 +875,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
             [self dismiss];
         }];
     } else if (tag == XZLocalShare) {
-        [SuperTools share:img fromWindow:_win];
+        [SuperTools share:img fromWindow:(_panelWin ?: _win)];
     } else if (tag == XZLocalMore) {
         [self showLocalMore:img];
     }
@@ -845,8 +884,10 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 // 退出原地面板，回到框选模式（清空选区，恢复三按钮）
 - (void)exitLocalPanel {
     if (_localPanel) { [_localPanel removeFromSuperview]; _localPanel = nil; }
+    if (_panelWin) { _panelWin.hidden = YES; }   // 隐藏独立面板窗口（保留以便复用）
     _editingPanel = NO;
     _cropImage = nil;
+    _cropScreenRect = CGRectZero;
     _hasCrop = NO;
     _cropRect = CGRectZero;
     [self updateMask];
@@ -866,7 +907,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [Common toast:@"已复制文本"];
     }]];
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:_win];
+    [Common present:ac fromWindow:(_panelWin ?: _win)];
 }
 
 - (void)presentLocalTranslate:(NSString *)src dst:(NSString *)dst {
@@ -884,7 +925,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [Common toast:@"已复制原文"];
     }]];
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:_win];
+    [Common present:ac fromWindow:(_panelWin ?: _win)];
 }
 
 - (void)presentLocalCode:(NSString *)code {
@@ -903,7 +944,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         }]];
     }
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:_win];
+    [Common present:ac fromWindow:(_panelWin ?: _win)];
 }
 
 - (void)showLocalMore:(UIImage *)img {
@@ -940,7 +981,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         ac.popoverPresentationController.sourceView = _localPanel;
         ac.popoverPresentationController.sourceRect = _localPanel.bounds;
     }
-    [Common present:ac fromWindow:_win];
+    [Common present:ac fromWindow:(_panelWin ?: _win)];
 }
 
 // 正常截图：整屏 → 保存到相册「SN3截图」→ 直接结束（不弹编辑，仿原生）

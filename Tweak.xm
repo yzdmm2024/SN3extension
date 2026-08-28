@@ -53,7 +53,7 @@ __attribute__((constructor)) static void xz_ctor() {
         NSString *procName = [NSProcessInfo processInfo].processName;
         if (![procName isEqualToString:@"SpringBoard"]) return;
 
-        NSLog(@"[SN3] 超级截图 v4.8 loaded in SpringBoard");
+        NSLog(@"[SN3] 超级截图 v4.9 loaded in SpringBoard");
         dispatch_async(dispatch_get_main_queue(), ^{
             @try {
                 CFNotificationCenterAddObserver(
