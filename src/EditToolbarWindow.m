@@ -152,20 +152,32 @@ static EditToolbarWindow *_shared;
 - (void)toolTapped:(UIButton *)btn {
     UIImage *img = _imageView.image;
     if (!img) return;
-    switch ((ETBTag)btn.tag) {
-        case ETBTagOCR:      [SuperTools ocr:img completion:^(NSString *text) { [self presentText:text title:@"OCR 识别结果"]; }]; break;
-        case ETBTagTranslate:[SuperTools translate:img completion:^(NSString *dst, NSString *src) { [self presentText:src title:@"翻译原文"]; [self presentText:dst title:@"翻译译文"]; }]; break;
-        case ETBTagDraw:     [SuperTools draw:img completion:^(UIImage *edited) { if (edited) [self replaceImage:edited]; }]; break;
-        case ETBTagCodeScan: [SuperTools codeScan:img completion:^(NSString *code) { [self presentCodeAction:code]; }]; break;
-        case ETBTagMosaic:   [SuperTools mosaic:img completion:^(UIImage *edited) { if (edited) [self replaceImage:edited]; }]; break;
+    NSInteger tag = btn.tag;
 
-        case ETBTagCopy:     [SuperTools copy:img]; [EditToolbarWindow dismiss]; break;
-        case ETBTagFloating: [SuperTools floating:img]; [EditToolbarWindow dismiss]; break;
-        case ETBTagSave:     [SuperTools save:img completion:^(BOOL ok) { [Common toast:ok ? @"已保存到相册" : @"保存失败"]; }]; break;
-        case ETBTagShare:    [SuperTools share:img fromWindow:_win]; break;
-        case ETBTagMore:     [self showMoreMenu:img]; break;
-
-        default: break;
+    // if/else 链替代 switch：ObjC++ 下 switch case 内声明带 block 捕获的变量会编译报错
+    if (tag == ETBTagOCR) {
+        [SuperTools ocr:img completion:^(NSString *text) { [self presentText:text title:@"OCR 识别结果"]; }];
+    } else if (tag == ETBTagTranslate) {
+        [SuperTools translate:img completion:^(NSString *dst, NSString *src) {
+            [self presentText:src title:@"翻译原文"];
+            [self presentText:dst title:@"翻译译文"];
+        }];
+    } else if (tag == ETBTagDraw) {
+        [SuperTools draw:img completion:^(UIImage *edited) { if (edited) [self replaceImage:edited]; }];
+    } else if (tag == ETBTagCodeScan) {
+        [SuperTools codeScan:img completion:^(NSString *code) { [self presentCodeAction:code]; }];
+    } else if (tag == ETBTagMosaic) {
+        [SuperTools mosaic:img completion:^(UIImage *edited) { if (edited) [self replaceImage:edited]; }];
+    } else if (tag == ETBTagCopy) {
+        [SuperTools copy:img]; [EditToolbarWindow dismiss];
+    } else if (tag == ETBTagFloating) {
+        [SuperTools floating:img]; [EditToolbarWindow dismiss];
+    } else if (tag == ETBTagSave) {
+        [SuperTools save:img completion:^(BOOL ok) { [Common toast:ok ? @"已保存到相册" : @"保存失败"]; }];
+    } else if (tag == ETBTagShare) {
+        [SuperTools share:img fromWindow:_win];
+    } else if (tag == ETBTagMore) {
+        [self showMoreMenu:img];
     }
 }
 
