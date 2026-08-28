@@ -692,13 +692,48 @@ static UIWindow *_floatWin = nil;
 // 画布：按 stroke 列表实时绘制（橡皮用 kCGBlendModeClear）
 @interface XZDrawCanvas : UIView
 @property (nonatomic, strong) NSMutableArray<XZDrawStroke *> *strokes;
+@property (nonatomic, strong) UIColor *inkColor;
+@property (nonatomic, assign) CGFloat inkWidth;
+@property (nonatomic, assign) BOOL eraser;
+@property (nonatomic, assign) BOOL marker;
+- (void)undoLast;
 @end
 @implementation XZDrawCanvas
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
-    if (self) { _strokes = [NSMutableArray array]; self.backgroundColor = [UIColor clearColor]; self.opaque = NO; }
+    if (self) {
+        _strokes = [NSMutableArray array];
+        _inkColor = [UIColor redColor];
+        _inkWidth = 4.0;
+        self.backgroundColor = [UIColor clearColor];
+        self.opaque = NO;
+        self.multipleTouchEnabled = NO;
+    }
     return self;
 }
+- (void)undoLast { if (_strokes.count) { [_strokes removeLastObject]; [self setNeedsDisplay]; } }
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    CGPoint p = [t locationInView:self];
+    XZDrawStroke *s = [[XZDrawStroke alloc] init];
+    s.path = [UIBezierPath bezierPath];
+    CGFloat w = _eraser ? (_inkWidth * 3.0) : (_marker ? (_inkWidth * 4.0) : _inkWidth);
+    s.width = w;
+    s.path.lineWidth = w;
+    s.path.lineCapStyle = kCGLineCapRound;
+    s.path.lineJoinStyle = kCGLineJoinRound;
+    [s.path moveToPoint:p];
+    if (_eraser) { s.color = [UIColor clearColor]; s.eraser = YES; }
+    else { s.color = _marker ? [_inkColor colorWithAlphaComponent:0.45] : _inkColor; s.eraser = NO; }
+    [_strokes addObject:s];
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    [[_strokes lastObject] addLineToPoint:[t locationInView:self]];
+    [self setNeedsDisplay];
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self setNeedsDisplay]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self setNeedsDisplay]; }
 - (void)drawRect:(CGRect)rect {
     CGContextRef c = UIGraphicsGetCurrentContext();
     if (!c) return;
@@ -806,40 +841,11 @@ static UIWindow *_floatWin = nil;
     return b;
 }
 
-#pragma mark - 触摸绘制
+#pragma mark - 工具（按钮仅切换画布状态；触摸由 XZDrawCanvas 自己捕获）
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    UITouch *t = touches.anyObject;
-    CGPoint p = [t locationInView:_canvas];
-    XZDrawStroke *s = [[XZDrawStroke alloc] init];
-    s.path = [UIBezierPath bezierPath];
-    CGFloat w = _eraser ? (_inkWidth * 3.0) : (_marker ? (_inkWidth * 4.0) : _inkWidth);
-    s.path.lineWidth = w;
-    s.path.lineCapStyle = kCGLineCapRound;
-    s.path.lineJoinStyle = kCGLineJoinRound;
-    [s.path moveToPoint:p];
-    if (_eraser) {
-        s.color = [UIColor clearColor];
-        s.eraser = YES;
-    } else {
-        s.color = _marker ? [_inkColor colorWithAlphaComponent:0.45] : _inkColor;
-        s.eraser = NO;
-    }
-    [_strokes addObject:s];
-}
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    UITouch *t = touches.anyObject;
-    [[_strokes lastObject] addLineToPoint:[t locationInView:_canvas]];
-    [_canvas setNeedsDisplay];
-}
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [_canvas setNeedsDisplay]; }
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [_canvas setNeedsDisplay]; }
-
-#pragma mark - 工具
-
-- (void)onPen    { _eraser = NO; _marker = NO; _tip.text = @"画笔：细线"; }
-- (void)onMarker { _eraser = NO; _marker = YES; _tip.text = @"马克笔：半透明粗线"; }
-- (void)onEraser { _eraser = YES; _marker = NO; _tip.text = @"橡皮：擦除涂抹处"; }
+- (void)onPen    { _canvas.eraser = NO; _canvas.marker = NO; _tip.text = @"画笔：细线"; }
+- (void)onMarker { _canvas.eraser = NO; _canvas.marker = YES; _tip.text = @"马克笔：半透明粗线"; }
+- (void)onEraser { _canvas.eraser = YES; _canvas.marker = NO; _tip.text = @"橡皮：擦除涂抹处"; }
 - (void)onColor  {
     static NSArray *palette;
     static NSInteger cIdx = 0;
@@ -848,11 +854,11 @@ static UIWindow *_floatWin = nil;
                     [UIColor blueColor], [UIColor blackColor], [UIColor whiteColor]];
     });
     cIdx = (cIdx + 1) % (NSInteger)palette.count;
-    _inkColor = palette[cIdx];
-    _eraser = NO; _marker = NO;
+    _canvas.inkColor = palette[cIdx];
+    _canvas.eraser = NO; _canvas.marker = NO;
     _tip.text = [NSString stringWithFormat:@"已换色 #%ld", (long)cIdx];
 }
-- (void)onUndo { if (_strokes.count) { [_strokes removeLastObject]; [_canvas setNeedsDisplay]; } }
+- (void)onUndo { [_canvas undoLast]; }
 
 - (void)onCancel { [self finishWithImage:nil]; }
 
