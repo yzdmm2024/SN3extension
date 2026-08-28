@@ -22,6 +22,7 @@
 #define XZ_KEY_LONG_OVERLAP     @"LongShot_Overlap"     // 帧重叠比例 (0~0.3)
 #define XZ_KEY_LONG_MAXH        @"LongShot_MaxHeight"   // 最大拼接高度上限 (px)
 #define XZ_KEY_LONG_INTERVAL    @"LongShot_Interval"    // 每帧滚动后的等待秒数
+#define XZ_KEY_LONG_QUICK       @"LongShot_Quick"       // 长截图快速模式（更短间隔+更大步进）
 #define XZ_KEY_AI_ENABLED       @"AskAI_Enabled"
 #define XZ_KEY_AI_BASEURL       @"AskAI_BaseURL"
 #define XZ_KEY_AI_KEY           @"AskAI_APIKey"

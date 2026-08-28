@@ -21,18 +21,24 @@
 #import "SuperTools.h"
 
 typedef NS_ENUM(NSInteger, ETBTag) {
-    // 第一排：识别编辑
+    // 第 1 排：识别 / 编辑
     ETBTagOCR        = 1,
     ETBTagTranslate  = 2,
     ETBTagDraw       = 3,
     ETBTagCodeScan   = 4,
     ETBTagMosaic     = 5,
-    // 第二排：输出操作
+    // 第 2 排：输出操作
     ETBTagCopy       = 6,
     ETBTagFloating   = 7,
     ETBTagSave       = 8,
     ETBTagShare      = 9,
-    ETBTagMore       = 10,
+    ETBTagPhone      = 11,   // 加手机壳
+    // 第 3 排：更多工具（直接平铺，不再进二级菜单）
+    ETBTagPDF        = 12,   // 导出 PDF
+    ETBTagCompress   = 13,   // 压缩
+    ETBTagStrip      = 14,   // 去状态栏
+    ETBTagColorPick  = 15,   // 取色器
+    ETBTagReset      = 16,   // 还原原图
 };
 
 static const CGFloat kRowH    = 66.0;   // 单排按钮高
@@ -58,6 +64,7 @@ static const CGFloat kBarPad  = 10.0;
     UIImageView *_imageView;
     UIView *_toolbar;
     UILabel *_sizeLabel;
+    UIImage *_originalImage;   // 还原用：保留最初传入的原图
 }
 
 static EditToolbarWindow *_shared = nil;
@@ -70,6 +77,7 @@ static EditToolbarWindow *_shared = nil;
 
     EditToolbarWindow *w = [[EditToolbarWindow alloc] init];
     _shared = w;
+    w->_originalImage = image;
     [w buildWindowWithImage:image];
 }
 
@@ -111,8 +119,8 @@ static EditToolbarWindow *_shared = nil;
     _rootVC.view.frame = scr;
     _win.rootViewController = _rootVC;
 
-    // 图片显示区：上方留出关闭条，下方留出两排工具栏
-    CGFloat barH = kBarPad * 2 + kRowH * 2 + kRowGap;
+    // 图片显示区：上方留出关闭条，下方留出三排工具栏
+    CGFloat barH = kBarPad * 2 + kRowH * 3 + kRowGap * 2;
     CGFloat topY = safe.top + 44;
     CGFloat botY = scr.size.height - safe.bottom - barH - 8;
     _imageView = [[UIImageView alloc] initWithFrame:CGRectMake(8, topY, scr.size.width - 16, MAX(60, botY - topY))];
@@ -155,7 +163,7 @@ static EditToolbarWindow *_shared = nil;
 - (void)installToolbar {
     CGRect scr = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = [Common screenSafeInsets];
-    CGFloat barH = kBarPad * 2 + kRowH * 2 + kRowGap;
+    CGFloat barH = kBarPad * 2 + kRowH * 3 + kRowGap * 2;
 
     _toolbar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
                                                         scr.size.width, barH)];
@@ -174,22 +182,29 @@ static EditToolbarWindow *_shared = nil;
         @{@"icon":@"pin",                    @"label":@"贴图", @"tag":@(ETBTagFloating)},
         @{@"icon":@"square.and.arrow.down",  @"label":@"保存", @"tag":@(ETBTagSave)},
         @{@"icon":@"square.and.arrow.up",    @"label":@"分享", @"tag":@(ETBTagShare)},
-        @{@"icon":@"ellipsis",               @"label":@"更多", @"tag":@(ETBTagMore)},
+        @{@"icon":@"iphone",                 @"label":@"加壳", @"tag":@(ETBTagPhone)},
+    ];
+    NSArray *row3 = @[
+        @{@"icon":@"doc.richtext",           @"label":@"PDF",  @"tag":@(ETBTagPDF)},
+        @{@"icon":@"arrow.down.circle",      @"label":@"压缩", @"tag":@(ETBTagCompress)},
+        @{@"icon":@"menubar.rectangle",      @"label":@"去状态栏", @"tag":@(ETBTagStrip)},
+        @{@"icon":@"eyedropper",             @"label":@"取色", @"tag":@(ETBTagColorPick)},
+        @{@"icon":@"arrow.counterclockwise", @"label":@"还原", @"tag":@(ETBTagReset)},
     ];
 
     CGFloat pad = 10.0, gap = 6.0;
     CGFloat bw = (scr.size.width - pad * 2 - gap * 4) / 5.0;
 
-    for (NSInteger i = 0; i < row1.count; i++) {
-        UIButton *b = [self makeToolButton:row1[i] width:bw];
-        b.frame = CGRectMake(pad + i * (bw + gap), kBarPad, bw, kRowH);
-        [_toolbar addSubview:b];
-    }
-    for (NSInteger i = 0; i < row2.count; i++) {
-        UIButton *b = [self makeToolButton:row2[i] width:bw];
-        b.frame = CGRectMake(pad + i * (bw + gap), kBarPad + kRowH + kRowGap, bw, kRowH);
-        [_toolbar addSubview:b];
-    }
+    void (^placeRow)(NSArray *, CGFloat) = ^(NSArray *row, CGFloat yOff) {
+        for (NSInteger i = 0; i < row.count; i++) {
+            UIButton *b = [self makeToolButton:row[i] width:bw];
+            b.frame = CGRectMake(pad + i * (bw + gap), kBarPad + yOff, bw, kRowH);
+            [_toolbar addSubview:b];
+        }
+    };
+    placeRow(row1, 0);
+    placeRow(row2, kRowH + kRowGap);
+    placeRow(row3, (kRowH + kRowGap) * 2);
 }
 
 - (UIButton *)makeToolButton:(NSDictionary *)spec width:(CGFloat)bw {
@@ -261,19 +276,11 @@ static EditToolbarWindow *_shared = nil;
         }];
     } else if (tag == ETBTagShare) {
         [SuperTools share:img fromWindow:_win];
-    } else if (tag == ETBTagMore) {
-        [self showMoreMenu:img];
-    }
-}
-
-#pragma mark - 更多二级弹窗
-
-- (void)showMoreMenu:(UIImage *)img {
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"更多功能"
-                                                               message:nil
-                                                        preferredStyle:UIAlertControllerStyleActionSheet];
-
-    [ac addAction:[UIAlertAction actionWithTitle:@"导出 PDF" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    } else if (tag == ETBTagPhone) {
+        UIImage *c = [SuperTools phoneCase:img];
+        if (c) { [self replaceImage:c]; [Common toast:@"已加手机外壳"]; }
+        else [Common toast:@"处理失败"];
+    } else if (tag == ETBTagPDF) {
         NSString *p = [SuperTools exportPDF:img];
         if (p) {
             NSURL *url = [NSURL fileURLWithPath:p];
@@ -283,9 +290,7 @@ static EditToolbarWindow *_shared = nil;
         } else {
             [Common toast:@"导出失败"];
         }
-    }]];
-
-    [ac addAction:[UIAlertAction actionWithTitle:@"压缩图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    } else if (tag == ETBTagCompress) {
         NSData *before = UIImagePNGRepresentation(img);
         UIImage *c = [SuperTools compress:img quality:0.6];
         if (c) {
@@ -296,25 +301,16 @@ static EditToolbarWindow *_shared = nil;
         } else {
             [Common toast:@"压缩失败"];
         }
-    }]];
-
-    [ac addAction:[UIAlertAction actionWithTitle:@"去除状态栏" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    } else if (tag == ETBTagStrip) {
         UIImage *s = [SuperTools stripStatusBar:img];
         if (s) { [self replaceImage:s]; [Common toast:@"已去除顶部状态栏"]; }
         else [Common toast:@"处理失败"];
-    }]];
-
-    [ac addAction:[UIAlertAction actionWithTitle:@"取色器" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    } else if (tag == ETBTagColorPick) {
         [SuperTools colorPicker:img fromWindow:_win];
-    }]];
-
-    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
-        ac.popoverPresentationController.sourceView = _toolbar;
-        ac.popoverPresentationController.sourceRect = _toolbar.bounds;
+    } else if (tag == ETBTagReset) {
+        if (_originalImage) { [self replaceImage:_originalImage]; [Common toast:@"已还原原图"]; }
+        else [Common toast:@"无原图可还原"];
     }
-    [Common present:ac fromWindow:_win];
 }
 
 #pragma mark - 展示辅助

@@ -20,9 +20,9 @@
 #import "Common.h"
 #import "ImageUtils.h"
 #import <Vision/Vision.h>
-#import <PencilKit/PencilKit.h>
 #import <PDFKit/PDFKit.h>
 #import <Photos/Photos.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <objc/message.h>
 #import <ImageIO/ImageIO.h>
 
@@ -205,26 +205,91 @@ static CGRect XZRectFromValue(id v) {
     }];
 }
 
-// 网络翻译入口。当前用免费 gtx 接口（无需 key）。
-// 想换成百度/DeepL：把这里换成自己的签名请求即可，调用方无需改动。
+// 网络翻译入口。优先用百度翻译 API（设置里填了 APP ID/KEY 即用，国内可用）；
+// 未配置密钥时回退免费 gtx 接口（国内常被墙，仅兜底）。
 + (void)translateText:(NSString *)text completion:(void (^)(NSString *dst))completion {
-    NSString *tl = [Common stringPref:XZ_KEY_TRANS_TARGET default:@"zh-CN"];
-    NSString *q = [text stringByAddingPercentEncodingWithAllowedCharacters:
-                   [NSCharacterSet URLQueryAllowedCharacterSet]];
-    NSString *us = [NSString stringWithFormat:
-                    @"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=%@&dt=t&q=%@",
-                    tl, q ?: @""];
-    NSURL *url = [NSURL URLWithString:us];
-    if (!url) { if (completion) completion(nil); return; }
+    NSString *appid = [Common stringPref:XZ_KEY_TRANS_APPID default:@""];
+    NSString *key   = [Common stringPref:XZ_KEY_TRANS_KEY default:@""];
+    if (appid.length && key.length) {
+        [self baiduTranslate:text appid:appid key:key completion:completion];
+    } else {
+        [self gtxTranslate:text completion:completion];
+    }
+}
 
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession]
-        dataTaskWithURL:url
++ (NSString *)md5:(NSString *)str {
+    if (!str) return @"";
+    NSData *data = [str dataUsingEncoding:NSUTF8StringEncoding];
+    if (data.length == 0) return @"";
+    unsigned char dig[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(data.bytes, (CC_LONG)data.length, dig);
+    NSMutableString *out = [NSMutableString stringWithCapacity:CC_MD5_DIGEST_LENGTH * 2];
+    for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++) [out appendFormat:@"%02x", dig[i]];
+    return out;
+}
+
+// 百度翻译开放平台「通用文本翻译」（需 APP ID + 密钥，见设置面板说明）。
+// 签名 sign = md5(appid + q + salt + key)；from=auto。
++ (void)baiduTranslate:(NSString *)text appid:(NSString *)appid key:(NSString *)key completion:(void (^)(NSString *dst))completion {
+    NSString *to = [Common stringPref:XZ_KEY_TRANS_TARGET default:@"zh"];
+    if (!to.length) to = @"zh";
+    NSString *salt = [NSString stringWithFormat:@"%ld", (long)([NSDate date].timeIntervalSince1970 * 1000.0)];
+    NSString *sign = [self md5:[NSString stringWithFormat:@"%@%@%@%@", appid, text, salt, key]];
+    NSString *(^enc)(NSString *) = ^NSString *(NSString *s) {
+        return [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: @"";
+    };
+    NSString *query = [NSString stringWithFormat:
+        @"q=%@&from=auto&to=%@&appid=%@&salt=%@&sign=%@",
+        enc(text), enc(to), enc(appid), enc(salt), enc(sign)];
+    NSURL *url = [NSURL URLWithString:[@"https://fanyi-api.baidu.com/api/trans/vip/translate?" stringByAppendingString:query]];
+    if (!url) { if (completion) completion(nil); return; }
+    [[NSURLSession sharedSession] dataTaskWithURL:url
       completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSString *out = nil;
         @try {
             if (!err && data) {
                 id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-                // 结构: [ [ ["译文","原文",null,null,10], ... ], ... ]
+                if ([json isKindOfClass:[NSDictionary class]]) {
+                    id ec = json[@"error_code"];
+                    if (ec) {
+                        NSLog(@"[SN3] baidu translate error_code=%@ msg=%@", ec, json[@"error_msg"]);
+                    } else {
+                        id tr = json[@"trans_result"];
+                        if ([tr isKindOfClass:[NSArray class]]) {
+                            NSMutableString *m = [NSMutableString string];
+                            for (id item in tr) {
+                                if ([item isKindOfClass:[NSDictionary class]]) {
+                                    id dst = item[@"dst"];
+                                    if ([dst isKindOfClass:[NSString class]]) [m appendString:(NSString *)dst];
+                                }
+                            }
+                            out = m.length ? m : nil;
+                        }
+                    }
+                }
+            } else {
+                NSLog(@"[SN3] baidu translate request failed: %@", err);
+            }
+        } @catch (NSException *e) { NSLog(@"[SN3] baidu translate parse: %@", e); }
+        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out); });
+    }] resume];
+}
+
+// 免费 gtx 兜底（国内常不通，仅当未配置百度密钥时启用）
++ (void)gtxTranslate:(NSString *)text completion:(void (^)(NSString *dst))completion {
+    NSString *tl = [Common stringPref:XZ_KEY_TRANS_TARGET default:@"zh-CN"];
+    NSString *q = [text stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+    NSString *us = [NSString stringWithFormat:
+                    @"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=%@&dt=t&q=%@",
+                    tl, q ?: @""];
+    NSURL *url = [NSURL URLWithString:us];
+    if (!url) { if (completion) completion(nil); return; }
+    [[NSURLSession sharedSession] dataTaskWithURL:url
+      completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSString *out = nil;
+        @try {
+            if (!err && data) {
+                id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
                 if ([json isKindOfClass:[NSArray class]] && [json count] > 0) {
                     id segs = json[0];
                     if ([segs isKindOfClass:[NSArray class]]) {
@@ -238,179 +303,17 @@ static CGRect XZRectFromValue(id v) {
                         out = m.length ? m : nil;
                     }
                 }
-            } else {
-                NSLog(@"[SN3] translate request failed: %@", err);
-            }
-        } @catch (NSException *e) {
-            NSLog(@"[SN3] translate parse exception: %@", e);
-        }
+            } else { NSLog(@"[SN3] gtx translate failed: %@", err); }
+        } @catch (NSException *e) { NSLog(@"[SN3] gtx parse: %@", e); }
         dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out); });
-    }];
-    [task resume];
+    }] resume];
 }
 
-#pragma mark - 3. 画图（PencilKit）
-
-// 动态构造 PKInkingTool：不同 iOS/SDK 版本选择器不一样，逐个探测
-static id XZMakeInkTool(NSInteger inkType, UIColor *color, CGFloat width) {
-    Class cls = NSClassFromString(@"PKInkingTool");
-    if (!cls) return nil;
-    id tool = [cls alloc];
-
-    SEL s3 = NSSelectorFromString(@"initWithInkType:color:width:");
-    if ([tool respondsToSelector:s3]) {
-        return ((id (*)(id, SEL, NSInteger, UIColor *, CGFloat))objc_msgSend)(tool, s3, inkType, color, width);
-    }
-    SEL s2 = NSSelectorFromString(@"initWithInkType:color:");
-    if ([tool respondsToSelector:s2]) {
-        return ((id (*)(id, SEL, NSInteger, UIColor *))objc_msgSend)(tool, s2, inkType, color);
-    }
-    return nil;
-}
-
-static id XZMakeEraserTool(void) {
-    Class cls = NSClassFromString(@"PKEraserTool");
-    if (!cls) return nil;
-    id tool = [cls alloc];
-    SEL s = NSSelectorFromString(@"initWithEraserType:");
-    if ([tool respondsToSelector:s]) {
-        return ((id (*)(id, SEL, NSInteger))objc_msgSend)(tool, s, 0);
-    }
-    return [[cls alloc] init];
-}
+#pragma mark - 3. 画图（自定义 CoreGraphics 画布，避免 PencilKit 在 SpringBoard 崩溃）
 
 + (void)draw:(UIImage *)image completion:(void (^)(UIImage *edited))completion {
     if (!image) { if (completion) completion(nil); return; }
-    if (@available(iOS 13.0, *)) {
-        CGRect scr = [UIScreen mainScreen].bounds;
-
-        UIWindow *win = [[UIWindow alloc] initWithFrame:scr];
-        win.windowLevel = UIWindowLevelAlert + 260;
-        win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.85];
-        if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
-
-        CGRect fit = XZFitRect(image.size, CGRectInset(scr, 4, 60));
-
-        UIImageView *bg = [[UIImageView alloc] initWithFrame:fit];
-        bg.image = image;
-        bg.contentMode = UIViewContentModeScaleToFill;
-        bg.userInteractionEnabled = NO;
-        [win addSubview:bg];
-
-        PKCanvasView *canvas = [[PKCanvasView alloc] initWithFrame:fit];
-        canvas.backgroundColor = [UIColor clearColor];
-        canvas.opaque = NO;
-        if (@available(iOS 14.0, *)) {
-            canvas.drawingPolicy = PKCanvasViewDrawingPolicyAnyInput;
-        }
-        [win addSubview:canvas];
-
-        // 工具条：画笔 / 马克笔 / 橡皮 / 颜色切换 / 完成 / 取消
-        UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - 108, scr.size.width, 108)];
-        bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
-        [win addSubview:bar];
-
-        __block UIColor *inkColor = [UIColor redColor];
-        __block CGFloat inkWidth  = 4.0;
-
-        UIButton * (^mk)(NSString *, CGRect, NSInteger) = ^UIButton *(NSString *t, CGRect f, NSInteger tag) {
-            UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-            b.frame = f; b.tag = tag;
-            b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
-            b.layer.cornerRadius = 8;
-            [b setTitle:t forState:UIControlStateNormal];
-            [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            b.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-            [b addTarget:self action:@selector(drawToolTapped:) forControlEvents:UIControlEventTouchUpInside];
-            [bar addSubview:b];
-            return b;
-        };
-
-        CGFloat bw = (scr.size.width - 40 - 10 * 3) / 4.0;
-        mk(@"画笔",  CGRectMake(20, 10, bw, 40), 1);
-        mk(@"马克笔", CGRectMake(30 + bw, 10, bw, 40), 2);
-        mk(@"橡皮",  CGRectMake(40 + bw * 2, 10, bw, 40), 3);
-        mk(@"换色",  CGRectMake(50 + bw * 3, 10, bw, 40), 4);
-        mk(@"取消",  CGRectMake(20, 58, (scr.size.width - 50) / 2.0, 40), 998);
-        mk(@"完成",  CGRectMake(30 + (scr.size.width - 50) / 2.0, 58, (scr.size.width - 50) / 2.0, 40), 999);
-
-        objc_setAssociatedObject(win, "xz_draw_canvas", canvas, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(win, "xz_draw_image", image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(win, "xz_draw_completion", completion, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        objc_setAssociatedObject(win, "xz_draw_color", inkColor, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(win, "xz_draw_width", @(inkWidth), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-        win.hidden = NO;
-
-        // 默认给一支笔（PKInkingTool 不可用时用系统默认工具，依然能画）
-        id tool = XZMakeInkTool(0, inkColor, inkWidth);
-        if (tool) canvas.tool = tool;
-    } else {
-        if (completion) completion(nil);
-    }
-}
-
-+ (void)drawToolTapped:(UIButton *)btn {
-    UIWindow *win = btn.window;
-    if (!win) return;
-    PKCanvasView *canvas = objc_getAssociatedObject(win, "xz_draw_canvas");
-    UIImage *base = objc_getAssociatedObject(win, "xz_draw_image");
-    void (^comp)(UIImage *) = objc_getAssociatedObject(win, "xz_draw_completion");
-    UIColor *color = objc_getAssociatedObject(win, "xz_draw_color") ?: [UIColor redColor];
-    CGFloat width = [objc_getAssociatedObject(win, "xz_draw_width") doubleValue];
-    if (width <= 0) width = 4.0;
-
-    NSInteger tag = btn.tag;
-
-    if (tag == 998) {              // 取消
-        win.hidden = YES;
-        if (comp) comp(nil);
-        return;
-    }
-    if (tag == 999) {              // 完成：把画布内容合成回原图
-        if (@available(iOS 13.0, *)) {
-            UIImage *result = base;
-            if (canvas && base) {
-                UIImage *drawing = nil;
-                @try {
-                    SEL imgSel = NSSelectorFromString(@"imageFromRect:scale:");
-                    if ([canvas.drawing respondsToSelector:imgSel]) {
-                        drawing = ((UIImage *(*)(id, SEL, CGRect, CGFloat))objc_msgSend)(
-                            canvas.drawing, imgSel, canvas.bounds, [UIScreen mainScreen].scale);
-                    }
-                } @catch (NSException *e) { drawing = nil; }
-
-                UIGraphicsBeginImageContextWithOptions(base.size, NO, base.scale);
-                [base drawAtPoint:CGPointZero];
-                if (drawing) [drawing drawInRect:CGRectMake(0, 0, base.size.width, base.size.height)];
-                UIImage *merged = UIGraphicsGetImageFromCurrentImageContext();
-                UIGraphicsEndImageContext();
-                if (merged) result = merged;
-            }
-            win.hidden = YES;
-            if (comp) comp(result);
-        }
-        return;
-    }
-
-    // 切工具
-    id tool = nil;
-    if (tag == 1) {
-        tool = XZMakeInkTool(0, color, width);          // pen
-    } else if (tag == 2) {
-        tool = XZMakeInkTool(2, [color colorWithAlphaComponent:0.4], width * 4);  // marker
-    } else if (tag == 3) {
-        tool = XZMakeEraserTool();
-    } else if (tag == 4) {
-        static NSInteger cIdx = 0;
-        NSArray *palette = @[[UIColor redColor], [UIColor yellowColor], [UIColor greenColor],
-                             [UIColor blueColor], [UIColor blackColor], [UIColor whiteColor]];
-        cIdx = (cIdx + 1) % (NSInteger)palette.count;
-        color = palette[cIdx];
-        objc_setAssociatedObject(win, "xz_draw_color", color, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        tool = XZMakeInkTool(0, color, width);
-    }
-    if (tool && canvas) canvas.tool = tool;
+    [XZDrawEditor edit:image completion:completion];
 }
 
 #pragma mark - 4. 识码（Vision Barcode）
@@ -697,6 +600,13 @@ static UIWindow *_floatWin = nil;
     [Common present:avc fromWindow:win];
 }
 
+#pragma mark - 9b. 加手机壳
+
++ (UIImage *)phoneCase:(UIImage *)image {
+    if (!image) return nil;
+    return [ImageUtils applyPhoneFrame:image];
+}
+
 #pragma mark - 10a. 导出 PDF
 
 + (NSString *)exportPDF:(UIImage *)image {
@@ -763,6 +673,222 @@ static UIWindow *_floatWin = nil;
 + (void)colorPicker:(UIImage *)image fromWindow:(UIWindow *)win {
     if (!image) return;
     [XZColorPicker show:image];
+}
+
+@end
+
+#pragma mark - 画图编辑器（自定义 CoreGraphics，避免 PencilKit 在 SpringBoard 崩溃）
+
+// 单条笔画
+@interface XZDrawStroke : NSObject
+@property (nonatomic, strong) UIBezierPath *path;
+@property (nonatomic, strong) UIColor *color;
+@property (nonatomic, assign) CGFloat width;
+@property (nonatomic, assign) BOOL eraser;   // 橡皮：用 clear 混合擦除，露出原图
+@end
+@implementation XZDrawStroke
+@end
+
+// 画布：按 stroke 列表实时绘制（橡皮用 kCGBlendModeClear）
+@interface XZDrawCanvas : UIView
+@property (nonatomic, strong) NSMutableArray<XZDrawStroke *> *strokes;
+@end
+@implementation XZDrawCanvas
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) { _strokes = [NSMutableArray array]; self.backgroundColor = [UIColor clearColor]; self.opaque = NO; }
+    return self;
+}
+- (void)drawRect:(CGRect)rect {
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    if (!c) return;
+    for (XZDrawStroke *s in _strokes) {
+        CGContextSetBlendMode(c, s.eraser ? kCGBlendModeClear : kCGBlendModeNormal);
+        [s.color setStroke];
+        s.path.lineWidth = s.width;
+        s.path.lineCapStyle = kCGLineCapRound;
+        s.path.lineJoinStyle = kCGLineJoinRound;
+        [s.path stroke];
+    }
+    CGContextSetBlendMode(c, kCGBlendModeNormal);
+}
+@end
+
+@interface XZDrawEditor : NSObject
++ (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion;
+@end
+
+@implementation XZDrawEditor {
+    UIWindow *_win;
+    UIImageView *_iv;
+    XZDrawCanvas *_canvas;
+    UIImage *_source;
+    NSMutableArray<XZDrawStroke *> *_strokes;
+    UIColor *_inkColor;
+    CGFloat _inkWidth;
+    BOOL _eraser;
+    BOOL _marker;
+    UILabel *_tip;
+    void (^_completion)(UIImage *);
+}
+
++ (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion {
+    XZDrawEditor *ed = [[XZDrawEditor alloc] init];
+    [ed buildWithImage:image completion:completion];
+}
+
+- (void)buildWithImage:(UIImage *)image completion:(void (^)(UIImage *edited))completion {
+    CGRect scr = [UIScreen mainScreen].bounds;
+    UIEdgeInsets safe = [Common screenSafeInsets];
+
+    _win = [[UIWindow alloc] initWithFrame:scr];
+    _win.windowLevel = UIWindowLevelAlert + 260;
+    _win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.88];
+    if (@available(iOS 13.0, *)) _win.windowScene = [Common activeWindowScene];
+    _source = image;
+    _strokes = [NSMutableArray array];
+    _inkColor = [UIColor redColor];
+    _inkWidth = 4.0;
+    _eraser = NO;
+    _completion = completion;
+
+    CGRect fit = XZFitRect(image.size, CGRectMake(8, safe.top + 52, scr.size.width - 16,
+                                                  scr.size.height - safe.top - safe.bottom - 190));
+    _iv = [[UIImageView alloc] initWithFrame:fit];
+    _iv.image = image;
+    _iv.contentMode = UIViewContentModeScaleToFill;
+    _iv.userInteractionEnabled = NO;
+    [_win addSubview:_iv];
+
+    _canvas = [[XZDrawCanvas alloc] initWithFrame:fit];
+    _canvas.userInteractionEnabled = YES;
+    [_win addSubview:_canvas];
+
+    // 工具条
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - 130,
+                                                           scr.size.width, 130)];
+    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    [_win addSubview:bar];
+
+    CGFloat bw = (scr.size.width - 50) / 2.0;
+    [self mkBtn:@"画笔"    frame:CGRectMake(20, 10, bw, 40) sel:@selector(onPen)     color:[UIColor systemRedColor]];
+    [self mkBtn:@"马克笔"  frame:CGRectMake(30 + bw, 10, bw, 40) sel:@selector(onMarker)  color:[UIColor systemOrangeColor]];
+    [self mkBtn:@"橡皮"    frame:CGRectMake(20, 60, bw, 40) sel:@selector(onEraser)  color:[UIColor systemGrayColor]];
+    [self mkBtn:@"换色"    frame:CGRectMake(30 + bw, 60, bw, 40) sel:@selector(onColor)  color:[UIColor systemBlueColor]];
+    [self mkBtn:@"撤销"    frame:CGRectMake(20, 100, bw, 40) sel:@selector(onUndo)    color:[UIColor systemGrayColor]];
+    [self mkBtn:@"完成"    frame:CGRectMake(30 + bw, 100, bw, 40) sel:@selector(onDone)   color:[UIColor systemGreenColor]];
+
+    UIButton *cancel = [self mkBtn:@"取消" frame:CGRectMake(20, safe.top + 12, 80, 34)
+                                sel:@selector(onCancel) color:[UIColor systemGrayColor]];
+
+    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(110, safe.top + 12, scr.size.width - 130, 34)];
+    tip.text = @"手指在图上涂抹；画笔/马克笔/橡皮，点完成合成回原图";
+    tip.textColor = [UIColor colorWithWhite:1 alpha:0.8];
+    tip.font = [UIFont systemFontOfSize:12];
+    tip.adjustsFontSizeToFitWidth = YES;
+    [_win addSubview:tip];
+    _tip = tip;
+
+    _win.hidden = NO;
+    objc_setAssociatedObject(_win, "xz_draw_editor", self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (UIButton *)mkBtn:(NSString *)title frame:(CGRect)f sel:(SEL)sel color:(UIColor *)color {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = f;
+    b.backgroundColor = color;
+    b.layer.cornerRadius = 8;
+    [b setTitle:title forState:UIControlStateNormal];
+    [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    [_win addSubview:b];
+    return b;
+}
+
+#pragma mark - 触摸绘制
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    CGPoint p = [t locationInView:_canvas];
+    XZDrawStroke *s = [[XZDrawStroke alloc] init];
+    s.path = [UIBezierPath bezierPath];
+    CGFloat w = _eraser ? (_inkWidth * 3.0) : (_marker ? (_inkWidth * 4.0) : _inkWidth);
+    s.path.lineWidth = w;
+    s.path.lineCapStyle = kCGLineCapRound;
+    s.path.lineJoinStyle = kCGLineJoinRound;
+    [s.path moveToPoint:p];
+    if (_eraser) {
+        s.color = [UIColor clearColor];
+        s.eraser = YES;
+    } else {
+        s.color = _marker ? [_inkColor colorWithAlphaComponent:0.45] : _inkColor;
+        s.eraser = NO;
+    }
+    [_strokes addObject:s];
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    [[_strokes lastObject] addLineToPoint:[t locationInView:_canvas]];
+    [_canvas setNeedsDisplay];
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [_canvas setNeedsDisplay]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [_canvas setNeedsDisplay]; }
+
+#pragma mark - 工具
+
+- (void)onPen    { _eraser = NO; _marker = NO; _tip.text = @"画笔：细线"; }
+- (void)onMarker { _eraser = NO; _marker = YES; _tip.text = @"马克笔：半透明粗线"; }
+- (void)onEraser { _eraser = YES; _marker = NO; _tip.text = @"橡皮：擦除涂抹处"; }
+- (void)onColor  {
+    static NSArray *palette;
+    static NSInteger cIdx = 0;
+    static dispatch_once_t once; dispatch_once(&once, ^{
+        palette = @[[UIColor redColor], [UIColor yellowColor], [UIColor greenColor],
+                    [UIColor blueColor], [UIColor blackColor], [UIColor whiteColor]];
+    });
+    cIdx = (cIdx + 1) % (NSInteger)palette.count;
+    _inkColor = palette[cIdx];
+    _eraser = NO; _marker = NO;
+    _tip.text = [NSString stringWithFormat:@"已换色 #%ld", (long)cIdx];
+}
+- (void)onUndo { if (_strokes.count) { [_strokes removeLastObject]; [_canvas setNeedsDisplay]; } }
+
+- (void)onCancel { [self finishWithImage:nil]; }
+
+- (void)onDone {
+    if (!_source) { [self finishWithImage:nil]; return; }
+    // 把画布快照成透明叠层（橡皮处透明），再合成回原图
+    UIImage *overlay = nil;
+    @try {
+        UIGraphicsBeginImageContextWithOptions(_canvas.bounds.size, NO, 0);
+        [_canvas drawViewHierarchyInRect:_canvas.bounds afterScreenUpdates:YES];
+        overlay = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    } @catch (NSException *e) { overlay = nil; }
+
+    UIImage *result = _source;
+    if (overlay) {
+        UIGraphicsBeginImageContextWithOptions(_source.size, NO, _source.scale);
+        [_source drawAtPoint:CGPointZero];
+        // 画布 fit 尺寸已按图片宽高比，故直接拉伸到整图即可对齐
+        [overlay drawInRect:CGRectMake(0, 0, _source.size.width, _source.size.height)];
+        UIImage *merged = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        if (merged) result = merged;
+    }
+    [self finishWithImage:result];
+}
+
+- (void)finishWithImage:(UIImage *)img {
+    void (^comp)(UIImage *) = _completion;
+    if (_win) {
+        _win.hidden = YES;
+        objc_setAssociatedObject(_win, "xz_draw_editor", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        _win = nil;
+    }
+    _iv = nil; _canvas = nil; _source = nil; _strokes = nil; _tip = nil; _completion = nil;
+    if (comp) comp(img);
 }
 
 @end

@@ -26,6 +26,7 @@
 #include <notify.h>
 #import "AppScrollReporter.h"
 #import "SN3Notify.h"
+#import "Common.h"
 
 static AppScrollReporter *g_inst = nil;
 static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_doneTok = 0;
@@ -36,6 +37,8 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_do
     BOOL   _armed;
     BOOL   _autoStarted;             // 是否已经发出过第1帧并做过第一次滚动
     NSTimer *_timer;
+    NSTimeInterval _tickInterval;    // 每帧采集间隔（秒）
+    CGFloat _stepRatio;              // 每帧滚动步进占区域高比例（越大重叠越小、越快）
 }
 
 + (instancetype)shared {
@@ -103,17 +106,22 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_do
     _armed = YES;
     _autoStarted = NO;
 
+    // 快速模式：更短间隔 + 更大步进（更少帧、更快到底）
+    BOOL quick = [Common boolPref:@"LongShot_Quick" default:NO];
+    _tickInterval = quick ? 0.28 : 0.42;
+    _stepRatio   = quick ? 0.985f : 0.97f;
+
     // 第 1 帧：当前滚动位置作为基准
     [self sendCaptureAt:_sv.contentOffset.y];
 
-    // 滚动 + 采集循环（间隔 0.55s：足够 UITableView/UICollectionView 加载并渲染新单元格）
-    _timer = [NSTimer scheduledTimerWithTimeInterval:0.55
+    // 滚动 + 采集循环
+    _timer = [NSTimer scheduledTimerWithTimeInterval:_tickInterval
                                              target:self
                                            selector:@selector(tick)
                                            userInfo:nil
                                             repeats:YES];
-    NSLog(@"[SN3] app: 自动滚动开始, regionH=%.0f, contentSize=%.0f, maxY=%.0f",
-          _regionH, _sv.contentSize.height, [self maxOffsetY]);
+    NSLog(@"[SN3] app: 自动滚动开始(quick=%d), regionH=%.0f, contentSize=%.0f, maxY=%.0f",
+          quick, _regionH, _sv.contentSize.height, [self maxOffsetY]);
 }
 
 - (void)disarm {
@@ -123,10 +131,10 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_do
     NSLog(@"[SN3] app: 自动滚动已停止");
 }
 
-// 把 scrollView 向下推「约一屏高×92%」；返回实际滚动增量（点）
+// 把 scrollView 向下推「约一屏高 × _stepRatio」；返回实际滚动增量（点）
 - (CGFloat)scrollOneStep {
     if (!_sv) return 0;
-    CGFloat step = MAX(40.0f, _regionH * 0.92f);   // 每次滚 ~92% 区域高 → 相邻帧重叠 ~8%
+    CGFloat step = MAX(40.0f, _regionH * _stepRatio);   // 每次滚 ~97% 区域高 → 相邻帧重叠仅 ~3%
     CGFloat cur = _sv.contentOffset.y;
     CGFloat maxY = [self maxOffsetY];
     CGFloat newOff = cur + step;

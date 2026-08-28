@@ -29,6 +29,8 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>使用设备本地 Vision 识别（离线、无需密钥）。识别语言填英文逗号分隔，如 zh-Hans,en-US。</string>
 			<key>label</key>
 			<string>文字识别 (OCR)</string>
 		</dict>
@@ -201,6 +203,20 @@
 			<string>每帧间隔(秒)</string>
 			<key>placeholder</key>
 			<string>0.05</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LongShot_Quick</string>
+			<key>label</key>
+			<string>快速模式(更快更省帧)</string>
 		</dict>
 		<dict>
 			<key>cell</key>

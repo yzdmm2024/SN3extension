@@ -4,15 +4,15 @@
 //  【规格书对应】
 //   只有「截图 / 长图生成完成之后」才弹出本窗口。框选、长截图调节阶段绝不出现。
 //
-//   第一排（识别编辑）：OCR · 翻译 · 画图 · 识码 · 打码
-//   第二排（输出操作）：复制 · 贴图 · 保存 · 分享 · 更多
-//   「更多」二级弹窗：导出PDF · 压缩 · 去状态栏 · 取色器
+//   三排工具栏（全部平铺，无二级菜单）：
+//     第1排（识别编辑）：OCR · 翻译 · 画图 · 识码 · 打码
+//     第2排（输出操作）：复制 · 贴图 · 保存 · 分享 · 加壳
+//     第3排（更多工具）：PDF · 压缩 · 去状态栏 · 取色 · 还原
 //
 //  调用关系：
 //    MaskCropWindow（正常截图 / 长截图拼接完成）
 //        └─> [EditToolbarWindow showWithImage:]
-//                 └─> toolTapped ──> SuperTools.*（OCR/翻译/画图/识码/打码/…）
-//                 └─> showMoreMenu ──> SuperTools.exportPDF/compress/stripStatusBar/colorPicker
+//                 └─> toolTapped ──> SuperTools.*（OCR/翻译/画图/识码/打码/复制/贴图/保存/分享/加壳/PDF/压缩/去状态栏/取色/还原）
 //
 
 #import <UIKit/UIKit.h>
