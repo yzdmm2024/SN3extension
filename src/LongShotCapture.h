@@ -37,6 +37,10 @@
 // 追加一帧；若与上一帧相比几乎没有位移（用户没滑动）返回 NO 并丢弃该帧
 - (BOOL)addFrame:(UIImage *)frame;
 
+// v5.2：手动长截图模式追加一帧（用户滑完一屏后主动点【下一屏】）。
+//   有可靠 SAD 接缝则用之；配不准时按极小保守重叠(10%)拼入，避免重复堆叠。
+- (BOOL)addManualFrame:(UIImage *)frame;
+
 // 是否已达最大高度上限（到顶即停止采集，防 OOM）
 - (BOOL)isOverHeightLimit;
 

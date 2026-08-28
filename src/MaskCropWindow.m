@@ -67,6 +67,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UIButton *_closeBtn;            // 关闭（框右上角）
     UILabel  *_longCountLabel;      // 已采集帧数
 
+    // ---- v5.2：长截图自动/手动模式 ----
+    BOOL      _manualMode;          // YES=手动（滑完一屏点【下一屏】）；NO=自动（定时抓帧）
+    UIButton *_modeToggleBtn;       // 框左上角「模式:自动/手动」切换
+    UIButton *_nextBtn;             // 框左下「下一屏」（仅手动模式显示）
+
     // ---- 状态 ----
     XZMaskMode   _mode;
     XZDragTarget _drag;
@@ -188,6 +193,8 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
             _longCountLabel.hidden = YES;
+            _modeToggleBtn.hidden = YES;   // v5.2
+            _nextBtn.hidden      = YES;    // v5.2
             _win.passthrough      = NO;          // 面板阶段吃下全屏触摸
             _contentView.userInteractionEnabled = YES;
             _borderLayer.hidden = NO;            // 选区边框仍然可见
@@ -201,6 +208,8 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
             _longCountLabel.hidden = YES;
+            _modeToggleBtn.hidden = YES;   // v5.2
+            _nextBtn.hidden      = YES;    // v5.2
             _win.passthrough      = NO;          // 框选阶段吃下全屏拖拽
             _contentView.userInteractionEnabled = YES;
             _borderLayer.hidden = !_hasCrop;
@@ -219,6 +228,8 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _copyLongBtn.hidden = NO;
         _closeBtn.hidden    = NO;
         _longCountLabel.hidden = NO;
+        _modeToggleBtn.hidden = NO;             // v5.2：模式切换常驻
+        _nextBtn.hidden      = !_manualMode;    // v5.2：仅手动模式显示
         _win.passthrough      = YES;             // 长截图：框内穿透、框外吞咽
         _win.passRect        = _longFrameRect;   // 框内坐标 → 穿透给 App
         _contentView.userInteractionEnabled = NO; // 不拦截手势，交给 hitTest 决定
@@ -229,6 +240,8 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         [_win bringSubviewToFront:_copyLongBtn];
         [_win bringSubviewToFront:_closeBtn];
         [_win bringSubviewToFront:_longCountLabel];
+        [_win bringSubviewToFront:_modeToggleBtn];
+        [_win bringSubviewToFront:_nextBtn];
     }
     [_win layoutIfNeeded];
 }
@@ -242,6 +255,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _editingPanel = NO;
     _entryTile = nil;
     _lastAddedTile = nil;
+    _manualMode = NO;          // v5.2：退出长截图复位为自动模式
+    _modeToggleBtn = nil;      // v5.2
+    _nextBtn = nil;            // v5.2
     _cropImage = nil;
     _cropScreenRect = CGRectZero;
     _localPanel = nil;
@@ -360,6 +376,69 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _longCountLabel.text = @"已采集 0 屏";
     [_win addSubview:_longCountLabel];
     [_win addInteractiveView:_longCountLabel];
+
+    // v5.2：模式切换（框左上角暗色区）—— 自动 / 手动
+    _modeToggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    _modeToggleBtn.frame = CGRectMake(12, top - 38, 100, 40);
+    _modeToggleBtn.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+    _modeToggleBtn.layer.cornerRadius = 10;
+    [_modeToggleBtn setTitle:@"模式:自动" forState:UIControlStateNormal];
+    [_modeToggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    _modeToggleBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    [_modeToggleBtn addTarget:self action:@selector(onToggleMode) forEvents:UIControlEventTouchUpInside];
+    [_win addSubview:_modeToggleBtn];
+    [_win addInteractiveView:_modeToggleBtn];
+
+    // v5.2：手动模式「下一屏」按钮（底部保存/复制上方一行，仅手动模式显示）
+    _nextBtn = [self makeBarButton:@"下一屏 ▼" bg:[UIColor systemOrangeColor] action:@selector(onNextScreen)];
+    _nextBtn.frame = CGRectMake(pad, by - (kButtonH + 10), scr.size.width - pad * 2, kButtonH);
+    _nextBtn.hidden = YES;   // 默认自动模式隐藏
+    [_win addSubview:_nextBtn];
+    [_win addInteractiveView:_nextBtn];
+}
+
+#pragma mark - v5.2：自动 / 手动模式切换
+
+- (void)onToggleMode {
+    _manualMode = !_manualMode;
+    [self refreshChrome];
+    if (_manualMode) {
+        [self stopCaptureTimer];
+        [_modeToggleBtn setTitle:@"模式:手动" forState:UIControlStateNormal];
+        [Common toast:@"已切手动：框内滑完一屏，点【下一屏】采集"];
+    } else {
+        [self startCaptureTimer];
+        [_modeToggleBtn setTitle:@"模式:自动" forState:UIControlStateNormal];
+        [Common toast:@"已切自动：框内滑动自动采集"];
+    }
+}
+
+// v5.2：手动采集一屏（用户主动点【下一屏】）
+- (void)onNextScreen {
+    if (!_win || _mode != XZMaskModeLong) return;
+    BOOL borderHidden = _borderLayer.hidden;
+    _borderLayer.hidden = YES;                 // 抓帧时去掉边框，避免截进长图
+    UIImage *screen = [ImageUtils captureScreen];
+    _borderLayer.hidden = borderHidden;
+    if (!screen) { [Common toast:@"抓屏失败"]; return; }
+
+    CGRect clip = CGRectInset(_longFrameRect, 3, 3);
+    UIImage *tile = [ImageUtils cropImage:screen screenRect:clip];
+    if (!tile) { [Common toast:@"裁剪失败"]; return; }
+
+    // 与上一屏完全相同（手滑连点没动）→ 忽略
+    if (_lastAddedTile && ![self tile:tile differsFrom:_lastAddedTile]) {
+        [Common toast:@"和上一屏一样，未采集"];
+        return;
+    }
+    BOOL accepted = [[LongShotCapture sharedInstance] addManualFrame:tile];
+    if (accepted) {
+        _lastAddedTile = tile;
+        [self updateLongCounter];
+        [Common toast:@"已采集一屏"];
+    } else {
+        [Common toast:@"这屏和上一屏重叠太多，跳过"];
+    }
 }
 
 #pragma mark - 模式切换
@@ -369,9 +448,14 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     if (mode == XZMaskModeLong) {
         _entryTile = nil;
         _lastAddedTile = nil;
-        [self startCaptureTimer];
         [self refreshChrome];
-        [Common toast:@"长截图：框内从顶部向下滑动页面，开始采集后显示屏数"];
+        if (_manualMode) {
+            [self stopCaptureTimer];
+            [Common toast:@"长截图·手动模式：框内滑完一屏点【下一屏】"];
+        } else {
+            [self startCaptureTimer];
+            [Common toast:@"长截图：框内从顶部向下滑动页面，开始采集后显示屏数"];
+        }
     } else {
         [self stopCaptureTimer];
         [self refreshChrome];

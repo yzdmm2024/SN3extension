@@ -1,5 +1,5 @@
 //
-//  Tweak.xm — 超级截图 v5.1 入口（SpringBoard Tweak）
+//  Tweak.xm — 超级截图 v5.2 入口（SpringBoard Tweak）
 //
 //  ────────────────────────────────────────────────────────────────────────
 //  触发链：
@@ -53,7 +53,7 @@ __attribute__((constructor)) static void xz_ctor() {
         NSString *procName = [NSProcessInfo processInfo].processName;
         if (![procName isEqualToString:@"SpringBoard"]) return;
 
-        NSLog(@"[SN3] 超级截图 v5.1 loaded in SpringBoard");
+        NSLog(@"[SN3] 超级截图 v5.2 loaded in SpringBoard");
         dispatch_async(dispatch_get_main_queue(), ^{
             @try {
                 CFNotificationCenterAddObserver(

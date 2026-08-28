@@ -30,11 +30,13 @@
 #import "Common.h"
 #import <math.h>
 
-// 拼接画布字节预算上限（约 80MB），换算成最大像素高度后再与 _maxPxHeight 取小
-static const CGFloat kMaxCanvasBytes = 80.0 * 1024.0 * 1024.0;
+// 拼接画布字节预算上限（约 120MB），换算成最大像素高度后再与 _maxPxHeight 取小。
+// v5.2：上调预算并为超长内容改为「整体降分辨率」而非「压缩每帧高度」，消除叠影。
+static const CGFloat kMaxCanvasBytes = 120.0 * 1024.0 * 1024.0;
 
 @interface LongShotCapture ()
 - (void)recomputeEstimatedHeight;
+- (BOOL)appendFrame:(UIImage *)frame overlapPx:(CGFloat)overlapPx;
 @end
 
 @implementation LongShotCapture {
@@ -61,7 +63,7 @@ static LongShotCapture *_shared = nil;
     if (self) {
         _frames = [NSMutableArray array];
         _overlaps = [NSMutableArray array];
-        _maxPxHeight = 12000.0;
+        _maxPxHeight = 60000.0;   // v5.2：放宽硬上限（实际仍以 kMaxCanvasBytes 内存预算为准）
         _overlapRatio = XZ_LONG_OVERLAP_DEFAULT;
         _estimatedHeight = 0;
         _emaOverlap = (CGFloat)NAN;
@@ -120,7 +122,7 @@ static LongShotCapture *_shared = nil;
         _skipStreak++;
         // 安全阀：连续多帧配准失败，但两帧内容确实不同（用户在滑动）→ 强制保守拼入
         if (_skipStreak >= 5 && _lastMAD > 30.0f) {
-            overlapPx = lastHpx * 0.35;   // 拼入底部 65% 新内容（极小量重叠重复，可控）
+            overlapPx = lastHpx * 0.25;   // v5.2：安全阀强制重叠从 35% 降到 25%，减少可见重复块
             confident = YES;
             NSLog(@"[SN3] 安全阀：连续 %ld 帧未匹配但内容变化，强制保守重叠拼入", (long)_skipStreak);
         } else {
@@ -141,6 +143,13 @@ static LongShotCapture *_shared = nil;
         return NO;
     }
 
+    return [self appendFrame:frame overlapPx:overlapPx];
+}
+
+// v5.2：实际把一帧拼入队列（自动/手动共用），overlapPx 为与上一帧的重叠像素高。
+- (BOOL)appendFrame:(UIImage *)frame overlapPx:(CGFloat)overlapPx {
+    UIImage *last = _frames.lastObject;
+    CGFloat lastHpx = last ? (CGFloat)CGImageGetHeight(last.CGImage) : 0;
     CGFloat scale = (last.size.height > 0) ? (lastHpx / last.size.height) : 2.0;
     CGFloat ovPts = overlapPx / scale;
 
@@ -153,6 +162,44 @@ static LongShotCapture *_shared = nil;
 
     [self recomputeEstimatedHeight];
     return YES;
+}
+
+// v5.2：手动长截图模式追加一帧（用户滑完一屏后主动点【下一屏】）。
+//   有可靠 SAD 接缝则用之；配不准时按极小保守重叠(10%)拼入，避免重复堆叠。
+- (BOOL)addManualFrame:(UIImage *)frame {
+    if (!frame || !frame.CGImage) return NO;
+
+    // 第一帧：无条件接收（无先验）
+    if (_frames.count == 0) {
+        [_frames addObject:frame];
+        [_overlaps addObject:@(0.0)];
+        _emaOverlap = (CGFloat)NAN;
+        _skipStreak = 0;
+        _lastMAD = 1e9f;
+        [self recomputeEstimatedHeight];
+        return YES;
+    }
+
+    UIImage *last = _frames.lastObject;
+    if (!last.CGImage) return NO;
+    CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
+    if (lastHpx < 2) return NO;
+
+    BOOL confident = NO;
+    CGFloat overlapPx = [self sadOverlapPxFromLast:last cur:frame confident:&confident];
+    if (!confident) {
+        overlapPx = lastHpx * 0.10;   // 手动模式默认极小重叠，宁可漏一点也不要重复
+        NSLog(@"[SN3] 手动帧 SAD 不可靠，按 10%% 保守重叠拼入");
+    }
+
+    // 几乎整帧重合（用户没滑）→ 丢弃
+    if (overlapPx >= lastHpx * 0.97) {
+        NSLog(@"[SN3] 手动帧重叠 %.2f%%≈整帧，丢弃", overlapPx / lastHpx * 100.0);
+        return NO;
+    }
+    if (overlapPx <= lastHpx * 0.02) overlapPx = lastHpx * 0.02;
+
+    return [self appendFrame:frame overlapPx:overlapPx];
 }
 
 - (void)recomputeEstimatedHeight {
@@ -220,25 +267,22 @@ static LongShotCapture *_shared = nil;
             total += add;
         }
 
-        // 兜底3：超上限则按比例压缩每段，硬控内存（Wpx * total * 4 bytes）
+        // 兜底：超内存预算则【整体降分辨率】拼接（画布等比缩小 s 倍），保持各帧重叠比例不变，
+        // 从根本上消除「压缩每帧高度」导致的叠影；牺牲一点清晰度换取超长图可用。
         CGFloat scale = [UIScreen mainScreen].scale;
         if (scale <= 0) scale = 2.0;
         CGFloat maxPx = _maxPxHeight;
         CGFloat budgetPx = kMaxCanvasBytes / (Wpx * 4.0);
         if (budgetPx < maxPx) maxPx = budgetPx;
-        if (total > maxPx && total > 0) {
-            CGFloat k = maxPx / total;
-            total = maxPx;
-            for (NSUInteger i = 0; i < segs.count; i++) {
-                segs[i] = @(MAX(1.0, [segs[i] doubleValue] * k));
-            }
-        }
-        if (total < 2 || Wpx < 2) return nil;
+        CGFloat s = 1.0;                         // 输出相对采集分辨率的缩放（<=1）
+        if (total > maxPx && total > 0) s = maxPx / total;
+        CGFloat outW = Wpx * s;
+        CGFloat outH = total * s;
+        if (outW < 2 || outH < 2) return nil;
 
-        // 画布用像素尺寸 + scale=1，最后再按屏幕 scale 包一层，保证 size 是「点」
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(Wpx, total), YES, 1.0);
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(outW, outH), YES, 1.0);
         [[UIColor whiteColor] setFill];
-        UIRectFill(CGRectMake(0, 0, Wpx, total));
+        UIRectFill(CGRectMake(0, 0, outW, outH));
 
         CGFloat y = 0;
         for (NSUInteger i = 0; i < frames.count && i < segs.count; i++) {
@@ -246,9 +290,10 @@ static LongShotCapture *_shared = nil;
             CGFloat add = [segs[i] doubleValue];
             CGFloat fhPx = f.CGImage ? (CGFloat)CGImageGetHeight(f.CGImage) : add;
             if (fhPx < 1) continue;
-            // 帧 i 只有「底部 add 像素」是新内容：把整帧上移 (fhPx - add) 后画，
-            // 使它的底部正好落在画布 y..y+add
-            [f drawInRect:CGRectMake(0, y - (fhPx - add), Wpx, fhPx)];
+            // 帧 i 只有「底部 add 像素」是新内容：整帧上移 (fhPx - add)，再整体乘 s 落到画布
+            CGFloat drawY = (y - (fhPx - add)) * s;
+            CGFloat drawH = fhPx * s;
+            [f drawInRect:CGRectMake(0, drawY, outW, drawH)];
             y += add;
         }
         UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
@@ -259,7 +304,8 @@ static LongShotCapture *_shared = nil;
             // 绝对兜底：直接纵向简单拼接所有帧（无去重，仅防返回 nil 让流程卡死）
             return [self simpleConcat:frames];
         }
-        return [UIImage imageWithCGImage:outCG scale:scale orientation:UIImageOrientationUp];
+        // 分辨率已按 s 缩进画布，故直接以 scale=1 输出（点尺寸=像素尺寸）
+        return [UIImage imageWithCGImage:outCG scale:1.0 orientation:UIImageOrientationUp];
     } @catch (NSException *e) {
         NSLog(@"[SN3] stitch exception: %@ %@", e.name, e.reason);
         return [self simpleConcat:_frames];
@@ -368,8 +414,11 @@ static CGFloat blockMAD(const unsigned char *a, NSInteger hA,
     // ③ 绝对差过大（内容确实不同，可能滚太快/整屏新内容）→ 跳过，等后续帧
     if (bestMAD > 50.0f) { if (confident) *confident = NO; return (CGFloat)NAN; }
 
-    // ④ 无明显最优（多个候选接近，重复纹理里难定接缝）→ 不可靠，跳过
-    if (bestMAD > secondMAD * 0.88f) { if (confident) *confident = NO; return (CGFloat)NAN; }
+    // ④ v5.2：聊天等重复纹理场景次优候选很接近属正常；仅当「best 不算很低(>18)
+    //    且次优明显更优(差距>5%)」才判为不可靠跳过，避免安全阀频发造成大块重叠。
+    if (bestMAD > 18.0f && bestMAD > secondMAD * 0.95f) {
+        if (confident) *confident = NO; return (CGFloat)NAN;
+    }
 
     CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
     CGFloat overlapPx = (CGFloat)bestO / (CGFloat)hL * lastHpx;   // 降采样行占比 → 真实像素
