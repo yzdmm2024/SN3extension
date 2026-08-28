@@ -31,9 +31,12 @@
 @class XZPaintView;
 @class XZMosaicEditor;
 @class XZColorPicker;
-@class XZDrawEditor;
 @class XZDrawCanvas;
 @class XZDrawStroke;
+@class XZDrawEditor;
+@interface XZDrawEditor
++ (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion;
+@end
 
 // 本文件内部使用的私有方法（打码编辑器 / 取色器窗口会回调进来）
 @interface SuperTools (Private)
