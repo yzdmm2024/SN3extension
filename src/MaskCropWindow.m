@@ -316,14 +316,17 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 }
 
 - (void)installRulers {
+    UIView *topLine = nil, *bottomLine = nil;
     _rulerTop = [self makeRulerWithTag:101
                                  color:[UIColor systemGreenColor]
                                  title:@"起点"
-                                  line:&_topLine];
+                                  line:&topLine];
     _rulerBottom = [self makeRulerWithTag:102
                                     color:[UIColor systemRedColor]
                                     title:@"终点"
-                                     line:&_bottomLine];
+                                     line:&bottomLine];
+    _topLine = topLine;
+    _bottomLine = bottomLine;
     _rulerTop.hidden = YES;
     _rulerBottom.hidden = YES;
     [_win addSubview:_rulerTop];
