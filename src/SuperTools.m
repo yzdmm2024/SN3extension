@@ -31,6 +31,9 @@
 @class XZPaintView;
 @class XZMosaicEditor;
 @class XZColorPicker;
+@class XZDrawEditor;
+@class XZDrawCanvas;
+@class XZDrawStroke;
 
 // 本文件内部使用的私有方法（打码编辑器 / 取色器窗口会回调进来）
 @interface SuperTools (Private)
@@ -243,7 +246,7 @@ static CGRect XZRectFromValue(id v) {
         enc(text), enc(to), enc(appid), enc(salt), enc(sign)];
     NSURL *url = [NSURL URLWithString:[@"https://fanyi-api.baidu.com/api/trans/vip/translate?" stringByAppendingString:query]];
     if (!url) { if (completion) completion(nil); return; }
-    [[NSURLSession sharedSession] dataTaskWithURL:url
+    [[[NSURLSession sharedSession] dataTaskWithURL:url
       completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSString *out = nil;
         @try {
@@ -284,7 +287,7 @@ static CGRect XZRectFromValue(id v) {
                     tl, q ?: @""];
     NSURL *url = [NSURL URLWithString:us];
     if (!url) { if (completion) completion(nil); return; }
-    [[NSURLSession sharedSession] dataTaskWithURL:url
+    [[[NSURLSession sharedSession] dataTaskWithURL:url
       completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSString *out = nil;
         @try {
@@ -729,7 +732,7 @@ static UIWindow *_floatWin = nil;
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UITouch *t = touches.anyObject;
-    [[_strokes lastObject] addLineToPoint:[t locationInView:self]];
+    [[[_strokes lastObject] path] addLineToPoint:[t locationInView:self]];
     [self setNeedsDisplay];
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self setNeedsDisplay]; }
@@ -813,8 +816,8 @@ static UIWindow *_floatWin = nil;
     [self mkBtn:@"撤销"    frame:CGRectMake(20, 100, bw, 40) sel:@selector(onUndo)    color:[UIColor systemGrayColor]];
     [self mkBtn:@"完成"    frame:CGRectMake(30 + bw, 100, bw, 40) sel:@selector(onDone)   color:[UIColor systemGreenColor]];
 
-    UIButton *cancel = [self mkBtn:@"取消" frame:CGRectMake(20, safe.top + 12, 80, 34)
-                                sel:@selector(onCancel) color:[UIColor systemGrayColor]];
+    [self mkBtn:@"取消" frame:CGRectMake(20, safe.top + 12, 80, 34)
+          sel:@selector(onCancel) color:[UIColor systemGrayColor]];
 
     UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(110, safe.top + 12, scr.size.width - 130, 34)];
     tip.text = @"手指在图上涂抹；画笔/马克笔/橡皮，点完成合成回原图";
