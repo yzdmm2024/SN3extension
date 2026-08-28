@@ -103,23 +103,23 @@ static UIImage *_currentImage;
     if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
 
     CGRect scr = UIScreen.mainScreen.bounds;
-    CGFloat cardW = 280, cardH = 132;
+    CGFloat cardW = 250, cardH = 118;
     CGFloat cardX = (scr.size.width - cardW) / 2;
     // 卡片放到屏幕底部偏上：避免挡手、靠近控制中心关闭位置
-    CGFloat cardY = scr.size.height - cardH - 110;
+    CGFloat cardY = scr.size.height - cardH - 100;
 
     UIView *card = [[UIView alloc] initWithFrame:CGRectMake(cardX, cardY, cardW, cardH)];
     card.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.94];
-    card.layer.cornerRadius = 20;
+    card.layer.cornerRadius = 18;
     card.layer.shadowColor = [UIColor blackColor].CGColor;
     card.layer.shadowOpacity = 0.3;
     card.layer.shadowRadius = 10;
     [win addSubview:card];
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, cardW, 22)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, cardW, 20)];
     title.text = @"SN3延伸板 · 选择截图方式";
     title.textColor = [UIColor whiteColor];
-    title.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    title.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     title.textAlignment = NSTextAlignmentCenter;
     [card addSubview:title];
 
@@ -127,30 +127,30 @@ static UIImage *_currentImage;
         @{@"img":@"longshot", @"label":@"长截图", @"tag":@0},
         @{@"img":@"freecut", @"label":@"自由截图", @"tag":@1},
     ];
-    CGFloat bw = 90, gap = 22;
+    CGFloat bw = 80, gap = 18;
     CGFloat totalW = acts.count * bw + (acts.count - 1) * gap;
     CGFloat startX = (cardW - totalW) / 2;
     for (NSInteger i = 0; i < acts.count; i++) {
         NSDictionary *a = acts[i];
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-        b.frame = CGRectMake(startX + i*(bw+gap), 48, bw, 74);
+        b.frame = CGRectMake(startX + i*(bw+gap), 34, bw, 68);
         b.tag = [a[@"tag"] integerValue];
         b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
         b.layer.cornerRadius = 12;
         [b addTarget:self action:@selector(chooseTapped:) forControlEvents:UIControlEventTouchUpInside];
         [card addSubview:b];
 
-        // 图标变小：32×32
-        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(bw/2-16, 8, 32, 32)];
+        // 图标更小：26×26
+        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(bw/2 - 13, 8, 26, 26)];
         iv.image = [self _iconNamed:a[@"img"]];
         iv.tintColor = [UIColor whiteColor];
         iv.contentMode = UIViewContentModeScaleAspectFit;
         [b addSubview:iv];
 
-        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 48, bw, 18)];
+        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 42, bw, 18)];
         lb.text = a[@"label"];
         lb.textColor = [UIColor whiteColor];
-        lb.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        lb.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
         lb.textAlignment = NSTextAlignmentCenter;
         [b addSubview:lb];
     }
@@ -392,9 +392,11 @@ static UIImage *_currentImage;
 #pragma mark - 自由截图（冻结+可重选）
 
 + (void)doFreeCrop:(UIImage *)image {
+    UIWindow *win = nil;
+    @try {
     if (!image) return;
 
-    UIWindow *win = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    win = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     win.windowLevel = UIWindowLevelAlert + 200;
     win.backgroundColor = [UIColor blackColor];
     win.userInteractionEnabled = YES;
@@ -465,6 +467,10 @@ static UIImage *_currentImage;
 
     _cropWindow = win;
     win.hidden = NO;
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] doFreeCrop crashed: %@ %@", e.name, e.reason);
+        if (win) { win.hidden = YES; }
+    }
 }
 
 + (void)cropPan:(UIPanGestureRecognizer *)pan {
@@ -533,28 +539,35 @@ static UIImage *_currentImage;
 }
 
 + (void)cropConfirm:(UIButton *)btn {
-    if (!_cropWindow) return;
-    UIImageView *iv = objc_getAssociatedObject(_cropWindow, "cropIV");
-    UIView *box = objc_getAssociatedObject(_cropWindow, "cropBox");
-    UIImage *image = objc_getAssociatedObject(_cropWindow, "cropImage");
-    if (!iv || !box || !image) { [self dismissAll]; return; }
+    @try {
+        if (!_cropWindow) return;
+        UIImageView *iv = objc_getAssociatedObject(_cropWindow, "cropIV");
+        UIView *box = objc_getAssociatedObject(_cropWindow, "cropBox");
+        UIImage *image = objc_getAssociatedObject(_cropWindow, "cropImage");
+        if (!iv || !box || !image) { [self dismissAll]; return; }
 
-    CGRect boxInIV = box.frame;
-    CGFloat sx = image.size.width / iv.bounds.size.width;
-    CGFloat sy = image.size.height / iv.bounds.size.height;
-    CGRect cropRect = CGRectMake(boxInIV.origin.x * sx, boxInIV.origin.y * sy,
-                                 boxInIV.size.width * sx, boxInIV.size.height * sy);
-    cropRect = CGRectIntersection(cropRect, CGRectMake(0, 0, image.size.width, image.size.height));
-    if (cropRect.size.width < 4 || cropRect.size.height < 4) { [Common toast:@"选区太小"]; return; }
+        CGRect boxInIV = box.frame;
+        CGFloat sx = image.size.width / MAX(1, iv.bounds.size.width);
+        CGFloat sy = image.size.height / MAX(1, iv.bounds.size.height);
+        CGRect cropRect = CGRectMake(boxInIV.origin.x * sx, boxInIV.origin.y * sy,
+                                     boxInIV.size.width * sx, boxInIV.size.height * sy);
+        cropRect = CGRectIntersection(cropRect, CGRectMake(0, 0, image.size.width, image.size.height));
+        if (cropRect.size.width < 4 || cropRect.size.height < 4) { [Common toast:@"选区太小"]; return; }
 
-    CGImageRef cg = CGImageCreateWithImageInRect(image.CGImage, cropRect);
-    UIImage *cropped = [UIImage imageWithCGImage:cg scale:image.scale orientation:image.imageOrientation];
-    CGImageRelease(cg);
+        if (!image.CGImage) { [Common toast:@"裁剪失败（无图像数据）"]; return; }
+        CGImageRef cg = CGImageCreateWithImageInRect(image.CGImage, cropRect);
+        if (!cg) { [Common toast:@"裁剪失败"]; return; }
+        UIImage *cropped = [UIImage imageWithCGImage:cg scale:image.scale orientation:image.imageOrientation];
+        CGImageRelease(cg);
 
-    [self dismissAll];
-    if (cropped) {
-        _currentImage = cropped;
-        [self showActionRow:cropped];
+        [self dismissAll];
+        if (cropped) {
+            _currentImage = cropped;
+            [self showActionRow:cropped];
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] cropConfirm crashed: %@ %@", e.name, e.reason);
+        [self dismissAll];
     }
 }
 
@@ -562,6 +575,7 @@ static UIImage *_currentImage;
 
 + (void)showActionRow:(UIImage *)image {
     if (!image) return;
+    @try {
     _currentImage = image;
     [self dismissAll];
 
@@ -633,6 +647,9 @@ static UIImage *_currentImage;
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0.6
                      options:UIViewAnimationOptionCurveEaseOut
                   animations:^{ bar.transform = CGAffineTransformIdentity; } completion:nil];
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] showActionRow crashed: %@ %@", e.name, e.reason);
+    }
 }
 
 + (void)rowTapped:(UIButton *)sender {

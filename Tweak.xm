@@ -48,9 +48,16 @@ static void xz_screenshotDetected(CFNotificationCenterRef center, void *observer
     });
 }
 
-// 控制中心按钮点按（SN3CCModule 发来，此时 CC 已收起）
+// 控制中心按钮点按（SN3CCModule 发来，此时 CC 已收起）。
+// 注意：本 tweak 注入所有进程，cc.capture 是广播——只有 SpringBoard 弹选择器/裁剪窗口，
+// App 进程一律忽略（否则双进程同时弹窗口，裁剪时互相干扰会闪退）。
 static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
                          CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    NSString *proc = [NSProcessInfo processInfo].processName;
+    if (![proc isEqualToString:@"SpringBoard"]) {
+        NSLog(@"[SN3] capture: %@ ignores (SB only)", proc);
+        return;
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
         NSLog(@"[SN3] CC capture triggered");
         xz_showMenu();
