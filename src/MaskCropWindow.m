@@ -1,24 +1,24 @@
 //
-//  MaskCropWindow.m — 窗口A：遮罩镂空框选 + 长截图实时预览框（超级截图 v4.6）
+//  MaskCropWindow.m — 窗口A：遮罩框选 + 长截图实时预览框（超级截图 v4.7）
 //
 //  ────────────────────────────────────────────────────────────────────────
-//  v4.6 交互重设计（依据用户实测反馈）：
-//    · 局部截图 = 默认模式：
-//        - 进入遮罩即局部截图模式，直接拖框；
-//        - 松手【立即】裁出选区 → 销毁窗口A → 弹窗口B 两排编辑工具栏；
-//        - 不再需要「再点一次截图按钮」确认（去掉底部确认栏）。
-//        - 顶部保留三个小入口：【正常截图】【长截图】【取消】。
-//    · 正常截图：仿系统电源+音量键，截整屏直接存相册「SN3截图」，不弹编辑（原生行为）。
-//    · 长截图 = 独立实时预览框：
-//        - 点【长截图】直接弹出全屏宽「截取框」；
-//        - 框内触摸穿透，底层 App 可上下滑动，实时预览长截图内容；
-//        - 框外只有 2 个按钮：【生成长图】【取消】；
-//        - 取消上下标尺、取消手动「采集下一屏」：进入即启动自动抓帧定时器（~0.4s），
-//          框内滑动期间逐帧采集、重叠去重，松手静止即停采；看到满意的起止内容后点【生成长图】。
-//    · 抓屏前必隐藏边框/遮罩，绝不把暗色/控件截进图片。
-//    · 退出时完整销毁窗口并置空，防 SpringBoard 泄漏。
+//  v4.7 交互重设计（依据用户实测反馈）：
+//    · 框选（遮罩）模式：
+//        - 进入即局部截图模式，直接拖框；松手【立即】裁出选区 → 销毁窗口A → 弹窗口B
+//          两排编辑工具栏（OCR/翻译/画图/识码/打码/复制/贴图/保存/分享/更多）。
+//        - 底部常驻三个按钮：【正常截图】【长截图】【取消】。
+//        - 正常截图：仿系统电源+音量键，截整屏直接存相册「SN3截图」，不弹编辑。
+//    · 长截图 = 全屏宽「实时预览框」：
+//        - 点【长截图】直接弹出全屏宽截取框；框外区域不参与输出。
+//        - 框内触摸穿透，底层 App（微信群聊/单聊/朋友圈/公众号等）可上下滑动，
+//          框内实时显示长截图内容预览；框内滚动的【最高点→最低点】即长截图起止范围。
+//        - 框外【只保留 2 个按钮】：【保存长图】【复制】；方框右上角增加【关闭】按钮。
+//        - 不出现双排编辑功能区；拼接完成后直接存相册 / 复制到剪贴板，不弹窗口B。
+//        - 进入即启动自动抓帧定时器(~0.4s)：框内滑动期间逐帧采集、重叠去重；
+//          建议从目标内容顶部开始向下滑动，松手静止即停采。
+//    · 抓帧前临时隐藏边框，裁剪框内区域（已 inset 排除描边），绝不把暗色/控件截进图片。
+//    · 退出时完整销毁窗口并置空，防 SpringBoard 泄漏 / respring。
 //
-//  ────────────────────────────────────────────────────────────────────────
 
 #import "MaskCropWindow.h"
 #import "XZPassThroughWindow.h"
@@ -28,14 +28,12 @@
 #import "LongShotCapture.h"
 
 // ---------- 布局常量（pt） ----------
-static const CGFloat kTopBarH  = 44.0;   // 顶部小入口栏高
 static const CGFloat kButtonH  = 46.0;   // 按钮高
 static const CGFloat kMinCrop  = 16.0;   // 有效选区最小边长
 
-// 长截图截取框留白
-static const CGFloat kFrameTopInset  = 64.0;   // 框顶距安全区上沿
-static const CGFloat kFrameSideInset = 6.0;    // 框左右留白（≈全屏宽）
-static const CGFloat kFrameBotInset  = 96.0;   // 框底距按钮区
+// 长截图截取框留白（框全屏宽；上下留白给关闭按钮 / 底部两按钮）
+static const CGFloat kFrameTopInset  = 54.0;   // 框顶距安全区上沿（留给关闭按钮）
+static const CGFloat kFrameBotInset  = 86.0;   // 框底距屏幕底（留给底部两按钮）
 
 typedef NS_ENUM(NSInteger, XZDragTarget) {
     XZDragNone       = 0,
@@ -56,16 +54,16 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CAShapeLayer *_dimLayer;        // 半透明黑遮罩（evenOdd 镂空）
     CAShapeLayer *_borderLayer;     // 描边（局部选区 / 长截图框）
 
-    // ---- 顶部小入口栏（框选模式） ----
-    UIView   *_topBar;
-    UIButton *_btnTopNormal;        // 正常截图
-    UIButton *_btnTopLong;          // 长截图
-    UIButton *_btnTopCancel;        // 取消
-    UILabel  *_hintLabel;           // 提示
+    // ---- 框选模式：顶部提示 + 底部三按钮 ----
+    UILabel  *_hintLabel;           // 顶部提示
+    UIButton *_btnNormal;           // 正常截图
+    UIButton *_btnLong;             // 长截图
+    UIButton *_btnCancel;           // 取消
 
-    // ---- 长截图：框外 2 按钮 + 计数 ----
-    UIButton *_btnGen;              // 生成长图
-    UIButton *_btnLongCancel;       // 取消
+    // ---- 长截图：框外 2 按钮 + 关闭 + 计数 ----
+    UIButton *_saveLongBtn;         // 保存长图
+    UIButton *_copyLongBtn;         // 复制
+    UIButton *_closeBtn;            // 关闭（框右上角）
     UILabel  *_longCountLabel;      // 已采集帧数
 
     // ---- 状态 ----
@@ -76,7 +74,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CGPoint _panStart;              // 画框起点
     CGPoint _panGrab;               // 拖动时手指在框内的相对偏移
 
-    CGRect   _longFrameRect;        // 长截图截取框（窗口/屏幕坐标）
+    CGRect   _longFrameRect;        // 长截图截取框（屏幕坐标，全屏宽）
     NSTimer *_captureTimer;         // 自动抓帧定时器
     BOOL     _capturing;            // 抓帧防重入
 }
@@ -143,36 +141,44 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     pan.delegate = self;
     [_contentView addGestureRecognizer:pan];
 
-    [self installTopBar];
+    [self installCropUI];
     [self installLongControls];
     [self setMode:XZMaskModeCrop];
     [self refreshChrome];
 
     _win.hidden = NO;
     [Common toast:@"拖出要截取的区域，松手即弹出编辑菜单"];
-    NSLog(@"[SN3] mask window A shown (v4.6)");
+    NSLog(@"[SN3] mask window A shown (v4.7)");
 }
 
 - (void)refreshChrome {
     if (!_win) return;
 
     if (_mode == XZMaskModeCrop) {
-        _topBar.hidden        = NO;
-        _hintLabel.hidden     = NO;
-        _btnGen.hidden        = YES;
-        _btnLongCancel.hidden = YES;
+        _hintLabel.hidden   = NO;
+        _btnNormal.hidden   = NO;
+        _btnLong.hidden     = NO;
+        _btnCancel.hidden   = NO;
+        _saveLongBtn.hidden = YES;
+        _copyLongBtn.hidden = YES;
+        _closeBtn.hidden    = YES;
         _longCountLabel.hidden = YES;
         _win.passthrough      = NO;              // 框选阶段吃下全屏拖拽
         _contentView.userInteractionEnabled = YES;
         _borderLayer.hidden = !_hasCrop;
         [self updateMask];
-        [_win bringSubviewToFront:_topBar];
         [_win bringSubviewToFront:_hintLabel];
+        [_win bringSubviewToFront:_btnNormal];
+        [_win bringSubviewToFront:_btnLong];
+        [_win bringSubviewToFront:_btnCancel];
     } else {
-        _topBar.hidden        = YES;
-        _hintLabel.hidden     = YES;
-        _btnGen.hidden        = NO;
-        _btnLongCancel.hidden = NO;
+        _hintLabel.hidden   = YES;
+        _btnNormal.hidden   = YES;
+        _btnLong.hidden     = YES;
+        _btnCancel.hidden   = YES;
+        _saveLongBtn.hidden = NO;
+        _copyLongBtn.hidden = NO;
+        _closeBtn.hidden    = NO;
         _longCountLabel.hidden = NO;
         _win.passthrough      = YES;             // 长截图：框内穿透、框外吞咽
         _win.passRect        = _longFrameRect;   // 框内坐标 → 穿透给 App
@@ -180,8 +186,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         _borderLayer.hidden = NO;
         [self updateMask];
         [self updateLongCounter];
-        [_win bringSubviewToFront:_btnGen];
-        [_win bringSubviewToFront:_btnLongCancel];
+        [_win bringSubviewToFront:_saveLongBtn];
+        [_win bringSubviewToFront:_copyLongBtn];
+        [_win bringSubviewToFront:_closeBtn];
         [_win bringSubviewToFront:_longCountLabel];
     }
     [_win layoutIfNeeded];
@@ -194,7 +201,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _cropRect = CGRectZero;
     _capturing = NO;
 
-    if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
+    [self stopCaptureTimer];
 
     if (_win) {
         _win.hidden = YES;          // UIWindow 必须先隐藏再从视图树摘除，直接置 nil 会留下可见层
@@ -204,10 +211,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _dimLayer = nil;
     _borderLayer = nil;
 
-    _topBar = nil;
-    _btnTopNormal = _btnTopLong = _btnTopCancel = nil;
     _hintLabel = nil;
-    _btnGen = _btnLongCancel = nil;
+    _btnNormal = _btnLong = _btnCancel = nil;
+    _saveLongBtn = _copyLongBtn = _closeBtn = nil;
     _longCountLabel = nil;
 
     [[LongShotCapture sharedInstance] reset];
@@ -217,7 +223,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (CGRect)cropRect { return _cropRect; }
 - (BOOL)hasSelection { return _hasCrop && _cropRect.size.width >= kMinCrop && _cropRect.size.height >= kMinCrop; }
 
-#pragma mark - 顶部小入口栏 + 长截图按钮
+#pragma mark - 框选模式 UI（顶部提示 + 底部三按钮）
 
 - (UIButton *)makeBarButton:(NSString *)title bg:(UIColor *)bg action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -234,73 +240,70 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     return b;
 }
 
-- (void)installTopBar {
+- (void)installCropUI {
     CGRect scr = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = [Common screenSafeInsets];
-    CGFloat y = safe.top;
-    _topBar = [[UIView alloc] initWithFrame:CGRectMake(0, y, scr.size.width, kTopBarH)];
-    _topBar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
-    [_win addSubview:_topBar];
-    [_win addInteractiveView:_topBar];
 
-    _btnTopNormal = [self makeBarButton:@"正常截图" bg:[UIColor systemBlueColor]   action:@selector(onNormalShot)];
-    _btnTopLong   = [self makeBarButton:@"长截图"   bg:[UIColor systemYellowColor] action:@selector(onLongShot)];
-    _btnTopCancel = [self makeBarButton:@"取消"     bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
-    [self layoutTopBar];
-
-    _hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, y + kTopBarH, scr.size.width, 22)];
+    _hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, safe.top, scr.size.width, 22)];
     _hintLabel.textColor = [UIColor whiteColor];
     _hintLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     _hintLabel.textAlignment = NSTextAlignmentCenter;
     _hintLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
-    _hintLabel.text = @"拖框选区域，松手即编辑 · 顶部可切「正常截图/长截图」";
+    _hintLabel.text = @"拖框选区域，松手即编辑 · 底部可切「正常截图 / 长截图」";
     [_win addSubview:_hintLabel];
     [_win addInteractiveView:_hintLabel];
+
+    CGFloat pad = 12.0, gap = 8.0;
+    CGFloat by = scr.size.height - safe.bottom - 60;
+    CGFloat bw = (scr.size.width - pad * 2 - gap * 2) / 3.0;
+    CGFloat x = pad;
+    _btnNormal = [self makeBarButton:@"正常截图" bg:[UIColor systemBlueColor]   action:@selector(onNormalShot)];
+    _btnNormal.frame = CGRectMake(x, by, bw, kButtonH); x += bw + gap;
+    _btnLong   = [self makeBarButton:@"长截图"   bg:[UIColor systemYellowColor] action:@selector(onLongShot)];
+    _btnLong.frame = CGRectMake(x, by, bw, kButtonH); x += bw + gap;
+    _btnCancel = [self makeBarButton:@"取消"     bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
+    _btnCancel.frame = CGRectMake(x, by, bw, kButtonH);
 }
 
-- (void)layoutTopBar {
-    CGFloat pad = 10.0, gap = 8.0;
-    CGFloat totalW = _topBar.bounds.size.width - pad * 2;
-    CGFloat bw = (totalW - gap * 2) / 3.0;
-    CGFloat y = (kTopBarH - (kButtonH - 8)) / 2.0;
-    CGFloat x = pad;
-    for (UIButton *b in @[_btnTopNormal, _btnTopLong, _btnTopCancel]) {
-        b.frame = CGRectMake(x, y, bw, kButtonH - 8);
-        x += bw + gap;
-    }
-}
+#pragma mark - 长截图 UI（全屏宽框 + 框外 2 按钮 + 关闭）
 
 - (void)installLongControls {
     CGRect scr = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = [Common screenSafeInsets];
 
-    // 长截图截取框（全屏宽，留上下边距给按钮/提示）
+    // 长截图截取框（全屏宽，上下留白给关闭按钮 / 底部两按钮）
     CGFloat top = safe.top + kFrameTopInset;
     CGFloat bot = safe.bottom + kFrameBotInset;
-    _longFrameRect = CGRectMake(kFrameSideInset, top,
-                                scr.size.width - 2 * kFrameSideInset,
-                                MAX(40, scr.size.height - top - bot));
+    _longFrameRect = CGRectMake(0, top,
+                                scr.size.width,
+                                MAX(60, scr.size.height - top - bot));
 
-    // 框外两按钮：生成长图 / 取消
-    CGFloat by = scr.size.height - safe.bottom - 84;
+    // 关闭按钮：框右上角，置于框【上方暗色区】，保证可点（不落入 passRect）
+    _closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    _closeBtn.frame = CGRectMake(scr.size.width - 52, top - 38, 40, 40);
+    [_closeBtn setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
+    _closeBtn.tintColor = [UIColor whiteColor];
+    _closeBtn.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+    _closeBtn.layer.cornerRadius = 20;
+    [_closeBtn addTarget:self action:@selector(onLongClose) forControlEvents:UIControlEventTouchUpInside];
+    [_win addSubview:_closeBtn];
+    [_win addInteractiveView:_closeBtn];
+
+    // 框外底部两按钮：保存长图 / 复制
     CGFloat pad = 16.0, gap = 12.0;
+    CGFloat by = scr.size.height - safe.bottom - 76;
     CGFloat bw = (scr.size.width - pad * 2 - gap) / 2.0;
-    _btnGen = [self makeBarButton:@"生成长图"
-                                bg:[UIColor systemGreenColor]
-                              action:@selector(onLongGenerate)];
-    _btnGen.frame = CGRectMake(pad, by, bw, kButtonH);
-    _btnLongCancel = [self makeBarButton:@"取消"
-                                      bg:[UIColor systemGrayColor]
-                                    action:@selector(onLongCancel)];
-    _btnLongCancel.frame = CGRectMake(pad + bw + gap, by, bw, kButtonH);
+    _saveLongBtn = [self makeBarButton:@"保存长图" bg:[UIColor systemGreenColor] action:@selector(onSaveLong)];
+    _saveLongBtn.frame = CGRectMake(pad, by, bw, kButtonH);
+    _copyLongBtn = [self makeBarButton:@"复制"     bg:[UIColor systemBlueColor]   action:@selector(onCopyLong)];
+    _copyLongBtn.frame = CGRectMake(pad + bw + gap, by, bw, kButtonH);
 
-    // 计数提示（框底内）
-    _longCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, _longFrameRect.origin.y + _longFrameRect.size.height - 24,
-                                                                scr.size.width, 20)];
+    // 计数提示（框底下方暗色区）
+    _longCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, _longFrameRect.origin.y + _longFrameRect.size.height + 8,
+                                                                scr.size.width, 18)];
     _longCountLabel.textColor = [UIColor whiteColor];
     _longCountLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     _longCountLabel.textAlignment = NSTextAlignmentCenter;
-    _longCountLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
     _longCountLabel.text = @"已采集 0 屏";
     [_win addSubview:_longCountLabel];
     [_win addInteractiveView:_longCountLabel];
@@ -311,25 +314,27 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (void)setMode:(XZMaskMode)mode {
     _mode = mode;
     if (mode == XZMaskModeLong) {
-        // 进入长截图：显示截取框 + 启动自动抓帧
         [self startCaptureTimer];
         [self refreshChrome];
-        [Common toast:@"长截图：框内滑动页面预览，点「生成长图」"];
+        [Common toast:@"长截图：框内从顶部向下滑动预览，点「保存长图」"];
     } else {
-        if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
+        [self stopCaptureTimer];
         [self refreshChrome];
     }
 }
 
 - (void)startCaptureTimer {
-    if (_captureTimer) [_captureTimer invalidate];
+    [self stopCaptureTimer];
     _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.4
                                                     target:self
                                                   selector:@selector(longCaptureTick)
                                                   userInfo:nil
                                                    repeats:YES];
-    // 立即采一帧（初始画面）
-    [self longCaptureTick];
+    [self longCaptureTick];   // 立即采一帧（初始画面）
+}
+
+- (void)stopCaptureTimer {
+    if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
 }
 
 - (void)updateLongCounter {
@@ -384,7 +389,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             return;
         }
         [self updateMask];
-        // v4.6：松手【立即】进入编辑，不再需要二次确认
+        // v4.6/4.7：松手【立即】进入编辑，不再需要二次确认
         NSLog(@"[SN3] crop pan ended -> 立即唤起窗口B 编辑 rect=(%.0f,%.0f,%.0f,%.0f)",
               _cropRect.origin.x, _cropRect.origin.y,
               _cropRect.size.width, _cropRect.size.height);
@@ -424,19 +429,26 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 #pragma mark - 按钮动作（长截图）
 
-// 长截图：直接弹全屏宽截取框（取消先画矩形、取消标尺）
+// 长截图：直接弹全屏宽截取框（框外区域不参与输出）
 - (void)onLongShot {
     [self setMode:XZMaskModeLong];
 }
 
-// 生成长图：拼接 → 销毁窗口A → 弹窗口B 两排编辑工具栏
-- (void)onLongGenerate {
+// 关闭长截图框：清空已采集帧，回到框选模式（可重新选择）
+- (void)onLongClose {
+    [[LongShotCapture sharedInstance] reset];
+    [self setMode:XZMaskModeCrop];
+    [Common toast:@"已退出长截图"];
+}
+
+// 保存长图：拼接 → 直接存相册「SN3截图」→ 销毁窗口A（不弹编辑）
+- (void)onSaveLong {
     if ([[LongShotCapture sharedInstance] frameCount] < 1) {
         [Common toast:@"请先在框内滑动页面采集内容"];
         return;
     }
     [Common toast:@"正在拼接长图..."];
-    if (_captureTimer) { [_captureTimer invalidate]; _captureTimer = nil; }
+    [self stopCaptureTimer];
     __weak typeof(self) ws = self;
     [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
         __strong typeof(ws) ss = ws;
@@ -444,18 +456,39 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         UIImage *img = result ?: [[LongShotCapture sharedInstance] stitchFallback];
         [ss dismiss];
         if (img) {
-            [EditToolbarWindow showWithImage:img];
+            [ImageUtils saveToCustomAlbum:img completion:^(BOOL ok, NSError *e) {
+                [Common toast: ok ? @"长图已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+            }];
         } else {
             [Common toast:@"拼接失败，请重试"];
         }
     }];
 }
 
-- (void)onLongCancel {
-    [self dismiss];
+// 复制长图：拼接 → 复制到剪贴板 → 销毁窗口A（不弹编辑）
+- (void)onCopyLong {
+    if ([[LongShotCapture sharedInstance] frameCount] < 1) {
+        [Common toast:@"请先在框内滑动页面采集内容"];
+        return;
+    }
+    [Common toast:@"正在拼接长图..."];
+    [self stopCaptureTimer];
+    __weak typeof(self) ws = self;
+    [[LongShotCapture sharedInstance] stitchWithCompletion:^(UIImage *result) {
+        __strong typeof(ws) ss = ws;
+        if (!ss) return;
+        UIImage *img = result ?: [[LongShotCapture sharedInstance] stitchFallback];
+        [ss dismiss];
+        if (img) {
+            [[UIPasteboard generalPasteboard] setImage:img];
+            [Common toast:@"长图已复制到剪贴板"];
+        } else {
+            [Common toast:@"拼接失败，请重试"];
+        }
+    }];
 }
 
-// 自动抓帧：隐藏边框 → 抓屏 → 按截取框裁剪 → 加入长截图队列（重叠去重）
+// 自动抓帧：隐藏边框 → 抓屏 → 按截取框内区域裁剪(inset 排除描边) → 加入长截图队列（重叠去重）
 - (void)longCaptureTick {
     if (!_win || _mode != XZMaskModeLong || _capturing) return;
     _capturing = YES;
@@ -467,7 +500,9 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _borderLayer.hidden = borderHidden;
 
     if (!screen) { _capturing = NO; return; }
-    UIImage *tile = [ImageUtils cropImage:screen screenRect:_longFrameRect];
+    // 框内裁剪：inset 3pt 排除描边；框外暗色区本就不在裁剪范围内（框外不参与输出）
+    CGRect clip = CGRectInset(_longFrameRect, 3, 3);
+    UIImage *tile = [ImageUtils cropImage:screen screenRect:clip];
     if (tile) {
         [[LongShotCapture sharedInstance] addFrame:tile];
         [self updateLongCounter];
