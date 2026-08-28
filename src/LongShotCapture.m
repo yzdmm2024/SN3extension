@@ -98,16 +98,19 @@ static LongShotCapture *_shared = nil;
     // 1) 主检测：像素灰度相关法求真实重叠（单位：像素，对应 CGImage 坐标系）
     CGFloat ov = [self overlapPxFromLast:last cur:frame];
 
-    // 2) 兜底：Vision 配准（仍失败 → 固定比例）
+    // 2) 兜底：Vision 配准（仍失败 → 交由下方保守默认）
     if (isnan(ov)) {
         ov = [self visionOverlapPxFrom:last cur:frame];
     }
     if (isnan(ov)) {
-        ov = lastHpx * _overlapRatio;
+        // 无法判定重叠：采用「保守默认」——只取底部 20% 作为新内容，
+        // 彻底杜绝旧代码 50% 默认导致的整帧重复堆叠（v4.7 的重复根因）。
+        ov = lastHpx * 0.80;
     }
 
-    // 3) 无位移（用户没滑动）→ 几乎整帧重合 → 丢弃，避免重复帧把长图刷成同一屏
-    if (ov >= lastHpx * 0.99) return NO;
+    // 3) 无位移（用户没滑动 / 内容几乎相同）→ 重叠≈整帧 → 丢弃，
+    //    避免重复帧把长图刷成同一屏
+    if (ov >= lastHpx * 0.985) return NO;
 
     // 4) 钳制：重叠不超过 98%，保证每帧至少贡献 2% 新内容（防整帧堆叠重复）
     ov = MAX(0.0, MIN(ov, lastHpx * 0.98));
@@ -278,9 +281,11 @@ static LongShotCapture *_shared = nil;
 // 求 cur 相对 last 的重叠像素高度（CGImage 像素坐标）。失败返回 NAN。
 // 原理：固定左右范围的采集带每帧尺寸一致，页面向下滚动时 cur 的【顶部】若干行
 //       与 last 的【底部】若干行内容相同；逐候选重叠 o 比 SAD（绝对差和），取最小者。
-// v4.4：搜索带放宽到 3%~98%（兼容慢滚大重叠 / 快滚小重叠），并加置信度门限——
-//       当最小 SAD 与次小 SAD 差距过小（内容高度重复、误匹配）时返回 NAN，交由默认重叠兜底，
-//       避免把重叠误判为 0 而整帧堆叠。
+// v4.8 重写：搜索带 2%~99.5%，覆盖「几乎不重叠」到「整帧重合」全部可能——
+//   · 用户没滑动（cur==last）：o≈100% 处 SAD≈0 → 上层判定 overlap≈100% → 丢弃（不重复）；
+//   · 正常滚动：o 取真实重叠 → 只拼入底部新内容；
+//   · 大幅滚动 / 整屏全新内容：所有候选 SAD 都很大 → 直接返回 0（整帧拼入，无重复）。
+//   置信度门限：最优匹配必须明显优于次优，否则不可靠 → 返回 NAN 交由上层保守默认(80%)。
 - (CGFloat)overlapPxFromLast:(UIImage *)last cur:(UIImage *)cur {
     NSInteger W = 64, hL = 0, hC = 0;
     NSData *gL = [self grayDataForImage:last width:W outHeight:&hL];
@@ -293,9 +298,9 @@ static LongShotCapture *_shared = nil;
     NSInteger maxO = MIN(hL, hC) - 1;
     if (maxO < 2) return (CGFloat)NAN;
 
-    // v4.4：重叠带从 3% 到 98%，覆盖绝大多数手动滚动速度
-    NSInteger oMin = MAX(1, (NSInteger)(0.03 * (CGFloat)maxO));
-    NSInteger oMax = MAX(oMin + 1, (NSInteger)(0.98 * (CGFloat)maxO));
+    // v4.8：重叠带从 2% 到 99.5%，确保「未滑动」也能在 o≈100% 处命中 → 上层丢弃
+    NSInteger oMin = MAX(1, (NSInteger)(0.02 * (CGFloat)maxO));
+    NSInteger oMax = MAX(oMin + 1, (NSInteger)(0.995 * (CGFloat)maxO));
 
     CGFloat bestSAD = (CGFloat)INFINITY;
     NSInteger bestO = 0;
@@ -303,8 +308,8 @@ static LongShotCapture *_shared = nil;
     for (NSInteger o = oMin; o <= oMax; o++) {
         long long diff = 0;
         for (NSInteger r = 0; r < o; r++) {
-            const unsigned char *ra = a + (hL - o + r) * W;
-            const unsigned char *rb = b + r * W;
+            const unsigned char *ra = a + (hL - o + r) * W;   // 上一帧底部
+            const unsigned char *rb = b + r * W;               // 当前帧顶部
             for (NSInteger c = 0; c < W; c++) {
                 NSInteger dv = ra[c] - rb[c];
                 diff += dv < 0 ? -dv : dv;
@@ -316,8 +321,11 @@ static LongShotCapture *_shared = nil;
     }
     if (bestO == 0) return (CGFloat)NAN;
 
-    // 置信度：最优匹配必须明显优于次优（至少好 8%），否则视为不可靠 → NAN
-    if (secondSAD > 0 && bestSAD > secondSAD * 0.92) return (CGFloat)NAN;
+    // 没有任何候选重叠能较好对齐（大幅滚动 / 整屏全新内容）→ 重叠≈0，整帧拼入，不重复
+    if (bestSAD > 16.0f) return 0.0f;
+
+    // 置信度：最优匹配须明显优于次优；否则不可靠 → 返回 NAN 由上层保守默认(80%)
+    if (bestSAD > secondSAD * 0.78f) return (CGFloat)NAN;
 
     CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
     // bestO（降采样行）占上一帧高度比例 → 真实重叠像素

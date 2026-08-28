@@ -26,6 +26,7 @@
 #import "ImageUtils.h"
 #import "EditToolbarWindow.h"
 #import "LongShotCapture.h"
+#import "SuperTools.h"
 
 // ---------- 布局常量（pt） ----------
 static const CGFloat kButtonH  = 46.0;   // 按钮高
@@ -43,7 +44,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 @interface MaskCropWindow () <UIGestureRecognizerDelegate>
 - (void)setWindowHidden:(BOOL)hidden;
-- (void)captureShotAndEditWithRect:(CGRect)rect;   // 局部截图 → 窗口B
+- (void)presentLocalPanelForRect:(CGRect)rect;     // 局部截图 → 选区下方原地面板（不跳转窗口B）
 - (void)captureFullScreenAndSave;                  // 正常截图 → 相册（无编辑）
 - (void)refreshChrome;                             // 强制刷新 UI
 @end
@@ -77,6 +78,16 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CGRect   _longFrameRect;        // 长截图截取框（屏幕坐标，全屏宽）
     NSTimer *_captureTimer;         // 自动抓帧定时器
     BOOL     _capturing;            // 抓帧防重入
+
+    // ---- v4.8：长截图滑动检测 ----
+    UIImage  *_entryTile;           // 进入长截图时的基准帧（未滑动前的画面）
+    UIImage  *_lastAddedTile;       // 最近一次已采集的帧（用于检测是否真的滑动了）
+
+    // ---- v4.8：局部截图原地面板 ----
+    UIImage  *_cropImage;           // 局部截图裁剪结果
+    UIView   *_localPanel;          // 选区下方原地弹出的两排功能面板
+    BOOL      _editingPanel;        // 面板已弹出（禁用框选手势 / 隐藏三按钮）
+    UIViewController *_hostVC;      // 承载 OCR/翻译等结果弹窗的 rootVC
 }
 
 #pragma mark - 单例 / 生命周期
@@ -116,6 +127,13 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _win.passthrough = NO;                       // 框选阶段要吃下全屏拖拽
     if (@available(iOS 13.0, *)) _win.windowScene = [Common activeWindowScene];
 
+    // v4.8：挂一个透明 rootViewController，供 OCR/翻译/识别结果弹窗 present 落点
+    //       （userInteractionEnabled=NO 不拦截手势，仍由 _contentView 接收拖拽）
+    _hostVC = [[UIViewController alloc] init];
+    _hostVC.view.backgroundColor = [UIColor clearColor];
+    _hostVC.view.userInteractionEnabled = NO;
+    _win.rootViewController = _hostVC;
+
     _contentView = [[UIView alloc] initWithFrame:_win.bounds];
     _contentView.backgroundColor = [UIColor clearColor];
     [_win addSubview:_contentView];
@@ -147,30 +165,46 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     [self refreshChrome];
 
     _win.hidden = NO;
-    [Common toast:@"拖出要截取的区域，松手即弹出编辑菜单"];
-    NSLog(@"[SN3] mask window A shown (v4.7)");
+    [Common toast:@"拖出要截取的区域，松手即弹出功能面板"];
+    NSLog(@"[SN3] mask window A shown (v4.8)");
 }
 
 - (void)refreshChrome {
     if (!_win) return;
 
     if (_mode == XZMaskModeCrop) {
-        _hintLabel.hidden   = NO;
-        _btnNormal.hidden   = NO;
-        _btnLong.hidden     = NO;
-        _btnCancel.hidden   = NO;
-        _saveLongBtn.hidden = YES;
-        _copyLongBtn.hidden = YES;
-        _closeBtn.hidden    = YES;
-        _longCountLabel.hidden = YES;
-        _win.passthrough      = NO;              // 框选阶段吃下全屏拖拽
-        _contentView.userInteractionEnabled = YES;
-        _borderLayer.hidden = !_hasCrop;
-        [self updateMask];
-        [_win bringSubviewToFront:_hintLabel];
-        [_win bringSubviewToFront:_btnNormal];
-        [_win bringSubviewToFront:_btnLong];
-        [_win bringSubviewToFront:_btnCancel];
+        if (_editingPanel) {
+            // v4.8：局部截图原地面板模式 —— 隐藏框选三按钮，仅保留选区边框 + 面板
+            _hintLabel.hidden   = YES;
+            _btnNormal.hidden   = YES;
+            _btnLong.hidden     = YES;
+            _btnCancel.hidden   = YES;
+            _saveLongBtn.hidden = YES;
+            _copyLongBtn.hidden = YES;
+            _closeBtn.hidden    = YES;
+            _longCountLabel.hidden = YES;
+            _win.passthrough      = NO;          // 面板阶段吃下全屏触摸
+            _contentView.userInteractionEnabled = YES;
+            _borderLayer.hidden = NO;            // 选区边框仍然可见
+            [self updateMask];
+        } else {
+            _hintLabel.hidden   = NO;
+            _btnNormal.hidden   = NO;
+            _btnLong.hidden     = NO;
+            _btnCancel.hidden   = NO;
+            _saveLongBtn.hidden = YES;
+            _copyLongBtn.hidden = YES;
+            _closeBtn.hidden    = YES;
+            _longCountLabel.hidden = YES;
+            _win.passthrough      = NO;          // 框选阶段吃下全屏拖拽
+            _contentView.userInteractionEnabled = YES;
+            _borderLayer.hidden = !_hasCrop;
+            [self updateMask];
+            [_win bringSubviewToFront:_hintLabel];
+            [_win bringSubviewToFront:_btnNormal];
+            [_win bringSubviewToFront:_btnLong];
+            [_win bringSubviewToFront:_btnCancel];
+        }
     } else {
         _hintLabel.hidden   = YES;
         _btnNormal.hidden   = YES;
@@ -200,13 +234,20 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _hasCrop = NO;
     _cropRect = CGRectZero;
     _capturing = NO;
+    _editingPanel = NO;
+    _entryTile = nil;
+    _lastAddedTile = nil;
+    _cropImage = nil;
+    _localPanel = nil;
 
     [self stopCaptureTimer];
 
     if (_win) {
         _win.hidden = YES;          // UIWindow 必须先隐藏再从视图树摘除，直接置 nil 会留下可见层
+        _win.rootViewController = nil;
         _win = nil;                 // 置空，交还内存（防 SpringBoard 泄漏 / respring）
     }
+    _hostVC = nil;
     _contentView = nil;
     _dimLayer = nil;
     _borderLayer = nil;
@@ -314,9 +355,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (void)setMode:(XZMaskMode)mode {
     _mode = mode;
     if (mode == XZMaskModeLong) {
+        _entryTile = nil;
+        _lastAddedTile = nil;
         [self startCaptureTimer];
         [self refreshChrome];
-        [Common toast:@"长截图：框内从顶部向下滑动预览，点「保存长图」"];
+        [Common toast:@"长截图：框内从顶部向下滑动页面，开始采集后显示屏数"];
     } else {
         [self stopCaptureTimer];
         [self refreshChrome];
@@ -325,12 +368,12 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 - (void)startCaptureTimer {
     [self stopCaptureTimer];
-    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.4
+    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.3
                                                     target:self
                                                   selector:@selector(longCaptureTick)
                                                   userInfo:nil
                                                    repeats:YES];
-    [self longCaptureTick];   // 立即采一帧（初始画面）
+    [self longCaptureTick];   // 立即采一帧作为「未滑动基准」（仅存基准，不计入、不显示）
 }
 
 - (void)stopCaptureTimer {
@@ -339,6 +382,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 - (void)updateLongCounter {
     NSInteger n = [[LongShotCapture sharedInstance] frameCount];
+    if (n == 0) {
+        // v4.8：未滑动时不显示屏数 / 预计 PT，仅提示
+        _longCountLabel.text = @"未滑动，未开始采集";
+        return;
+    }
     CGFloat est = [[LongShotCapture sharedInstance] estimatedHeight];
     _longCountLabel.text = [NSString stringWithFormat:@"已采集 %ld 屏 · 预计长图约 %.0f pt", (long)n, est];
 }
@@ -347,6 +395,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 - (void)handleCropPan:(UIPanGestureRecognizer *)pan {
     if (_mode != XZMaskModeCrop) return;
+    if (_editingPanel) return;   // v4.8：原地面板弹出后禁用框选手势，避免误触清空选区
 
     CGPoint loc = [pan locationInView:_contentView];
     CGRect b = _contentView.bounds;
@@ -389,11 +438,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             return;
         }
         [self updateMask];
-        // v4.6/4.7：松手【立即】进入编辑，不再需要二次确认
-        NSLog(@"[SN3] crop pan ended -> 立即唤起窗口B 编辑 rect=(%.0f,%.0f,%.0f,%.0f)",
+        // v4.8：松手【立即】在选区下方原地弹出两排功能面板（不再跳转窗口B）
+        NSLog(@"[SN3] crop pan ended -> 原地弹出功能面板 rect=(%.0f,%.0f,%.0f,%.0f)",
               _cropRect.origin.x, _cropRect.origin.y,
               _cropRect.size.width, _cropRect.size.height);
-        [self captureShotAndEditWithRect:_cropRect];
+        [self presentLocalPanelForRect:_cropRect];
     }
 }
 
@@ -488,7 +537,10 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     }];
 }
 
-// 自动抓帧：隐藏边框 → 抓屏 → 按截取框内区域裁剪(inset 排除描边) → 加入长截图队列（重叠去重）
+// 自动抓帧：隐藏边框 → 抓屏 → 按截取框内区域裁剪(inset 排除描边) → 滑动检测后入队（重叠去重）
+// v4.8：未滑动绝不采集、不计数。
+//   · 第一帧仅作为「未滑动基准」(_entryTile)，不计入、不显示屏数；
+//   · 之后每帧与基准/上一已采集帧做像素差，仅当用户真的滑动了（内容变化）才 addFrame。
 - (void)longCaptureTick {
     if (!_win || _mode != XZMaskModeLong || _capturing) return;
     _capturing = YES;
@@ -504,10 +556,80 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     CGRect clip = CGRectInset(_longFrameRect, 3, 3);
     UIImage *tile = [ImageUtils cropImage:screen screenRect:clip];
     if (tile) {
-        [[LongShotCapture sharedInstance] addFrame:tile];
-        [self updateLongCounter];
+        if ([[LongShotCapture sharedInstance] frameCount] == 0) {
+            if (!_entryTile) {
+                _entryTile = tile;             // 未滑动基准：不采集、不计数
+            } else if ([self tile:tile differsFrom:_entryTile]) {
+                // 用户开始滑动 → 采集首帧
+                [[LongShotCapture sharedInstance] addFrame:tile];
+                _lastAddedTile = tile;
+                [self updateLongCounter];
+            }
+        } else {
+            if (_lastAddedTile && ![self tile:tile differsFrom:_lastAddedTile]) {
+                // 内容没变（没滑动）→ 不采集、不计数
+            } else {
+                [[LongShotCapture sharedInstance] addFrame:tile];
+                _lastAddedTile = tile;
+                [self updateLongCounter];
+            }
+        }
     }
     _capturing = NO;
+}
+
+#pragma mark - v4.8：滑动检测（低分辨率灰度平均差）
+
+- (NSData *)grayData:(UIImage *)img width:(NSInteger)W h:(NSInteger *)outH {
+    CGImageRef cg = img.CGImage;
+    if (!cg) return nil;
+    CGFloat w = (CGFloat)CGImageGetWidth(cg);
+    CGFloat h = (CGFloat)CGImageGetHeight(cg);
+    if (w <= 0 || h <= 0) return nil;
+    NSInteger dsH = (NSInteger)lround(W * h / w);
+    if (dsH < 2) dsH = 2;
+    if (outH) *outH = dsH;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    if (!cs) return nil;
+    CGContextRef ctx = CGBitmapContextCreate(NULL, W, dsH, 8, W * 4, cs, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(cs);
+    if (!ctx) return nil;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, W, dsH), cg);
+    unsigned char *src = CGBitmapContextGetData(ctx);
+    if (!src) { CGContextRelease(ctx); return nil; }
+    NSMutableData *d = [NSMutableData dataWithLength:(NSUInteger)(dsH * W)];
+    unsigned char *dst = d.mutableBytes;
+    for (NSInteger r = 0; r < dsH; r++) {
+        const unsigned char *row = src + r * W * 4;
+        for (NSInteger c = 0; c < W; c++) {
+            const unsigned char *p = row + c * 4;
+            NSInteger lum = (p[0] * 299 + p[1] * 587 + p[2] * 114) / 1000;
+            dst[r * W + c] = (unsigned char)lum;
+        }
+    }
+    CGContextRelease(ctx);
+    return d;
+}
+
+// 两帧是否「明显不同」（用户滑动了页面）。平均亮度差 > 5/255 视为变化。
+- (BOOL)tile:(UIImage *)a differsFrom:(UIImage *)b {
+    if (!a.CGImage || !b.CGImage) return YES;
+    NSInteger W = 32, ha = 0, hb = 0;
+    NSData *ga = [self grayData:a width:W h:&ha];
+    NSData *gb = [self grayData:b width:W h:&hb];
+    if (!ga || !gb || ha < 2 || hb < 2) return YES;
+    NSInteger n = MIN(ha, hb);
+    long long diff = 0;
+    const unsigned char *pa = ga.bytes;
+    const unsigned char *pb = gb.bytes;
+    NSInteger total = n * W;
+    for (NSInteger i = 0; i < total; i++) {
+        NSInteger dv = pa[i] - pb[i];
+        diff += dv < 0 ? -dv : dv;
+    }
+    CGFloat mean = (CGFloat)diff / (CGFloat)total;
+    return mean > 5.0f;
 }
 
 #pragma mark - 抓屏 + 裁剪 公共路径
@@ -516,16 +638,18 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _win.hidden = hidden;
 }
 
-// 临时隐藏遮罩 → 抓屏 → 按 rect 裁剪 → 销毁窗口A → 弹窗口B（局部截图）
-- (void)captureShotAndEditWithRect:(CGRect)rect {
+// v4.8：局部截图 —— 隐藏遮罩抓屏裁剪后【不销毁窗口A】，在选区矩形下方原地弹出
+//        两排功能面板（图标更小），所有操作基于裁剪结果 _cropImage 进行；不做窗口跳转。
+- (void)presentLocalPanelForRect:(CGRect)rect {
     if (!_win) return;
+    _editingPanel = YES;                        // 先锁手势，避免面板出现前误触发框选
 
     CGRect screenRect = rect;
     if (_contentView) screenRect = [_contentView convertRect:rect toView:nil];
     NSLog(@"[SN3] free crop requested screenRect=(%.0f,%.0f,%.0f,%.0f)",
           screenRect.origin.x, screenRect.origin.y, screenRect.size.width, screenRect.size.height);
 
-    [self setWindowHidden:YES];                 // ① 关键：先隐藏遮罩，避免暗色被截入
+    [self setWindowHidden:YES];                 // ① 先隐藏遮罩，避免暗色被截入裁剪图
 
     __weak typeof(self) ws = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)),
@@ -535,6 +659,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
         UIImage *screen = [ImageUtils captureScreen];
         if (!screen) {
+            ss->_editingPanel = NO;
             [ss dismiss];
             [Common toast:@"截图失败，请重试"];
             return;
@@ -547,9 +672,275 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             [Common toast:@"选区裁剪失败，已用整屏图"];
         }
 
-        [ss dismiss];                            // ② 销毁窗口A
-        [EditToolbarWindow showWithImage:result]; // ③ 唤起窗口B：两排编辑工具栏（必弹）
+        ss->_cropImage = result;
+        [ss setWindowHidden:NO];                // ② 重新显示窗口A（选区边框仍可见）
+        [ss buildLocalPanel];                   // ③ 选区下方原地弹两排功能面板（不跳转）
+        [ss refreshChrome];
+        [Common toast:@"已截取选区，点击下方功能面板处理"];
     });
+}
+
+#pragma mark - v4.8：局部截图原地面板
+
+typedef NS_ENUM(NSInteger, XZLocalTag) {
+    XZLocalOCR      = 1,
+    XZLocalTranslate= 2,
+    XZLocalDraw     = 3,
+    XZLocalCode     = 4,
+    XZLocalMosaic   = 5,
+    XZLocalCopy     = 6,
+    XZLocalFloating = 7,
+    XZLocalSave     = 8,
+    XZLocalShare    = 9,
+    XZLocalMore     = 10,
+    XZLocalClose    = 11,
+};
+
+// 构建选区下方两排功能面板（图标尺寸更小）
+- (void)buildLocalPanel {
+    if (_localPanel) [_localPanel removeFromSuperview];
+    if (!_win) return;
+
+    CGRect scr = [UIScreen mainScreen].bounds;
+    UIEdgeInsets safe = [Common screenSafeInsets];
+
+    CGFloat iconS = 18.0;     // 图标更小（v4.8 需求）
+    CGFloat labelH = 13.0;
+    CGFloat rowH = iconS + labelH + 12.0;   // 单排高
+    CGFloat rowGap = 6.0;
+    CGFloat vPad = 8.0;
+    CGFloat panelH = vPad * 2 + rowH * 2 + rowGap;
+    CGFloat pad = 12.0;
+    CGFloat panelW = scr.size.width - pad * 2;
+
+    // 默认放在选区下方；若溢出底部则放到选区上方；都放不下则贴顶部
+    CGFloat belowY = _cropRect.origin.y + _cropRect.size.height + 12.0;
+    CGFloat aboveY = _cropRect.origin.y - panelH - 12.0;
+    CGFloat y = belowY;
+    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) {
+        y = aboveY;
+    }
+    if (y < safe.top + 4.0) y = safe.top + 4.0;
+
+    _localPanel = [[UIView alloc] initWithFrame:CGRectMake(pad, y, panelW, panelH)];
+    _localPanel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.78];
+    _localPanel.layer.cornerRadius = 14;
+    _localPanel.userInteractionEnabled = YES;
+    [_win addSubview:_localPanel];
+    [_win addInteractiveView:_localPanel];
+    [_win bringSubviewToFront:_localPanel];
+
+    NSArray *row1 = @[
+        @{@"icon":@"text.viewfinder",   @"label":@"OCR",  @"tag":@(XZLocalOCR)},
+        @{@"icon":@"translate",         @"label":@"翻译", @"tag":@(XZLocalTranslate)},
+        @{@"icon":@"pencil.tip",        @"label":@"画图", @"tag":@(XZLocalDraw)},
+        @{@"icon":@"qrcode.viewfinder", @"label":@"识码", @"tag":@(XZLocalCode)},
+        @{@"icon":@"rectangle.dashed",  @"label":@"打码", @"tag":@(XZLocalMosaic)},
+    ];
+    NSArray *row2 = @[
+        @{@"icon":@"doc.on.doc",             @"label":@"复制", @"tag":@(XZLocalCopy)},
+        @{@"icon":@"pin",                    @"label":@"贴图", @"tag":@(XZLocalFloating)},
+        @{@"icon":@"square.and.arrow.down",  @"label":@"保存", @"tag":@(XZLocalSave)},
+        @{@"icon":@"square.and.arrow.up",    @"label":@"分享", @"tag":@(XZLocalShare)},
+        @{@"icon":@"ellipsis",               @"label":@"更多", @"tag":@(XZLocalMore)},
+    ];
+
+    CGFloat gap = 6.0;
+    CGFloat bw = (panelW - gap * 4) / 5.0;
+    for (NSInteger i = 0; i < row1.count; i++) {
+        UIButton *b = [self makeLocalButton:row1[i] iconSize:iconS labelH:labelH width:bw];
+        b.frame = CGRectMake(gap + i * (bw + gap), vPad, bw, rowH);
+        [_localPanel addSubview:b];
+    }
+    for (NSInteger i = 0; i < row2.count; i++) {
+        UIButton *b = [self makeLocalButton:row2[i] iconSize:iconS labelH:labelH width:bw];
+        b.frame = CGRectMake(gap + i * (bw + gap), vPad + rowH + rowGap, bw, rowH);
+        [_localPanel addSubview:b];
+    }
+
+    // 面板右上角关闭（✕）：退回框选模式
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(panelW - 30, 0, 30, 28);
+    [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    close.tintColor = [UIColor whiteColor];
+    close.titleLabel.font = [UIFont systemFontOfSize:13];
+    [close addTarget:self action:@selector(exitLocalPanel) forControlEvents:UIControlEventTouchUpInside];
+    [_localPanel addSubview:close];
+}
+
+- (UIButton *)makeLocalButton:(NSDictionary *)spec iconSize:(CGFloat)iconS labelH:(CGFloat)labelH width:(CGFloat)bw {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.tag = [spec[@"tag"] integerValue];
+    b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+    b.layer.cornerRadius = 9;
+    [b addTarget:self action:@selector(localToolTapped:) forControlEvents:UIControlEventTouchUpInside];
+
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((bw - iconS) / 2, 6, iconS, iconS)];
+    iv.image = [Common systemIcon:spec[@"icon"]];
+    if (!iv.image) iv.image = [Common systemIcon:@"circle"];
+    iv.tintColor = [UIColor whiteColor];
+    iv.contentMode = UIViewContentModeScaleAspectFit;
+    iv.userInteractionEnabled = NO;
+    [b addSubview:iv];
+
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 6 + iconS + 2, bw, labelH)];
+    lb.text = spec[@"label"];
+    lb.textColor = [UIColor whiteColor];
+    lb.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+    lb.textAlignment = NSTextAlignmentCenter;
+    lb.userInteractionEnabled = NO;
+    [b addSubview:lb];
+    return b;
+}
+
+// 面板动作分发（作用于 _cropImage）
+- (void)localToolTapped:(UIButton *)btn {
+    UIImage *img = _cropImage;
+    if (!img) { [Common toast:@"裁剪图为空，请重选"]; return; }
+    NSInteger tag = btn.tag;
+
+    if (tag == XZLocalOCR) {
+        [Common toast:@"正在识别文字..."];
+        [SuperTools ocr:img completion:^(NSString *text) {
+            [self presentLocalText:text title:@"OCR 识别结果"];
+        }];
+    } else if (tag == XZLocalTranslate) {
+        [Common toast:@"正在识别并翻译..."];
+        [SuperTools translate:img completion:^(NSString *src, NSString *dst) {
+            [self presentLocalTranslate:src dst:dst];
+        }];
+    } else if (tag == XZLocalDraw) {
+        // 画图需要画布，唤起编辑窗口（仅此动作需要画板，属于用户主动进入）
+        [SuperTools draw:img completion:^(UIImage *edited) {
+            if (edited) { self->_cropImage = edited; [Common toast:@"已应用，可继续操作"]; }
+        }];
+    } else if (tag == XZLocalCode) {
+        [Common toast:@"正在识别二维码..."];
+        [SuperTools codeScan:img completion:^(NSString *code) {
+            [self presentLocalCode:code];
+        }];
+    } else if (tag == XZLocalMosaic) {
+        [SuperTools mosaic:img completion:^(UIImage *edited) {
+            if (edited) { self->_cropImage = edited; [Common toast:@"已打码，可继续操作"]; }
+        }];
+    } else if (tag == XZLocalCopy) {
+        [SuperTools copy:img];
+        [Common toast:@"已复制到剪贴板"];
+        [self dismiss];
+    } else if (tag == XZLocalFloating) {
+        [SuperTools floating:img];
+        [self dismiss];
+    } else if (tag == XZLocalSave) {
+        [SuperTools save:img completion:^(BOOL ok) {
+            [Common toast: ok ? @"已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+            [self dismiss];
+        }];
+    } else if (tag == XZLocalShare) {
+        [SuperTools share:img fromWindow:_win];
+    } else if (tag == XZLocalMore) {
+        [self showLocalMore:img];
+    }
+}
+
+// 退出原地面板，回到框选模式（清空选区，恢复三按钮）
+- (void)exitLocalPanel {
+    if (_localPanel) { [_localPanel removeFromSuperview]; _localPanel = nil; }
+    _editingPanel = NO;
+    _cropImage = nil;
+    _hasCrop = NO;
+    _cropRect = CGRectZero;
+    [self updateMask];
+    [self refreshChrome];
+    [Common toast:@"已退出编辑，可重新框选"];
+}
+
+#pragma mark - 原地面板结果展示（复用窗口A 的 hostVC 弹窗）
+
+- (void)presentLocalText:(NSString *)text title:(NSString *)title {
+    if (!text || text.length == 0) { [Common toast:@"没有识别到文字"]; return; }
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:title
+                                                               message:text
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [UIPasteboard generalPasteboard].string = text;
+        [Common toast:@"已复制文本"];
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+    [Common present:ac fromWindow:_win];
+}
+
+- (void)presentLocalTranslate:(NSString *)src dst:(NSString *)dst {
+    if (!dst || dst.length == 0) { [Common toast:@"翻译失败"]; return; }
+    NSString *msg = [NSString stringWithFormat:@"原文：\n%@\n\n译文：\n%@", src ?: @"", dst ?: @""];
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"翻译结果"
+                                                               message:msg
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:@"复制译文" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [UIPasteboard generalPasteboard].string = dst;
+        [Common toast:@"已复制译文"];
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"复制原文" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [UIPasteboard generalPasteboard].string = src ?: @"";
+        [Common toast:@"已复制原文"];
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+    [Common present:ac fromWindow:_win];
+}
+
+- (void)presentLocalCode:(NSString *)code {
+    if (!code || code.length == 0) { [Common toast:@"未识别到二维码"]; return; }
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"识别结果"
+                                                               message:code
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [UIPasteboard generalPasteboard].string = code;
+        [Common toast:@"已复制"];
+    }]];
+    NSURL *url = [NSURL URLWithString:code];
+    if (url && ([[code lowercaseString] hasPrefix:@"http://"] || [[code lowercaseString] hasPrefix:@"https://"])) {
+        [ac addAction:[UIAlertAction actionWithTitle:@"用 Safari 打开" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+        }]];
+    }
+    [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+    [Common present:ac fromWindow:_win];
+}
+
+- (void)showLocalMore:(UIImage *)img {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"更多功能"
+                                                               message:nil
+                                                        preferredStyle:UIAlertControllerStyleActionSheet];
+    [ac addAction:[UIAlertAction actionWithTitle:@"导出 PDF" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        NSString *p = [SuperTools exportPDF:img];
+        if (p) {
+            NSURL *url = [NSURL fileURLWithPath:p];
+            UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+            [Common present:avc fromWindow:_win];
+        } else { [Common toast:@"导出失败"]; }
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"压缩图片" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        NSData *before = UIImagePNGRepresentation(img);
+        UIImage *c = [SuperTools compress:img quality:0.6];
+        if (c) {
+            self->_cropImage = c;
+            NSData *after = UIImageJPEGRepresentation(c, 0.6);
+            [Common toast:[NSString stringWithFormat:@"已压缩：%.0fKB → %.0fKB", before.length/1024.0, after.length/1024.0]];
+        } else { [Common toast:@"压缩失败"]; }
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"去除状态栏" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        UIImage *s = [SuperTools stripStatusBar:img];
+        if (s) { self->_cropImage = s; [Common toast:@"已去除顶部状态栏"]; }
+        else [Common toast:@"处理失败"];
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"取色器" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [SuperTools colorPicker:img fromWindow:_win];
+    }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
+        ac.popoverPresentationController.sourceView = _localPanel;
+        ac.popoverPresentationController.sourceRect = _localPanel.bounds;
+    }
+    [Common present:ac fromWindow:_win];
 }
 
 // 正常截图：整屏 → 保存到相册「SN3截图」→ 直接结束（不弹编辑，仿原生）
