@@ -68,6 +68,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 - (void)finishCapture;
 - (void)updateHUD;
 - (CGRect)bandScreenRect;
+- (void)refreshChrome;      // v4.2：强制刷新底部按钮栏（可见/布局/置顶）
 @end
 
 @implementation MaskCropWindow {
@@ -183,9 +184,26 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     [self installRulers];
     [self installHUD];
     [self setMode:XZMaskModeCrop];
+    [self refreshChrome];                        // v4.2：确保按钮栏置顶可见
 
     _win.hidden = NO;
     NSLog(@"[SN3] mask window A shown");
+}
+
+// v4.2：强制刷新底部按钮栏 + 提示条（可见性 / 布局 / 置顶一次做齐）。
+// 手势松手、模式切换后都调用，杜绝「框选完成但操作栏不出现」。
+- (void)refreshChrome {
+    if (!_win || !_toolbar) return;
+    _toolbar.hidden = NO;
+    _hintLabel.hidden = NO;
+    if (_mode == XZMaskModeLong) {
+        [self layoutButtons:@[_btnGenerate, _btnReset, _btnBackCrop]];
+    } else {
+        [self layoutButtons:@[_btnLong, _btnNormal, _btnCancel]];
+    }
+    [_win bringSubviewToFront:_toolbar];
+    [_win bringSubviewToFront:_hintLabel];
+    [_win layoutIfNeeded];
 }
 
 - (void)dismiss {
@@ -229,6 +247,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UIEdgeInsets safe = [Common screenSafeInsets];
     CGFloat barH = kToolbarH;
     CGFloat barY = scr.size.height - safe.bottom - barH;
+    // v4.2：SpringBoard 里 topWindow 的 safeAreaInsets 不可信，可能返回异常值把整条
+    // 底部栏送出屏幕（用户反馈「松手后底部按钮不出现」）。硬钳制进屏幕范围。
+    barY = MIN(MAX(barY, 0), scr.size.height - barH);
+    NSLog(@"[SN3] toolbar barY=%.0f (screenH=%.0f safeTop=%.1f safeBottom=%.1f)",
+          barY, scr.size.height, safe.top, safe.bottom);
 
     _toolbar = [[UIView alloc] initWithFrame:CGRectMake(0, barY, scr.size.width, barH)];
     _toolbar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
@@ -514,6 +537,11 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
             _cropRect = CGRectZero;
         }
         [self updateMask];
+        // v4.2：松手立刻刷新底部按钮栏（【长截图|正常截图|取消】必须此时就在）
+        [self refreshChrome];
+        NSLog(@"[SN3] crop pan ended: rect=(%.0f,%.0f,%.0f,%.0f) valid=%d",
+              _cropRect.origin.x, _cropRect.origin.y,
+              _cropRect.size.width, _cropRect.size.height, (int)_hasCrop);
     }
 }
 
@@ -657,7 +685,10 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         // ① 遮罩此刻已经隐藏，抓到的是干净的真实屏幕
         UIImage *screen = [ImageUtils captureScreen];
         if (screen) {
-            UIImage *frame = [ImageUtils cropImage:screen screenRect:[self bandScreenRect]];
+            // v4.2：采集带同样先转换到屏幕全局坐标再裁剪
+            CGRect band = [self bandScreenRect];
+            if (_contentView) band = [_contentView convertRect:band toView:nil];
+            UIImage *frame = [ImageUtils cropImage:screen screenRect:band];
             if (frame) {
                 // 与上一帧比对，无位移（用户没滑动）则丢弃，避免重复帧
                 changed = [[LongShotCapture sharedInstance] addFrame:frame];
@@ -725,6 +756,13 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 // 临时隐藏遮罩 → 抓屏 → 按 rect 裁剪 → 销毁窗口A → 弹窗口B
 - (void)captureShotAndEditWithRect:(CGRect)rect {
     if (!_win) return;
+
+    // v4.2：显式把选区从 contentView 局部坐标转换到屏幕全局坐标再裁剪。
+    // contentView 全屏在原点时是恒等变换，但这一步保证 UI 坐标系永远与截图坐标系对齐
+    //（用户反馈的「只截到左上角」一半根因就在坐标空间没显式转换）。
+    CGRect screenRect = rect;
+    if (_contentView) screenRect = [_contentView convertRect:rect toView:nil];
+
     [self setWindowHidden:YES];                 // ① 关键：先隐藏遮罩，避免暗色被截入
 
     __weak typeof(self) ws = self;
@@ -737,7 +775,10 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         [ss setWindowHidden:NO];
 
         if (!screen) { [Common toast:@"截图失败"]; return; }
-        UIImage *cropped = [ImageUtils cropImage:screen screenRect:rect];
+        NSLog(@"[SN3] normal shot: screenRect=(%.0f,%.0f,%.0f,%.0f)",
+              screenRect.origin.x, screenRect.origin.y,
+              screenRect.size.width, screenRect.size.height);
+        UIImage *cropped = [ImageUtils cropImage:screen screenRect:screenRect];
         if (!cropped) { [Common toast:@"裁剪失败"]; return; }
 
         [ss dismiss];                            // ② 销毁窗口A

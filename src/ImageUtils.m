@@ -57,24 +57,33 @@
 //   -> 落在屏幕下半部分的选区会被裁成空/极小 -> 返回 nil -> 弹「裁剪失败」
 //   -> 窗口B 永远不出现（用户反馈「圈选范围后没有两排功能按钮区域」）。
 //
-// 【修法】
-//   不再做任何「点↔像素」的假设，一律用比例换算：
-//       ratio = image.size.width / 屏幕宽(点)
-//   这样无论 image.size 是点还是像素，结果都在 image 自身坐标系里。
-//
+// 【v4.2 根因修复】
+//   v4.1 用 ratio = image.size.width / 屏幕宽(点) 做换算，但 CGImageCreateWithImageInRect
+//   是按【CGImage 像素坐标】裁剪的。iOS16 上 UIGetScreenImage 返回的 UIImage 是
+//   scale=3、size=点数(如 390×844)，其底层 CGImage 是 1170×2532 像素：
+//     ratio = 390/390 = 1 → 点 rect 被直接当像素 rect → 永远裁中屏幕左上角一小块。
+//   正确做法：比例基准 = CGImage 真实像素宽 / 屏幕点宽，目标空间 = 像素空间。
 + (CGRect)imageRectForScreenRect:(CGRect)screenRect image:(UIImage *)image {
     if (!image) return CGRectZero;
+    CGImageRef cg = image.CGImage;
+    if (!cg) return CGRectZero;
+
+    CGFloat pxW = (CGFloat)CGImageGetWidth(cg);    // CGImage 真实像素宽
+    CGFloat pxH = (CGFloat)CGImageGetHeight(cg);
+    if (pxW <= 0 || pxH <= 0) return CGRectZero;
+
     CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
     if (screenW <= 0) return CGRectZero;
-    CGFloat ratio = image.size.width / screenW;
 
-    CGRect r = CGRectMake(screenRect.origin.x * ratio,
-                          screenRect.origin.y * ratio,
-                          screenRect.size.width * ratio,
-                          screenRect.size.height * ratio);
-    // 取整，避免半像素导致 CGImageCreateWithImageInRect 结果偏 1px
-    r = CGRectIntegral(r);
-    CGRect bounds = CGRectMake(0, 0, image.size.width, image.size.height);
+    // 点 → 像素：像素空间 rect（无论 image.size 是点还是像素都成立）
+    CGFloat ratio = pxW / screenW;
+    CGRect r = CGRectMake(floor(screenRect.origin.x * ratio),
+                          floor(screenRect.origin.y * ratio),
+                          floor(screenRect.size.width * ratio),
+                          floor(screenRect.size.height * ratio));
+
+    // 钳制进图像边界，防越界
+    CGRect bounds = CGRectMake(0, 0, pxW, pxH);
     r = CGRectIntersection(r, bounds);
     if (CGRectIsNull(r)) return CGRectZero;
     return r;
@@ -87,10 +96,12 @@
 
     CGRect r = [self imageRectForScreenRect:screenRect image:image];
     if (r.size.width < 4 || r.size.height < 4) {
-        NSLog(@"[SN3] crop failed: rect=(%.1f,%.1f,%.1f,%.1f) image=(%.0f,%.0f)",
+        NSLog(@"[SN3] crop failed: screenRect=(%.1f,%.1f,%.1f,%.1f) imgSize=(%.0f,%.0f) CGImage=(%.0f,%.0f) outRect=(%.0f,%.0f,%.0f,%.0f)",
               screenRect.origin.x, screenRect.origin.y,
               screenRect.size.width, screenRect.size.height,
-              image.size.width, image.size.height);
+              image.size.width, image.size.height,
+              (CGFloat)CGImageGetWidth(cgimg), (CGFloat)CGImageGetHeight(cgimg),
+              r.origin.x, r.origin.y, r.size.width, r.size.height);
         return nil;
     }
     CGImageRef cut = CGImageCreateWithImageInRect(cgimg, r);
