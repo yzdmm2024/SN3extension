@@ -1,22 +1,21 @@
 //
-//  LongShotCapture.m — 长截图拼接实现（超级截图 v4.9）
+//  LongShotCapture.m — 长截图拼接实现（超级截图 v5.0）
 //
-//  拼接原理（参考开源滚动截图方案 Picsew / screen-stitch / FSCapture）：
-//    相邻两帧尺寸一致（固定采集框），页面向下滚动时「当前帧顶部」与「上一帧底部」
-//    内容相同。对这两段条带做 NCC（归一化互相关系数）比对，峰值位置 = 真实重叠高度 →
-//    拼接时当前帧只保留「底部（帧高-重叠）像素」的新内容 → 逐帧垂直叠加，无重复。
+//  v5.0 核心变更：用 Vision VNTranslationalImageRegistrationRequest 做帧间平移配准，
+//  直接得到「当前帧相对上一帧垂直位移」，换算成重叠高度 → 拼接时只保留新内容。
+//  NCC 降到【校验/兜底】角色：Vision 失败或结果离谱时，用 NCC 粗筛；NCC 也找不到
+//  清晰匹配 → 直接跳过该帧，绝不整帧拼入。
 //
-//    ┌─────────┐ 帧A            ┌─────────┐ 帧B
-//    │         │                │ 重叠区  │ ← 与帧A底部相同（NCC 峰值处）
-//    │         │                ├─────────┤
-//    │         │                │ 新内容  │ ← 只有这段拼进去
-//    └─────────┘                └─────────┘
+//  为什么用 Vision 做主检测？
+//    它内部基于相位相关 / 特征匹配，对聊天、网页、表格等「重复纹理 + 小位移」场景
+//    远比手搓 128px 亮度签名 NCC 稳健；v4.9 的 NCC 在低纹理/重复气泡界面找不到峰，
+//    错误地 fallback 到「整帧拼入」，导致长图大量重复。
 //
-//  v4.9 关键改进（彻底消除重复）：
-//    · 64px 灰度 SAD → 128 宽 / 每 12 列采样的亮度签名，特征更具判别力；
-//    · SAD → NCC，对亮度偏移 / 抗锯齿更稳健；
-//    · 单层全搜索 → 粗（整行均值）到细（多列签名）两层搜索，避开局部最小；
-//    · 匹配不可靠时【直接跳过该帧】，不再回退固定重叠比例（旧版 80% 兜底的重复根因）。
+//  ┌─────────┐ 帧A            ┌─────────┐ 帧B
+//  │         │                │ 重叠区  │ ← 与帧A底部相同（Vision 给出的位移换算）
+//  │         │                ├─────────┤
+//  │         │                │ 新内容  │ ← 只有这段拼进去
+//  └─────────┘                └─────────┘
 //
 //  防 OOM：总高度超上限时按比例压缩每段贡献高度（kMaxCanvasBytes）。
 //
@@ -47,6 +46,8 @@ static const NSInteger XZ_SIG_K = 12;    // 每帧采样的等距列数（每行
     CGFloat _maxPxHeight;                    // 最大像素高度上限
     CGFloat _overlapRatio;                   // 兜底重叠比例
     CGFloat _estimatedHeight;                // 估算的最终高度（点）
+    CGFloat _emaOverlap;                     // 已接受重叠的指数滑动平均（点），时间先验
+    CGFloat _lastShift;                      // 最近一次 Vision 检测到的垂直位移（点）
 }
 
 static LongShotCapture *_shared = nil;
@@ -65,6 +66,8 @@ static LongShotCapture *_shared = nil;
         _maxPxHeight = 12000.0;
         _overlapRatio = XZ_LONG_OVERLAP_DEFAULT;
         _estimatedHeight = 0;
+        _emaOverlap = (CGFloat)NAN;
+        _lastShift = (CGFloat)NAN;
     }
     return self;
 }
@@ -76,10 +79,20 @@ static LongShotCapture *_shared = nil;
     [_frames removeAllObjects];
     [_overlaps removeAllObjects];
     _estimatedHeight = 0;
+    _emaOverlap = (CGFloat)NAN;
+    _lastShift = (CGFloat)NAN;
 }
 
 #pragma mark - 入帧
 
+// v5.0：入帧策略
+//   1. 第一帧无条件接收；
+//   2. 非第一帧先用 Vision VNTranslationalImageRegistrationRequest 求垂直位移 shift（点），
+//      换算为重叠 overlap = lastHpx - shift*scale；
+//   3. Vision 失败 / 结果离谱 → NCC 校验；NCC 也失败 → 跳过；
+//   4. 重叠 < 3% 或 > 98.5% → 跳过（前者接近整帧新内容但无法验证，后者基本重复）；
+//   5. 否则接受，并更新时间先验 _emaOverlap/_lastShift。
+//   核心原则：匹配不上宁可丢帧，也绝不整帧硬拼。
 - (BOOL)addFrame:(UIImage *)frame {
     if (!frame || !frame.CGImage) return NO;
 
@@ -87,6 +100,7 @@ static LongShotCapture *_shared = nil;
     if (_frames.count == 0) {
         [_frames addObject:frame];
         [_overlaps addObject:@(0.0)];
+        _emaOverlap = 0.0;
         [self recomputeEstimatedHeight];
         return YES;
     }
@@ -95,32 +109,77 @@ static LongShotCapture *_shared = nil;
     if (!last.CGImage) return NO;
 
     CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
+    CGFloat lastScale = (last.size.height > 0) ? (lastHpx / last.size.height) : 2.0;
     if (lastHpx < 2) return NO;
 
-    // 主检测：NCC（归一化互相关系数）帧比对求真实重叠（v4.9 重写）。
-    //   不再使用 64px 灰度 SAD（低分辨率导致大量内容「看起来一样」→ 重叠被低估 → 重复），
-    //   改用 128 宽、每 12 列采样的高分辨亮度签名 + 粗→细两层 NCC 搜索 + 强置信门限。
-    //   匹配不可靠时【直接跳过本帧】（不猜测重叠、不回退固定比例）→ 从根本上杜绝重复/乱拼。
+    CGFloat shiftPts = 0, overlapPx = 0;
     BOOL confident = NO;
-    CGFloat ov = [self overlapPxFromLast:last cur:frame confident:&confident];
+
+    BOOL visionOk = NO;
+    // ----- 1) Vision 平移配准（主检测）-----
+    shiftPts = [LongShotCapture visionShiftPtsFrom:last cur:frame];
+    if (!isnan(shiftPts)) {
+        CGFloat shiftPx = fabs(shiftPts) * lastScale;        // 点 → 上一帧像素（取绝对值，兼容两种符号约定）
+        // 合理范围：内容移动 3%~96% 帧高；太小=没滑动，太大=不连续/跳屏
+        if (shiftPx > lastHpx * 0.03 && shiftPx < lastHpx * 0.96) {
+            overlapPx = lastHpx - shiftPx;
+            confident = YES;
+            visionOk = YES;
+            NSLog(@"[SN3] Vision shift=%.1fpt overlap=%.1fpx", shiftPts, overlapPx);
+        }
+    }
+
+    // ----- 2) NCC 校验 / Vision 失败兜底 -----
     if (!confident) {
-        // 不可靠（内容模糊 / 低纹理 / 无明显最优匹配）→ 跳过本帧，等下一次更清晰的帧。
-        // 参考 Picsew / screen-stitch：找不到强匹配就「跳过/告警」，而非静默错拼。
+        CGFloat nccOv = [self overlapPxFromLast:last cur:frame confident:&confident];
+        if (confident) {
+            overlapPx = nccOv;
+            NSLog(@"[SN3] NCC fallback overlap=%.1fpx", overlapPx);
+        }
+    }
+
+    if (!confident) {
+        NSLog(@"[SN3] 帧无法配准，跳过（防错拼重复）");
         return NO;
     }
 
-    // 无位移（用户没滑动 / 内容整帧重合）→ 丢弃，避免静止帧把长图刷成同一屏
-    if (ov >= lastHpx * 0.985) return NO;
+    // 时间先验校验：若已有稳定先验，当前重叠偏离先验 ±40% 则视为异常 → 跳过
+    if (!isnan(_emaOverlap) && _emaOverlap > 0) {
+        CGFloat emaPx = _emaOverlap * lastScale;
+        if (overlapPx < emaPx * 0.60 || overlapPx > emaPx * 1.40) {
+            NSLog(@"[SN3] overlap %.1fpx 偏离先验 %.1fpx 太多，跳过", overlapPx, emaPx);
+            return NO;
+        }
+    }
 
-    // 钳制：重叠不超过 97%，保证每帧至少贡献 3% 新内容
-    ov = MAX(0.0, MIN(ov, lastHpx * 0.97));
+    // 整帧重合 / 没滑动 → 丢弃
+    if (overlapPx >= lastHpx * 0.985) {
+        NSLog(@"[SN3] 重叠 %.2f%% 视为整帧重复，丢弃", overlapPx / lastHpx * 100.0);
+        return NO;
+    }
 
-    // 以「点」存储，与 stitchSync 坐标系一致
-    CGFloat s = (last.size.height > 0) ? (lastHpx / last.size.height) : 1.0;
-    CGFloat ovPts = ov / s;
+    // 重叠过大（<3% 新内容）→ 丢弃，避免把同一屏刷多次
+    if (overlapPx >= lastHpx * 0.97) {
+        NSLog(@"[SN3] 重叠 %.2f%% 超过 97%%，丢弃", overlapPx / lastHpx * 100.0);
+        return NO;
+    }
+
+    // 重叠过小（<3% 重叠）→ 接近整帧新内容，无法确认是否连续 → 跳过
+    if (overlapPx <= lastHpx * 0.03) {
+        NSLog(@"[SN3] 重叠 %.2f%% 过低，无法确认连续性，跳过", overlapPx / lastHpx * 100.0);
+        return NO;
+    }
+
+    CGFloat ovPts = overlapPx / lastScale;
 
     [_frames addObject:frame];
     [_overlaps addObject:@(ovPts)];
+
+    // 更新时间先验（指数滑动平均）
+    if (isnan(_emaOverlap)) _emaOverlap = ovPts;
+    else _emaOverlap = _emaOverlap * 0.7 + ovPts * 0.3;
+    if (visionOk) _lastShift = shiftPts;
+
     [self recomputeEstimatedHeight];
     return YES;
 }
@@ -236,10 +295,9 @@ static LongShotCapture *_shared = nil;
     }
 }
 
-#pragma mark - v4.9：NCC 帧比对重叠检测（主方法，取代失效的 Vision 配准 + 64px 灰度 SAD）
+#pragma mark - v5.0：NCC 校验（Vision 失败时的第二道防线）
 
 // NCC（归一化互相关系数），输入两段等长亮度字节，返回 [-1,1]。
-// 比 SAD 更稳健：对亮度整体偏移 / 抗锯齿产生的像素偏差不敏感（FSCapture 文所述）。
 static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int n2) {
     if (!a || !b || n != n2 || n <= 0) return 0.0f;
     long long sa = 0, sb = 0;
@@ -251,12 +309,11 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
         double xa = a[i] - ma, xb = b[i] - mb;
         num += xa * xb; da += xa * xa; db += xb * xb;
     }
-    if (da < 1.0 || db < 1.0) return 0.0f;   // 平坦条带（低纹理）→ 无相关性
+    if (da < 1.0 || db < 1.0) return 0.0f;
     return (float)(num / sqrt(da * db));
 }
 
 // 把图降采样到固定宽 XZ_SIG_W，每行取 XZ_SIG_K 个等距列的亮度，组成 (h*K) 字节签名数组。
-// 多列采样比「整行均值」更具判别力，是匹配准确的关键（避免不同内容被误判为相同）。
 - (NSData *)rowSigsForImage:(UIImage *)img outH:(NSInteger *)outH {
     CGImageRef cg = img.CGImage;
     if (!cg) return nil;
@@ -296,7 +353,6 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
     return d;
 }
 
-// 从签名数组生成「整行均值」数组（1 字节/行），供粗搜使用。
 - (NSData *)rowMeansFromSigs:(const unsigned char *)sig h:(NSInteger)h K:(NSInteger)K {
     if (!sig || h <= 0) return nil;
     NSMutableData *m = [NSMutableData dataWithLength:(NSUInteger)h];
@@ -310,8 +366,6 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
     return m;
 }
 
-// 在候选重叠 o∈[oMin,oMax] 内做 NCC 搜索，返回最优重叠 o 及其 NCC、次优 NCC。
-// 比对：sigA 的【底部 o 行】 vs sigB 的【顶部 o 行】（页面向下滚动 → 二者内容相同）。
 - (void)seamSearchSig:(const unsigned char *)sigA hA:(int)hA
                sigB:(const unsigned char *)sigB hB:(int)hB K:(int)K
                oMin:(int)oMin oMax:(int)oMax
@@ -323,8 +377,8 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
     float bN = -2, sN = -2; int bO = 0;
     for (int o = oMin; o <= oMax; o++) {
         int len = o * K;
-        const unsigned char *a = sigA + (hA - o) * K;   // 上一帧底部
-        const unsigned char *b = sigB;                   // 当前帧顶部
+        const unsigned char *a = sigA + (hA - o) * K;
+        const unsigned char *b = sigB;
         float ncc = nccBytes(a, len, b, len);
         if (ncc > bN) { sN = bN; bN = ncc; bO = o; }
         else if (ncc > sN) { sN = ncc; }
@@ -334,12 +388,8 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
     if (secondNCC) *secondNCC = sN;
 }
 
-// 求 cur 相对 last 的重叠像素高度（CGImage 像素坐标）。匹配不可靠时 confident=NO（交由上层跳过）。
-// v4.9：粗→细两层 NCC 搜索
-//   · 粗搜（整行均值，全局）定位近似重叠，避免局部最小；
-//   · 细搜（多列签名，在粗解 ±15% 高度内）精修到精确重叠；
-//   · 大滚动/无重叠：NCC 处处极低 → 整帧拼入（不重复）；
-//   · 置信度不足 / 无明显最优 → confident=NO → 上层跳过该帧（绝不猜测重叠 → 杜绝重复）。
+// NCC 校验：仅用于 Vision 主检测失败时。匹配不可靠 → confident=NO（上层跳过）。
+// v5.0 删除「低 NCC 整帧拼入」分支，这个分支是 v4.9 聊天界面大量重复的直接元凶。
 - (CGFloat)overlapPxFromLast:(UIImage *)last cur:(UIImage *)cur confident:(BOOL *)confident {
     NSInteger hL = 0, hC = 0;
     NSData *sL = [self rowSigsForImage:last outH:&hL];
@@ -349,17 +399,27 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
     NSInteger K = XZ_SIG_K;
     NSInteger maxO = MIN(hL, hC) - 1;
     if (maxO < 3) { if (confident) *confident = NO; return (CGFloat)NAN; }
-    NSInteger oMin = MAX(2, (NSInteger)(0.02 * (CGFloat)maxO));
-    NSInteger oMax = MAX(oMin + 2, (NSInteger)(0.98 * (CGFloat)maxO));
 
-    // 粗搜：整行均值（1 字节/行）全局找近似重叠
+    // 若已有 Vision/历史先验，优先在先验 ±25% 内搜索，避免在重复纹理里找错峰
+    NSInteger oMin = MAX(2, (NSInteger)(0.03 * (CGFloat)maxO));
+    NSInteger oMax = MAX(oMin + 2, (NSInteger)(0.97 * (CGFloat)maxO));
+    CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
+    if (!isnan(_emaOverlap) && _emaOverlap > 0 && lastHpx > 0) {
+        CGFloat emaRatio = (_emaOverlap * (lastHpx / last.size.height)) / lastHpx;
+        NSInteger emaO = (NSInteger)(emaRatio * hL);
+        if (emaO > 2) {
+            NSInteger band = (NSInteger)(0.25 * (CGFloat)maxO);
+            oMin = MAX(2, emaO - band);
+            oMax = MIN(maxO, emaO + band);
+        }
+    }
+
     NSData *mL = [self rowMeansFromSigs:sL.bytes h:hL K:K];
     NSData *mC = [self rowMeansFromSigs:sC.bytes h:hC K:K];
     int cO = 0; float cN = -2, cS = -2;
     [self seamSearchSig:mL.bytes hA:(int)hL sigB:mC.bytes hB:(int)hC K:1
                  oMin:(int)oMin oMax:(int)oMax bestO:&cO bestNCC:&cN secondNCC:&cS];
 
-    // 细搜：多列签名，在粗解 ±15% 高度内精修
     int fOmin = MAX((int)oMin, cO - (int)(0.15 * (CGFloat)maxO));
     int fOmax = MIN((int)oMax, cO + (int)(0.15 * (CGFloat)maxO));
     int fO = 0; float fN = -2, fS = -2;
@@ -368,16 +428,23 @@ static float nccBytes(const unsigned char *a, int n, const unsigned char *b, int
 
     if (fO == 0) { if (confident) *confident = NO; return (CGFloat)NAN; }
 
-    // 大幅滚动 / 几乎无重叠：NCC 处处很低 → 整帧拼入（仅补新内容，不重复）
-    if (fN < 0.25f) { if (confident) *confident = YES; return 0.0f; }
+    // 整帧重合 / 基本没滚动：NCC 高 + 重叠极大 → 返回接近帧高的重叠（上层会丢弃）
+    if (fN > 0.88f && (CGFloat)fO / (CGFloat)hL > 0.95) {
+        CGFloat overlapPx = (CGFloat)fO / (CGFloat)hL * lastHpx;
+        if (confident) *confident = YES;
+        return overlapPx;
+    }
 
-    // 置信度不足（绝对相关性过低，常见于大幅滚动/低纹理）→ 上层跳过本帧
-    if (fN < 0.60f) { if (confident) *confident = NO; return (CGFloat)NAN; }
-    // 无明显最优（次优几乎一样高，匹配不可靠）→ 跳过，避免错拼
-    if (fN < fS * 1.06f) { if (confident) *confident = NO; return (CGFloat)NAN; }
+    // 无明显相关 → 跳过（绝不整帧拼入）
+    if (fN < 0.28f) { if (confident) *confident = NO; return (CGFloat)NAN; }
 
-    CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
-    CGFloat overlapPx = (CGFloat)fO / (CGFloat)hL * lastHpx;   // 降采样行占比 → 真实像素
+    // 有相关但不强 → 跳过
+    if (fN < 0.40f) { if (confident) *confident = NO; return (CGFloat)NAN; }
+
+    // 次优太接近 → 匹配位置不可靠 → 跳过
+    if (fN < fS * 1.08f) { if (confident) *confident = NO; return (CGFloat)NAN; }
+
+    CGFloat overlapPx = (CGFloat)fO / (CGFloat)hL * lastHpx;
     if (confident) *confident = YES;
     return overlapPx;
 }

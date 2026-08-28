@@ -1,5 +1,5 @@
 //
-//  MaskCropWindow.m — 窗口A：遮罩框选 + 长截图实时预览框（超级截图 v4.7）
+//  MaskCropWindow.m — 窗口A：遮罩框选 + 长截图实时预览框（超级截图 v5.0）
 //
 //  ────────────────────────────────────────────────────────────────────────
 //  v4.7 交互重设计（依据用户实测反馈）：
@@ -573,17 +573,21 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
                 _entryTile = tile;             // 未滑动基准：不采集、不计数
             } else if ([self tile:tile differsFrom:_entryTile]) {
                 // 用户开始滑动 → 采集首帧
-                [[LongShotCapture sharedInstance] addFrame:tile];
-                _lastAddedTile = tile;
-                [self updateLongCounter];
+                BOOL accepted = [[LongShotCapture sharedInstance] addFrame:tile];
+                if (accepted) {
+                    _lastAddedTile = tile;
+                    [self updateLongCounter];
+                }
             }
         } else {
             if (_lastAddedTile && ![self tile:tile differsFrom:_lastAddedTile]) {
                 // 内容没变（没滑动）→ 不采集、不计数
             } else {
-                [[LongShotCapture sharedInstance] addFrame:tile];
-                _lastAddedTile = tile;
-                [self updateLongCounter];
+                BOOL accepted = [[LongShotCapture sharedInstance] addFrame:tile];
+                if (accepted) {
+                    _lastAddedTile = tile;     // v5.0：只有真正被接受的帧才更新比较基准
+                    [self updateLongCounter];
+                }
             }
         }
     }
