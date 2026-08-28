@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.12
+Version: 3.13
 Architecture: iphoneos-arm64
-Description: [v3.12] 修长截图安全模式(删自动滚屏拼接改4边界独立窗口+用户提供的长截图/自由截图/CC图标PNG);选择器改底部(图标变小);自由截图冻结可重选+操作行新增"重截"按钮;悬浮贴图支持双击退出
+Description: [v3.13] 修两个硬伤:①点CC后先关闭控制中心(SBControlCenterController dismissAnimated:)再延迟截屏→截图不再是控制中心界面;②自由截图安全模式消除(CC收起后才弹裁剪窗口,消除窗口层级冲突)。长截图重做为真·滚动拼接:注入所有进程,选择器点长截图→通知前台App进程自动滚动逐屏拼接成长图。App内物理截图不再弹菜单(避免双UI)。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

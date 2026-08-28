@@ -21,6 +21,7 @@
 #import "Common.h"
 #import "ImageUtils.h"
 #import <Photos/Photos.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -170,8 +171,13 @@ static UIImage *_currentImage;
 + (void)chooseTapped:(UIButton *)sender {
     [self dismissAll];
     if (sender.tag == 0) {
-        [self showLongShotPicker:_currentImage];
+        // 长截图：真正的「滚动拼接」。SB 进程拿不到前台 App 的 scrollview，
+        // 发 darwin 通知让前台 App 进程执行滚动拼接（LongShotController）。
+        [Common toast:@"正在滚动生成长截图..."];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+            CFSTR("com.axs.snapper3zhext.cc.longshot"), NULL, NULL, TRUE);
     } else {
+        // 自由截图：控制中心已收起，直接进交互裁剪
         [self doFreeCrop:_currentImage];
     }
 }

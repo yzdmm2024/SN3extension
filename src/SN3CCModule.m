@@ -21,6 +21,7 @@
 
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <objc/message.h>
 
 // 父类由 ControlCenterUIKit 在运行时提供，只前向声明用到的方法/返回类型。
 @interface CCUIToggleModule : NSObject
@@ -28,6 +29,36 @@
 - (BOOL)isSelected;
 - (UIImage *)glyphImageForState:(UIControlState)state;
 @end
+
+// 关闭 SpringBoard 控制中心（iOS 13-16 均由 SBControlCenterController 管理）。
+// 点按我们的模块后必须先把控制中心收起，否则截到的永远是控制中心界面。
+static void SN3_DismissControlCenter(void) {
+    @try {
+        Class cls = NSClassFromString(@"SBControlCenterController");
+        id cc = nil;
+        if (cls) {
+            if ([cls respondsToSelector:@selector(sharedInstance)]) {
+                cc = [cls performSelector:@selector(sharedInstance)];
+            } else if ([cls respondsToSelector:@selector(_sharedInstance)]) {
+                cc = [cls performSelector:@selector(_sharedInstance)];
+            }
+        }
+        if (!cc) { NSLog(@"[SN3] SBControlCenterController not found"); return; }
+        SEL s1 = NSSelectorFromString(@"dismissAnimated:");
+        if ([cc respondsToSelector:s1]) {
+            ((void(*)(id, SEL, BOOL))objc_msgSend)(cc, s1, YES);
+            NSLog(@"[SN3] control center dismissed (dismissAnimated:)");
+            return;
+        }
+        SEL s2 = NSSelectorFromString(@"dismissAnimated:completion:");
+        if ([cc respondsToSelector:s2]) {
+            ((void(*)(id, SEL, BOOL, id))objc_msgSend)(cc, s2, YES, nil);
+            NSLog(@"[SN3] control center dismissed (dismissAnimated:completion:)");
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] dismiss CC failed: %@ %@", e.name, e.reason);
+    }
+}
 
 // 图标加载：优先用用户提供的模板 PNG（"/var/jb/Library/Snapper3ZhExt.bundle/Resources/icon.png"），
 // 失败则用 SF Symbol 兜底，再失败则 Core Graphics 现场画一个蓝底相机。
@@ -81,14 +112,18 @@ static UIImage *SN3GlyphImage(void) {
 }
 
 // 触发型按钮：点按一次即触发（不是持久开关）。
-// 只发通知，视觉状态交还给父类，并始终回弹为未选中。
+// 1) 先关闭控制中心（否则截图永远是控制中心界面）；
+// 2) 等收起动画完成后（~0.5s）再发通知，Tweak 截到的就是真实屏幕。
 - (void)setSelected:(BOOL)selected {
     if (selected) {
-        NSLog(@"[SN3] CC module tapped -> post com.axs.snapper3zhext.cc.capture");
-        CFNotificationCenterPostNotification(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            CFSTR("com.axs.snapper3zhext.cc.capture"),
-            NULL, NULL, TRUE);
+        NSLog(@"[SN3] CC module tapped -> dismiss CC, post com.axs.snapper3zhext.cc.capture");
+        SN3_DismissControlCenter();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            CFNotificationCenterPostNotification(
+                CFNotificationCenterGetDarwinNotifyCenter(),
+                CFSTR("com.axs.snapper3zhext.cc.capture"),
+                NULL, NULL, TRUE);
+        });
     }
     // 交还父类维护视觉状态；触发型按钮始终回弹为“未选中”
     [super setSelected:NO];
