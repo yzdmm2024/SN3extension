@@ -92,7 +92,7 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0;
 
     _lastObs = _sv.contentOffset.y;
     _accum = 0;
-    _lastChange = [NSDate timeIntervalSince1970];
+    _lastChange = [[NSDate date] timeIntervalSince1970];
 
     [_timer invalidate]; _timer = nil;
     _timer = [NSTimer scheduledTimerWithTimeInterval:0.1
@@ -123,7 +123,7 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0;
 
     CGFloat now = _sv.contentOffset.y;
     CGFloat d = now - _lastObs;
-    NSTimeInterval t = [NSDate timeIntervalSince1970];
+    NSTimeInterval t = [[NSDate date] timeIntervalSince1970];
     if (fabs(d) > 0.5f) {                   // 这一 tick 发生了滚动
         _accum += fabs(d);
         _lastObs = now;
