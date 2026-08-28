@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 4.4
+Version: 4.5
 Architecture: iphoneos-arm64
-Description: [v4.4] 正常/局部截图均销毁遮罩后必弹窗口B两排工具栏(裁剪失败也兜底用整屏图)；捕获重构(UIGetScreenImage 退化时合成全场景 window 兜底，避免白底/裁区无效)；长截图拼接重叠检测改用 RGBA 亮度+宽搜索带+SAD 置信度门限，去重更稳、杜绝整帧堆叠与左上角截断，失败回退 50% 重叠；更多二级(导出PDF/压缩/去状态栏/取色器)。两套窗口彻底分离、截图前必隐藏遮罩、退出必销毁置空。
+Description: [v4.5] 三种截图入口彻底分离：①正常截图=仿系统电源+音量键，截整屏直接存相册「SN3截图」，不弹编辑工具栏；②局部截图=拖框选区域→销毁遮罩→弹窗口B两排编辑工具栏(OCR/翻译/画图/识码/打码/复制/贴图/保存/分享/更多)；③长截图=点按直接弹独立悬浮面板(无需先画矩形)，宽度恒全屏宽，上下滑杆定起始/结束垂直范围，滑动页面点「采集下一屏」逐帧采集、点「生成长图」拼接去重→窗口B。两套窗口彻底分离、截图前必隐藏遮罩/面板、退出必销毁置空。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
