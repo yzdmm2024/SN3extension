@@ -879,9 +879,8 @@ static UIImage *_currentImage;
             PKCanvasView *canvas = [[PKCanvasView alloc] initWithFrame:win.bounds];
             canvas.backgroundColor = [UIColor clearColor];
             if (@available(iOS 14.0, *)) {
-                // drawingPolicy 与 tool 均 iOS 14+，iOS 13 默认仅 Apple Pencil
+                // drawingPolicy iOS 14+；tool 用默认（PKCanvasView 默认黑笔），避免 SDK 版本 API 差异
                 canvas.drawingPolicy = PKCanvasViewDrawingPolicyAnyInput;
-                canvas.tool = [PKInkingTool new];
             }
             [win addSubview:canvas];
 
