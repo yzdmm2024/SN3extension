@@ -102,12 +102,23 @@
 
 + (UIWindowScene *)activeWindowScene {
     if (@available(iOS 13.0, *)) {
+        UIWindowScene *active = nil;
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if (scene.activationState == UISceneActivationStateForegroundActive &&
                 [scene isKindOfClass:[UIWindowScene class]]) {
-                return (UIWindowScene *)scene;
+                active = (UIWindowScene *)scene;
+                break;
             }
         }
+        if (!active) {
+            // 兜底：任意已连接的 window scene。SpringBoard 的激活态判定有时不稳，
+            // 若 windowScene 取到 nil，UIWindow 在 iOS13+ 会因未挂到 scene 而不显示，
+            // 表现为「截图完成但两排工具栏不弹」。这里兜底保证窗口一定能挂上场景。
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) { active = (UIWindowScene *)scene; break; }
+            }
+        }
+        return active;
     }
     return nil;
 }

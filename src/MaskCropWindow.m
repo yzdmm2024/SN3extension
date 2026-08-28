@@ -431,7 +431,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         [self lockLongBoundsFromCropRect];
     } else {
         [self layoutButtons:@[_btnLong, _btnNormal, _btnCancel]];
-        _hintLabel.text = @"在画面上拖出要截取的区域";
+        _hintLabel.text = @"拖动画框=局部截取；直接点「正常截图」截取整屏";
         _win.passthrough = NO;
         _contentView.userInteractionEnabled = YES;
     }
@@ -589,10 +589,12 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
 
 #pragma mark - 按钮动作（普通框选模式）
 
-// 正常截图：隐藏遮罩 → 抓屏 → 按当前完整矩形框裁剪 → 销毁窗口A → 弹窗口B
+// 正常截图：隐藏遮罩 → 抓屏 → 裁剪 → 销毁窗口A → 弹窗口B
+// v4.3：默认截取【整屏全屏】画面（与系统电源+音量键截图行为一致）；
+//       拖拽框选是「自由局部截取」的可选能力，不再是正常截图的强制前置步骤。
 - (void)onNormalShot {
-    if (![self hasSelection]) { [Common toast:@"请先在画面上框选区域"]; return; }
-    [self captureShotAndEditWithRect:_cropRect];
+    CGRect rect = [self hasSelection] ? _cropRect : [UIScreen mainScreen].bounds;
+    [self captureShotAndEditWithRect:rect];
 }
 
 // 长截图：进入长截图调节子模式（复用窗口A）
@@ -735,14 +737,22 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
         __strong typeof(ws) ss = ws;
         if (!ss) return;
         if (result) {
-            // ③ 拼接完成销毁窗口A  ④ 唤起窗口B，弹出两排编辑工具栏
+            // ③ 拼接完成销毁窗口A  ④ 唤起窗口B，弹出两排编辑工具栏（OCR/翻译/画图…）
             [ss exitCapturePhase];
             [ss dismiss];
             [EditToolbarWindow showWithImage:result];
         } else {
-            [Common toast:@"拼接失败，请重试"];
+            // v4.3：拼接兜底——绝不让用户卡在长截图调节界面、也不退化为只给保存复制。
+            // 用已采集帧做兜底拼接，依旧唤起完整两排工具栏。
+            UIImage *fb = [[LongShotCapture sharedInstance] stitchFallback];
             [ss exitCapturePhase];
-            [ss setMode:XZMaskModeLong];
+            [ss dismiss];
+            if (fb) {
+                [EditToolbarWindow showWithImage:fb];
+            } else {
+                [Common toast:@"拼接失败，请重试"];
+                [ss setMode:XZMaskModeLong];
+            }
         }
     }];
 }

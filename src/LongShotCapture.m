@@ -35,7 +35,7 @@ static const CGFloat kMaxCanvasBytes = 80.0 * 1024.0 * 1024.0;
 
 @interface LongShotCapture ()
 + (UIImage *)registrationImageForImage:(UIImage *)img;
-+ (CGFloat)verticalShiftFrom:(UIImage *)a to:(UIImage *)b;
++ (CGFloat)visionShiftPtsFrom:(UIImage *)a cur:(UIImage *)b;
 - (void)recomputeEstimatedHeight;
 @end
 
@@ -92,37 +92,32 @@ static LongShotCapture *_shared = nil;
     UIImage *last = _frames.lastObject;
     if (!last.CGImage) return NO;
 
-    // 1) 配准：降采样后求垂直位移（注册图坐标系）
-    UIImage *ra = [LongShotCapture registrationImageForImage:last];
-    UIImage *rb = [LongShotCapture registrationImageForImage:frame];
-    CGFloat shiftReg = [LongShotCapture verticalShiftFrom:ra to:rb];
+    CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
+    if (lastHpx < 2) return NO;
 
-    CGFloat shift = (CGFloat)NAN;
-    if (!isnan(shiftReg) && ra.size.width > 0) {
-        // 还原到原帧坐标系（点）
-        shift = shiftReg * (last.size.width / ra.size.width);
+    // 1) 主检测：像素灰度相关法求真实重叠（单位：像素，对应 CGImage 坐标系）
+    CGFloat ov = [self overlapPxFromLast:last cur:frame];
+
+    // 2) 兜底：Vision 配准（仍失败 → 固定比例）
+    if (isnan(ov)) {
+        ov = [self visionOverlapPxFrom:last cur:frame];
+    }
+    if (isnan(ov)) {
+        ov = lastHpx * _overlapRatio;
     }
 
-    // 2) 无位移（用户没滑动）→ 丢弃，避免重复帧把长图刷成同一屏
-    if (!isnan(shift) && fabs(shift) < 3.0) return NO;
+    // 3) 无位移（用户没滑动）→ 几乎整帧重合 → 丢弃，避免重复帧把长图刷成同一屏
+    if (ov >= lastHpx * 0.99) return NO;
 
-    // 3) 计算本帧与上一帧的重叠高度
-    CGFloat frameH = last.size.height;                 // 点
-    CGFloat ov;
-    if (isnan(shift)) {
-        ov = frameH * _overlapRatio;                   // 兜底1/2：配准失败
-    } else {
-        CGFloat move = fabs(shift);
-        if (move >= frameH) {
-            ov = frameH * _overlapRatio;               // 兜底2：滑太快，帧间无重叠
-        } else {
-            ov = frameH - move;
-        }
-    }
-    ov = MAX(0.0, MIN(ov, frameH * 0.9));
+    // 4) 钳制：重叠不超过 98%，保证每帧至少贡献 2% 新内容（防整帧堆叠重复）
+    ov = MAX(0.0, MIN(ov, lastHpx * 0.98));
+
+    // 以「点」存储，与 stitchSync 坐标系一致
+    CGFloat s = (last.size.height > 0) ? (lastHpx / last.size.height) : 1.0;
+    CGFloat ovPts = ov / s;
 
     [_frames addObject:frame];
-    [_overlaps addObject:@(ov)];
+    [_overlaps addObject:@(ovPts)];
     [self recomputeEstimatedHeight];
     return YES;
 }
@@ -227,12 +222,136 @@ static LongShotCapture *_shared = nil;
         UIGraphicsEndImageContext();
 
         CGImageRef outCG = out.CGImage;
-        if (!outCG) return nil;
+        if (!outCG) {
+            // 绝对兜底：直接纵向简单拼接所有帧（无去重，仅防返回 nil 让流程卡死）
+            return [self simpleConcat:frames];
+        }
         return [UIImage imageWithCGImage:outCG scale:scale orientation:UIImageOrientationUp];
     } @catch (NSException *e) {
         NSLog(@"[SN3] stitch exception: %@ %@", e.name, e.reason);
-        return nil;
+        return [self simpleConcat:frames];
     }
+}
+
+#pragma mark - v4.3：像素灰度相关重叠检测（主方法，取代失效的 Vision 配准）
+
+// 把图降采样成单通道灰度、固定宽度 dsW、等比高度的字节数组（每行 dsW 字节）。
+// SpringBoard 内无 Accelerate 保证，这里用 CoreGraphics 直接画进灰度位图上下文。
+- (NSData *)grayDataForImage:(UIImage *)img width:(NSInteger)dsW outHeight:(NSInteger *)outH {
+    CGImageRef cg = img.CGImage;
+    if (!cg) return nil;
+    CGFloat w = (CGFloat)CGImageGetWidth(cg);
+    CGFloat h = (CGFloat)CGImageGetHeight(cg);
+    if (w <= 0 || h <= 0) return nil;
+    NSInteger dsH = (NSInteger)lround(dsW * h / w);
+    if (dsH < 2) dsH = 2;
+    if (outH) *outH = dsH;
+
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
+    if (!cs) return nil;
+    CGContextRef ctx = CGBitmapContextCreate(NULL, dsW, dsH, 8, dsW, cs, (CGBitmapInfo)kCGImageAlphaNone);
+    CGColorSpaceRelease(cs);
+    if (!ctx) return nil;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, dsW, dsH), cg);
+
+    size_t bpr = CGBitmapContextGetBytesPerRow(ctx);
+    unsigned char *src = CGBitmapContextGetData(ctx);
+    if (!src) { CGContextRelease(ctx); return nil; }
+    NSMutableData *d = [NSMutableData dataWithLength:(NSUInteger)(dsH * dsW)];
+    unsigned char *dst = d.mutableBytes;
+    for (NSInteger r = 0; r < dsH; r++) {
+        memcpy(dst + r * dsW, src + r * bpr, dsW);
+    }
+    CGContextRelease(ctx);
+    return d;
+}
+
+// 求 cur 相对 last 的重叠像素高度（CGImage 像素坐标）。失败返回 NAN。
+// 原理：固定左右范围的采集带每帧尺寸一致，页面向下滚动时 cur 的【顶部】若干行
+//       与 last 的【底部】若干行内容相同；逐候选重叠 o 比 SAD（绝对差和），取最小者。
+- (CGFloat)overlapPxFromLast:(UIImage *)last cur:(UIImage *)cur {
+    NSInteger W = 64, hL = 0, hC = 0;
+    NSData *gL = [self grayDataForImage:last width:W outHeight:&hL];
+    NSData *gC = [self grayDataForImage:cur width:W outHeight:&hC];
+    if (!gL || !gC || hL < 4 || hC < 4) return (CGFloat)NAN;
+
+    const unsigned char *a = gL.bytes;
+    const unsigned char *b = gC.bytes;
+
+    NSInteger maxO = MIN(hL, hC) - 1;
+    if (maxO < 2) return (CGFloat)NAN;
+
+    // 重叠通常落在 10%~95% 区间，缩小搜索范围提速且避免误匹配
+    NSInteger oMin = MAX(1, (NSInteger)(0.10 * (CGFloat)maxO));
+    NSInteger oMax = (NSInteger)(0.95 * (CGFloat)maxO);
+    if (oMax <= oMin) oMax = maxO;
+
+    CGFloat bestSAD = (CGFloat)INFINITY;
+    NSInteger bestO = 0;
+    for (NSInteger o = oMin; o <= oMax; o++) {
+        long long diff = 0;
+        for (NSInteger r = 0; r < o; r++) {
+            const unsigned char *ra = a + (hL - o + r) * W;
+            const unsigned char *rb = b + r * W;
+            for (NSInteger c = 0; c < W; c++) {
+                NSInteger dv = ra[c] - rb[c];
+                diff += dv < 0 ? -dv : dv;
+            }
+        }
+        CGFloat sad = (CGFloat)diff / (CGFloat)(o * W);
+        if (sad < bestSAD) { bestSAD = sad; bestO = o; }
+    }
+    if (bestO == 0) return (CGFloat)NAN;
+
+    CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
+    // bestO（降采样行）占上一帧高度比例 → 真实重叠像素
+    CGFloat overlapPx = (CGFloat)bestO / (CGFloat)hL * lastHpx;
+    return overlapPx;
+}
+
+// Vision 兜底：把垂直位移换算成重叠像素；无重叠或失败返回 NAN/兜底比例。
+- (CGFloat)visionOverlapPxFrom:(UIImage *)last cur:(UIImage *)cur {
+    CGFloat shiftPts = [LongShotCapture visionShiftPtsFrom:last cur:cur];
+    if (isnan(shiftPts)) return (CGFloat)NAN;
+    CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
+    CGFloat s = (last.size.height > 0) ? (lastHpx / last.size.height) : 1.0;
+    CGFloat shiftPx = shiftPts * s;
+    if (shiftPx >= lastHpx) return lastHpx * _overlapRatio;   // 帧间无重叠 → 兜底比例
+    return MAX(0.0, lastHpx - shiftPx);
+}
+
+// 绝对兜底拼接（仅 stitchSync 异常时调用）：纵向简单堆叠所有帧，保证不返回 nil。
+- (UIImage *)simpleConcat:(NSArray<UIImage *> *)frames {
+    @try {
+        if (frames.count == 0) return nil;
+        if (frames.count == 1) return frames.firstObject;
+        CGFloat Wpx = (CGFloat)CGImageGetWidth(frames.firstObject.CGImage);
+        CGFloat total = 0;
+        for (UIImage *f in frames) total += (CGFloat)CGImageGetHeight(f.CGImage);
+        if (Wpx < 2 || total < 2) return frames.firstObject;
+        CGFloat scale = [UIScreen mainScreen].scale;
+        if (scale <= 0) scale = 2.0;
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(Wpx, total), YES, 1.0);
+        CGFloat y = 0;
+        for (UIImage *f in frames) {
+            CGFloat fh = (CGFloat)CGImageGetHeight(f.CGImage);
+            [f drawInRect:CGRectMake(0, y, Wpx, fh)];
+            y += fh;
+        }
+        UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        CGImageRef cg = out.CGImage;
+        if (!cg) return frames.firstObject;
+        return [UIImage imageWithCGImage:cg scale:scale orientation:UIImageOrientationUp];
+    } @catch (NSException *e) {
+        return frames.firstObject;
+    }
+}
+
+// 拼接兜底（finishCapture 拼接失败分支调用）：复跑 stitchSync（现已足够稳健）。
+- (UIImage *)stitchFallback {
+    @try { return [self stitchSync]; } @catch (NSException *e) { return nil; }
 }
 
 #pragma mark - Vision 配准
@@ -254,9 +373,10 @@ static LongShotCapture *_shared = nil;
     return out ?: img;
 }
 
-// 求 b 相对 a 的垂直位移（注册图坐标系，单位：该图自身单位）。失败返回 NAN。
-// 正值 = b 的内容相对 a 向上移动（对应「页面向下滚动」）。
-+ (CGFloat)verticalShiftFrom:(UIImage *)a to:(UIImage *)b {
+// 求 b 相对 a 的垂直位移（点）。失败返回 NAN。
+// 仅作兜底：主重叠检测已改用像素灰度相关法（见 overlapPxFromLast:cur:），
+// 因为 Vision 的 VNTranslationalImageRegistrationRequest 在 SpringBoard 内经常失效。
++ (CGFloat)visionShiftPtsFrom:(UIImage *)a cur:(UIImage *)b {
     Class reqCls = NSClassFromString(@"VNTranslationalImageRegistrationRequest");
     Class handlerCls = NSClassFromString(@"VNImageRequestHandler");
     if (!reqCls || !handlerCls) return (CGFloat)NAN;
@@ -293,7 +413,11 @@ static LongShotCapture *_shared = nil;
         if (![val isKindOfClass:[NSValue class]]) return (CGFloat)NAN;
 
         CGAffineTransform t = [(NSValue *)val CGAffineTransformValue];
-        return t.ty;
+        CGFloat ty = t.ty;
+        // t.ty 处于注册图坐标系（宽 kRegistrationWidth），按宽度比还原到原帧【点】坐标
+        UIImage *ra = [LongShotCapture registrationImageForImage:a];
+        if (ra.size.width > 0) ty = ty * (a.size.width / ra.size.width);
+        return ty;
     } @catch (NSException *e) {
         NSLog(@"[SN3] registration exception: %@ %@", e.name, e.reason);
         return (CGFloat)NAN;
