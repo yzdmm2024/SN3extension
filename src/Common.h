@@ -29,7 +29,7 @@
 #define XZ_KEY_AI_PROMPT        @"AskAI_Prompt"
 
 // 长截图：帧间重叠比例（0~0.3），Vision 配准失败时的兜底值
-#define XZ_LONG_OVERLAP_DEFAULT  0.15
+#define XZ_LONG_OVERLAP_DEFAULT  0.50
 
 @interface Common : NSObject
 + (BOOL)boolPref:(NSString *)key default:(BOOL)def;

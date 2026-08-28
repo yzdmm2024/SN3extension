@@ -236,7 +236,9 @@ static LongShotCapture *_shared = nil;
 #pragma mark - v4.3：像素灰度相关重叠检测（主方法，取代失效的 Vision 配准）
 
 // 把图降采样成单通道灰度、固定宽度 dsW、等比高度的字节数组（每行 dsW 字节）。
-// SpringBoard 内无 Accelerate 保证，这里用 CoreGraphics 直接画进灰度位图上下文。
+// v4.4：改用 RGBA 8bpp 位图上下文（iOS 全机型兼容，DeviceGray 在某些机型 CGBitmapContextCreate 会失败
+//       导致 grayData 返回 nil → overlapPxFromLast 返回 NAN → 退化为 15% 重叠 → 整帧大量堆叠），
+//        再按 Rec.601 亮度公式手算灰度，兼容性最稳。
 - (NSData *)grayDataForImage:(UIImage *)img width:(NSInteger)dsW outHeight:(NSInteger *)outH {
     CGImageRef cg = img.CGImage;
     if (!cg) return nil;
@@ -247,9 +249,10 @@ static LongShotCapture *_shared = nil;
     if (dsH < 2) dsH = 2;
     if (outH) *outH = dsH;
 
-    CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
     if (!cs) return nil;
-    CGContextRef ctx = CGBitmapContextCreate(NULL, dsW, dsH, 8, dsW, cs, (CGBitmapInfo)kCGImageAlphaNone);
+    CGContextRef ctx = CGBitmapContextCreate(NULL, dsW, dsH, 8, dsW * 4,
+                                             cs, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(cs);
     if (!ctx) return nil;
     CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
@@ -261,7 +264,12 @@ static LongShotCapture *_shared = nil;
     NSMutableData *d = [NSMutableData dataWithLength:(NSUInteger)(dsH * dsW)];
     unsigned char *dst = d.mutableBytes;
     for (NSInteger r = 0; r < dsH; r++) {
-        memcpy(dst + r * dsW, src + r * bpr, dsW);
+        const unsigned char *row = src + r * bpr;
+        for (NSInteger c = 0; c < dsW; c++) {
+            const unsigned char *p = row + c * 4;
+            NSInteger lum = (p[0] * 299 + p[1] * 587 + p[2] * 114) / 1000;
+            dst[r * dsW + c] = (unsigned char)lum;
+        }
     }
     CGContextRelease(ctx);
     return d;
@@ -270,6 +278,9 @@ static LongShotCapture *_shared = nil;
 // 求 cur 相对 last 的重叠像素高度（CGImage 像素坐标）。失败返回 NAN。
 // 原理：固定左右范围的采集带每帧尺寸一致，页面向下滚动时 cur 的【顶部】若干行
 //       与 last 的【底部】若干行内容相同；逐候选重叠 o 比 SAD（绝对差和），取最小者。
+// v4.4：搜索带放宽到 3%~98%（兼容慢滚大重叠 / 快滚小重叠），并加置信度门限——
+//       当最小 SAD 与次小 SAD 差距过小（内容高度重复、误匹配）时返回 NAN，交由默认重叠兜底，
+//       避免把重叠误判为 0 而整帧堆叠。
 - (CGFloat)overlapPxFromLast:(UIImage *)last cur:(UIImage *)cur {
     NSInteger W = 64, hL = 0, hC = 0;
     NSData *gL = [self grayDataForImage:last width:W outHeight:&hL];
@@ -282,13 +293,13 @@ static LongShotCapture *_shared = nil;
     NSInteger maxO = MIN(hL, hC) - 1;
     if (maxO < 2) return (CGFloat)NAN;
 
-    // 重叠通常落在 10%~95% 区间，缩小搜索范围提速且避免误匹配
-    NSInteger oMin = MAX(1, (NSInteger)(0.10 * (CGFloat)maxO));
-    NSInteger oMax = (NSInteger)(0.95 * (CGFloat)maxO);
-    if (oMax <= oMin) oMax = maxO;
+    // v4.4：重叠带从 3% 到 98%，覆盖绝大多数手动滚动速度
+    NSInteger oMin = MAX(1, (NSInteger)(0.03 * (CGFloat)maxO));
+    NSInteger oMax = MAX(oMin + 1, (NSInteger)(0.98 * (CGFloat)maxO));
 
     CGFloat bestSAD = (CGFloat)INFINITY;
     NSInteger bestO = 0;
+    CGFloat secondSAD = (CGFloat)INFINITY;
     for (NSInteger o = oMin; o <= oMax; o++) {
         long long diff = 0;
         for (NSInteger r = 0; r < o; r++) {
@@ -300,9 +311,13 @@ static LongShotCapture *_shared = nil;
             }
         }
         CGFloat sad = (CGFloat)diff / (CGFloat)(o * W);
-        if (sad < bestSAD) { bestSAD = sad; bestO = o; }
+        if (sad < bestSAD) { secondSAD = bestSAD; bestSAD = sad; bestO = o; }
+        else if (sad < secondSAD) { secondSAD = sad; }
     }
     if (bestO == 0) return (CGFloat)NAN;
+
+    // 置信度：最优匹配必须明显优于次优（至少好 8%），否则视为不可靠 → NAN
+    if (secondSAD > 0 && bestSAD > secondSAD * 0.92) return (CGFloat)NAN;
 
     CGFloat lastHpx = (CGFloat)CGImageGetHeight(last.CGImage);
     // bestO（降采样行）占上一帧高度比例 → 真实重叠像素

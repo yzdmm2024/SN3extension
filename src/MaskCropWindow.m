@@ -772,27 +772,36 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     //（用户反馈的「只截到左上角」一半根因就在坐标空间没显式转换）。
     CGRect screenRect = rect;
     if (_contentView) screenRect = [_contentView convertRect:rect toView:nil];
+    NSLog(@"[SN3] normal shot requested screenRect=(%.0f,%.0f,%.0f,%.0f) full=%.0f,%.0f",
+          screenRect.origin.x, screenRect.origin.y, screenRect.size.width, screenRect.size.height,
+          [UIScreen mainScreen].bounds.size.width, [UIScreen mainScreen].bounds.size.height);
 
     [self setWindowHidden:YES];                 // ① 关键：先隐藏遮罩，避免暗色被截入
 
     __weak typeof(self) ws = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.18 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.20 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         __strong typeof(ws) ss = ws;
         if (!ss) return;
 
         UIImage *screen = [ImageUtils captureScreen];
-        [ss setWindowHidden:NO];
+        if (!screen) {
+            // 抓屏彻底失败：仍要把窗口A销毁、弹窗口B（用空图会崩，改 toast 后回到框选）
+            [ss dismiss];
+            [Common toast:@"截图失败，请重试"];
+            return;
+        }
 
-        if (!screen) { [Common toast:@"截图失败"]; return; }
-        NSLog(@"[SN3] normal shot: screenRect=(%.0f,%.0f,%.0f,%.0f)",
-              screenRect.origin.x, screenRect.origin.y,
-              screenRect.size.width, screenRect.size.height);
-        UIImage *cropped = [ImageUtils cropImage:screen screenRect:screenRect];
-        if (!cropped) { [Common toast:@"裁剪失败"]; return; }
+        // v4.4：裁剪失败（如选区坐标退化）一律兜底用整屏图，绝不让流程卡死 / 静默结束。
+        UIImage *result = [ImageUtils cropImage:screen screenRect:screenRect];
+        if (!result) {
+            NSLog(@"[SN3] crop failed, fallback to full-screen image");
+            result = screen;
+            [Common toast:@"选区裁剪失败，已用整屏图"];
+        }
 
         [ss dismiss];                            // ② 销毁窗口A
-        [EditToolbarWindow showWithImage:cropped]; // ③ 唤起窗口B：两排工具栏
+        [EditToolbarWindow showWithImage:result]; // ③ 唤起窗口B：两排工具栏（必弹）
     });
 }
 

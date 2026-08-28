@@ -18,18 +18,79 @@
     getScreenImage = (UIImage *(*)(void))dlsym(RTLD_DEFAULT, "UIGetScreenImage");
     if (getScreenImage) {
         UIImage *img = getScreenImage();
-        if (img) return img;
+        // v4.4：必须校验是「全屏、有效」的图，否则退化回退会截到 SpringBoard 小窗 → 白底/裁区无效。
+        if ([self isFullScreenImage:img]) return img;
+        NSLog(@"[SN3] UIGetScreenImage returned degenerate image (%.0fx%.0f), fallback",
+              img ? img.size.width : 0, img ? img.size.height : 0);
     }
 
-    // 回退：抓关键 window 层级（SpringBoard 内通常抓到的是控制中心自身，仅作兜底）
+    // 回退：把当前场景里【所有可见 window】逐层合成到全屏画布（不再只抓 keyWindow，
+    // 避免抓到 SpringBoard 的一个小窗导致白底 / 选区坐标越界裁剪失败）。
+    UIImage *fallback = [self captureFromWindows];
+    if (fallback) return fallback;
+
+    // 最后兜底：单个 keyWindow
     UIWindow *keyWin = [self topWindow];
     if (!keyWin) return nil;
-
-    UIGraphicsBeginImageContextWithOptions(keyWin.bounds.size, NO, 0);
-    [keyWin drawViewHierarchyInRect:keyWin.bounds afterScreenUpdates:NO];
+    CGRect b = keyWin.bounds;
+    if (b.size.width < 2 || b.size.height < 2) return nil;
+    UIGraphicsBeginImageContextWithOptions(b.size, YES, 0);
+    [keyWin drawViewHierarchyInRect:b afterScreenUpdates:NO];
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return img;
+}
+
+// v4.4：判断 UIGetScreenImage 的返回是否为「覆盖整屏」的有效图。
+// 只要像素尺寸与屏幕点尺寸按 scale 基本吻合即视为有效；否则走回退（防白底/小图）。
++ (BOOL)isFullScreenImage:(UIImage *)img {
+    if (!img || !img.CGImage) return NO;
+    if (img.size.width < 2 || img.size.height < 2) return NO;
+    CGFloat sw = [UIScreen mainScreen].bounds.size.width;
+    CGFloat sh = [UIScreen mainScreen].bounds.size.height;
+    if (sw <= 0 || sh <= 0) return YES; // 拿不到屏幕尺寸就不拦，直接用
+    CGFloat scale = img.scale > 0 ? img.scale : 1.0;
+    CGFloat pxW = img.size.width * scale;
+    CGFloat pxH = img.size.height * scale;
+    // 允许 ±15% 误差（不同机型/状态栏高度），过小判定为退化
+    CGFloat minW = sw * scale * 0.85;
+    CGFloat minH = sh * scale * 0.85;
+    return (pxW >= minW && pxH >= minH);
+}
+
+// v4.4：合成当前所有已连接场景的可见 window 到一张全屏不透明图（兜底捕获）。
++ (UIImage *)captureFromWindows {
+    @try {
+        CGRect scr = [UIScreen mainScreen].bounds;
+        if (scr.size.width < 2 || scr.size.height < 2) return nil;
+        CGFloat scale = [UIScreen mainScreen].scale;
+        if (scale <= 0) scale = 2.0;
+
+        UIGraphicsBeginImageContextWithOptions(scr.size, YES, scale);
+        // 先铺一层与系统一致的底色，避免透明区在无 App 内容处露白
+        [[UIColor blackColor] setFill];
+        UIRectFill(scr);
+
+        if (@available(iOS 13.0, *)) {
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+                UIWindowScene *ws = (UIWindowScene *)scene;
+                for (UIWindow *w in ws.windows) {
+                    if (w.hidden) continue;
+                    if (CGRectIsEmpty(w.bounds)) continue;
+                    @try {
+                        [w drawViewHierarchyInRect:w.bounds afterScreenUpdates:NO];
+                    } @catch (NSException *e) { /* 单个窗失败不影响其他 */ }
+                }
+            }
+        }
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        return img;
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] captureFromWindows exception: %@ %@", e.name, e.reason);
+        return nil;
+    }
 }
 
 + (UIWindow *)topWindow {
