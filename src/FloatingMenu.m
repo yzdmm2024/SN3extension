@@ -117,6 +117,8 @@ static NSInteger _cropMode; // 0 无 / 1 手绘 / 2 移动
     [closeBtn addTarget:self action:@selector(dismissAll) forControlEvents:UIControlEventTouchUpInside];
     [card addSubview:closeBtn];
 
+    UIView *b0 = btns[0];
+    UIView *b1 = btns[1];
     [NSLayoutConstraint activateConstraints:@[
         [card.centerXAnchor constraintEqualToAnchor:win.centerXAnchor],
         [card.centerYAnchor constraintEqualToAnchor:win.centerYAnchor],
@@ -131,15 +133,15 @@ static NSInteger _cropMode; // 0 无 / 1 手绘 / 2 移动
         [closeBtn.widthAnchor constraintEqualToConstant:32],
         [closeBtn.heightAnchor constraintEqualToConstant:32],
 
-        [btns[0].topAnchor constraintEqualToAnchor:title.bottomAnchor constant:24],
-        [btns[0].leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:34],
-        [btns[0].widthAnchor constraintEqualToConstant:110],
-        [btns[0].heightAnchor constraintEqualToConstant:110],
+        [b0.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:24],
+        [b0.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:34],
+        [b0.widthAnchor constraintEqualToConstant:110],
+        [b0.heightAnchor constraintEqualToConstant:110],
 
-        [btns[1].topAnchor constraintEqualToAnchor:title.bottomAnchor constant:24],
-        [btns[1].trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-34],
-        [btns[1].widthAnchor constraintEqualToConstant:110],
-        [btns[1].heightAnchor constraintEqualToConstant:110],
+        [b1.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:24],
+        [b1.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-34],
+        [b1.widthAnchor constraintEqualToConstant:110],
+        [b1.heightAnchor constraintEqualToConstant:110],
     ]];
 
     _menuWindow = win;
