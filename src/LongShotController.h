@@ -5,4 +5,5 @@
 
 @interface LongShotController : NSObject
 + (void)captureFromKeyWindowCompletion:(void (^)(UIImage *stitched))completion;
++ (UIImage *)captureSafeScreen;
 @end

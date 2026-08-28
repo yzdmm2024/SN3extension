@@ -20,6 +20,12 @@
 
 @implementation LongShotController
 
+// 旧接口 stub：自动滚动拼接已废弃（SB/CC 上下文会触发 Safe Mode），
+// 统一回退为整屏截图，交由调用方走 4 边界手动长截图（FloatingMenu.showLongShotPicker:）。
++ (void)captureFromKeyWindowCompletion:(void (^)(UIImage *stitched))completion {
+    if (completion) completion([self captureSafeScreen]);
+}
+
 // 安全兜底：纯整屏截图（不再触碰任何 scrollview / layer.render）
 + (UIImage *)captureSafeScreen {
     Class imgUtils = NSClassFromString(@"ImageUtils");
