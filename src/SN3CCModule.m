@@ -113,12 +113,12 @@ static UIImage *SN3GlyphImage(void) {
 
 // 触发型按钮：点按一次即触发（不是持久开关）。
 // 1) 先关闭控制中心（否则截图永远是控制中心界面）；
-// 2) 等收起动画完成后（~0.5s）再发通知，Tweak 截到的就是真实屏幕。
+// 2) 等收起动画完成后（~0.35s）再发通知，Tweak 截到的就是真实屏幕。
 - (void)setSelected:(BOOL)selected {
     if (selected) {
         NSLog(@"[SN3] CC module tapped -> dismiss CC, post com.axs.snapper3zhext.cc.capture");
         SN3_DismissControlCenter();
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             CFNotificationCenterPostNotification(
                 CFNotificationCenterGetDarwinNotifyCenter(),
                 CFSTR("com.axs.snapper3zhext.cc.capture"),

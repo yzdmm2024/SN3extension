@@ -58,9 +58,7 @@ typedef NS_ENUM(NSUInteger, XZRowAction) {
 
 #pragma mark - 自由截图状态（拖动暂存）
 
-static NSInteger _cropMode = 0;          // 1=手绘, 2=移动
 static CGPoint _cropStart = {0, 0};
-static CGPoint _cropGrab = {0, 0};
 
 @implementation FloatingMenu
 
@@ -96,76 +94,60 @@ static UIImage *_currentImage;
     _currentImage = screenshot;
     [self dismissAll];
 
+    // v3.15 极简：无标题、无文字、无卡片外框，只有 2 个图标浮在屏幕底部
     UIWindow *win = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     win.windowLevel = UIWindowLevelAlert + 100;
-    win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.30];
+    win.backgroundColor = [UIColor clearColor];
     win.userInteractionEnabled = YES;
     if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
 
     CGRect scr = UIScreen.mainScreen.bounds;
-    CGFloat cardW = 250, cardH = 118;
-    CGFloat cardX = (scr.size.width - cardW) / 2;
-    // 卡片放到屏幕底部偏上：避免挡手、靠近控制中心关闭位置
-    CGFloat cardY = scr.size.height - cardH - 100;
-
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(cardX, cardY, cardW, cardH)];
-    card.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.94];
-    card.layer.cornerRadius = 18;
-    card.layer.shadowColor = [UIColor blackColor].CGColor;
-    card.layer.shadowOpacity = 0.3;
-    card.layer.shadowRadius = 10;
-    [win addSubview:card];
-
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, cardW, 20)];
-    title.text = @"SN3延伸板 · 选择截图方式";
-    title.textColor = [UIColor whiteColor];
-    title.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-    title.textAlignment = NSTextAlignmentCenter;
-    [card addSubview:title];
+    CGFloat iconS = 46;
+    CGFloat gap = 30;
+    CGFloat totalW = iconS * 2 + gap;
+    CGFloat startX = (scr.size.width - totalW) / 2;
+    CGFloat y = scr.size.height - iconS - 130;
 
     NSArray *acts = @[
-        @{@"img":@"longshot", @"label":@"长截图", @"tag":@0},
-        @{@"img":@"freecut", @"label":@"自由截图", @"tag":@1},
+        @{@"img":@"longshot", @"tag":@0},
+        @{@"img":@"freecut",  @"tag":@1},
     ];
-    CGFloat bw = 80, gap = 18;
-    CGFloat totalW = acts.count * bw + (acts.count - 1) * gap;
-    CGFloat startX = (cardW - totalW) / 2;
     for (NSInteger i = 0; i < acts.count; i++) {
         NSDictionary *a = acts[i];
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-        b.frame = CGRectMake(startX + i*(bw+gap), 34, bw, 68);
+        b.frame = CGRectMake(startX + i * (iconS + gap), y, iconS, iconS);
         b.tag = [a[@"tag"] integerValue];
-        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
-        b.layer.cornerRadius = 12;
+        // 半透明圆底（无文字、无外框），图标可辨
+        b.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+        b.layer.cornerRadius = iconS / 2;
+        b.layer.shadowColor = [UIColor blackColor].CGColor;
+        b.layer.shadowOpacity = 0.3;
+        b.layer.shadowRadius = 4;
         [b addTarget:self action:@selector(chooseTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:b];
+        [win addSubview:b];
 
-        // 图标更小：26×26
-        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(bw/2 - 13, 8, 26, 26)];
+        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectInset(b.bounds, 7, 7)];
         iv.image = [self _iconNamed:a[@"img"]];
         iv.tintColor = [UIColor whiteColor];
         iv.contentMode = UIViewContentModeScaleAspectFit;
+        iv.userInteractionEnabled = NO;
         [b addSubview:iv];
-
-        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 42, bw, 18)];
-        lb.text = a[@"label"];
-        lb.textColor = [UIColor whiteColor];
-        lb.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-        lb.textAlignment = NSTextAlignmentCenter;
-        [b addSubview:lb];
     }
 
     _menuWindow = win;
     win.hidden = NO;
 
-    card.transform = CGAffineTransformMakeScale(0.85, 0.85);
-    card.alpha = 0;
-    [UIView animateWithDuration:0.28 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.8
-                     options:UIViewAnimationOptionCurveEaseOut
-                  animations:^{
-        card.transform = CGAffineTransformIdentity;
-        card.alpha = 1;
-    } completion:nil];
+    // 淡入
+    for (UIView *sub in win.subviews) {
+        sub.transform = CGAffineTransformMakeScale(0.4, 0.4);
+        sub.alpha = 0;
+        [UIView animateWithDuration:0.25 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.8
+                         options:UIViewAnimationOptionCurveEaseOut
+                      animations:^{
+            sub.transform = CGAffineTransformIdentity;
+            sub.alpha = 1;
+        } completion:nil];
+    }
 }
 
 + (void)chooseTapped:(UIButton *)sender {
@@ -173,11 +155,11 @@ static UIImage *_currentImage;
     if (sender.tag == 0) {
         // 长截图：真正的「滚动拼接」。SB 进程拿不到前台 App 的 scrollview，
         // 发 darwin 通知让前台 App 进程执行滚动拼接（LongShotController）。
-        [Common toast:@"正在滚动生成长截图..."];
+        // SB 收到 cc.longshot 后会给用户即时提示。
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
             CFSTR("com.axs.snapper3zhext.cc.longshot"), NULL, NULL, TRUE);
     } else {
-        // 自由截图：控制中心已收起，直接进交互裁剪
+        // 自由截图：控制中心已收起，直接进冻结画面手绘框选
         [self doFreeCrop:_currentImage];
     }
 }
@@ -402,68 +384,50 @@ static UIImage *_currentImage;
     win.userInteractionEnabled = YES;
     if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
 
-    CGRect scr = UIScreen.mainScreen.bounds;
-    CGFloat ratio = image.size.width / image.size.height;
-    CGFloat ivW = scr.size.width - 20;
-    CGFloat ivH = ivW / ratio;
-    CGFloat maxH = scr.size.height - 160;
-    if (ivH > maxH) { ivH = maxH; ivW = ivH * ratio; }
-    CGFloat ivX = (scr.size.width - ivW) / 2;
-    CGFloat ivY = (scr.size.height - 100 - ivH) / 2;
-
-    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(ivX, ivY, ivW, ivH)];
+    // 冻结画面：截图铺满全屏（截图尺寸=屏幕尺寸，ScaleToFill 无变形、无黑边）
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:win.bounds];
     iv.image = image;
-    iv.contentMode = UIViewContentModeScaleAspectFit;
+    iv.contentMode = UIViewContentModeScaleToFill;
     iv.userInteractionEnabled = YES;
     [win addSubview:iv];
 
-    // 冻结初始框
-    UIView *box = [[UIView alloc] initWithFrame:CGRectMake(ivW*0.12, ivH*0.12, ivW*0.76, ivH*0.76)];
+    // 初始无选区框（手绘才出现）
+    UIView *box = [[UIView alloc] initWithFrame:CGRectZero];
     box.layer.borderColor = [UIColor systemYellowColor].CGColor;
     box.layer.borderWidth = 2;
-    box.layer.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05].CGColor;
+    box.layer.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06].CGColor;
+    box.userInteractionEnabled = NO;
     [iv addSubview:box];
 
-    UIView *handle = [[UIView alloc] initWithFrame:CGRectMake(box.bounds.size.width - 22, box.bounds.size.height - 22, 24, 24)];
-    handle.backgroundColor = [UIColor systemYellowColor];
-    handle.layer.cornerRadius = 12;
-    [box addSubview:handle];
-
+    // 手绘框选手势（松手自动裁剪）
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(cropPan:)];
     [iv addGestureRecognizer:pan];
-    UIPanGestureRecognizer *hpan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(cropResize:)];
-    [handle addGestureRecognizer:hpan];
 
     objc_setAssociatedObject(win, "cropIV", iv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(win, "cropBox", box, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(win, "cropImage", image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(0, ivY - 28, scr.size.width, 20)];
-    tip.text = @"拖动框移动 · 拖黄点缩放 · 框外拖动手绘 · 可多次重选";
-    tip.textColor = [UIColor lightGrayColor];
-    tip.font = [UIFont systemFontOfSize:12];
+    // 顶部提示条（不拦截触摸）
+    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(0, 54, win.bounds.size.width, 24)];
+    tip.text = @"在画面上拖动框选区域";
+    tip.textColor = [UIColor whiteColor];
+    tip.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     tip.textAlignment = NSTextAlignmentCenter;
+    tip.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
+    tip.layer.cornerRadius = 12;
+    tip.clipsToBounds = YES;
+    tip.userInteractionEnabled = NO;
     [win addSubview:tip];
 
-    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
-    cancel.frame = CGRectMake(20, scr.size.height - 70, 130, 46);
-    cancel.backgroundColor = [UIColor systemGray3Color];
-    cancel.layer.cornerRadius = 23;
-    [cancel setTitle:@"取消" forState:UIControlStateNormal];
-    [cancel setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    cancel.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    [cancel addTarget:self action:@selector(dismissAll) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:cancel];
-
-    UIButton *confirm = [UIButton buttonWithType:UIButtonTypeSystem];
-    confirm.frame = CGRectMake(scr.size.width - 150, scr.size.height - 70, 130, 46);
-    confirm.backgroundColor = [UIColor systemBlueColor];
-    confirm.layer.cornerRadius = 23;
-    [confirm setTitle:@"裁剪并继续" forState:UIControlStateNormal];
-    [confirm setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    confirm.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    [confirm addTarget:self action:@selector(cropConfirm:) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:confirm];
+    // 右上角小关闭按钮
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(win.bounds.size.width - 44, 40, 34, 34);
+    [close setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
+    close.tintColor = [UIColor whiteColor];
+    close.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
+    close.layer.cornerRadius = 17;
+    [close addTarget:self action:@selector(dismissAll) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:close];
 
     _cropWindow = win;
     win.hidden = NO;
@@ -480,34 +444,25 @@ static UIImage *_currentImage;
     if (!box) return;
     CGPoint loc = [pan locationInView:iv];
 
+    // v3.15：纯手绘——从按下位置拖出矩形，松手即自动裁剪弹操作行
     if (pan.state == UIGestureRecognizerStateBegan) {
-        CGRect bf = box.frame;
-        if (CGRectContainsPoint(bf, loc)) {
-            _cropMode = 2;
-            _cropGrab = CGPointMake(loc.x - bf.origin.x, loc.y - bf.origin.y);
-        } else {
-            _cropMode = 1;
-            _cropStart = loc;
-            box.frame = CGRectMake(loc.x, loc.y, 0, 0);
-        }
+        _cropStart = loc;
+        box.frame = CGRectMake(loc.x, loc.y, 0, 0);
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         CGRect b = iv.bounds;
-        if (_cropMode == 1) {
-            CGFloat x = MIN(_cropStart.x, loc.x);
-            CGFloat y = MIN(_cropStart.y, loc.y);
-            CGFloat w = fabs(loc.x - _cropStart.x);
-            CGFloat h = fabs(loc.y - _cropStart.y);
-            box.frame = CGRectMake(MAX(0, x), MAX(0, y), MIN(w, b.size.width), MIN(h, b.size.height));
-        } else if (_cropMode == 2) {
-            CGFloat x = loc.x - _cropGrab.x;
-            CGFloat y = loc.y - _cropGrab.y;
-            x = MAX(0, MIN(x, b.size.width - box.frame.size.width));
-            y = MAX(0, MIN(y, b.size.height - box.frame.size.height));
-            box.frame = CGRectMake(x, y, box.frame.size.width, box.frame.size.height);
-        }
+        CGFloat x = MIN(_cropStart.x, loc.x);
+        CGFloat y = MIN(_cropStart.y, loc.y);
+        CGFloat w = fabs(loc.x - _cropStart.x);
+        CGFloat h = fabs(loc.y - _cropStart.y);
+        box.frame = CGRectMake(MAX(0, x), MAX(0, y), MIN(w, b.size.width), MIN(h, b.size.height));
     } else if (pan.state == UIGestureRecognizerStateEnded) {
         [self clampBox:box inView:iv];
-        _cropMode = 0;
+        // 松手：框有效则自动完成（不再需要点「裁剪并继续」）
+        if (box.frame.size.width >= 8 && box.frame.size.height >= 8) {
+            [self cropConfirm:nil];
+        } else {
+            box.frame = CGRectZero;  // 太小当作没选，回到无框状态
+        }
     }
 }
 

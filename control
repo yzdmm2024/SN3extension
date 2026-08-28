@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: SN3延伸板
-Version: 3.14
+Version: 3.15
 Architecture: iphoneos-arm64
-Description: [v3.14] 修自由截图确认时闪退:cc.capture通知只由SpringBoard响应(App进程不再弹窗,消除双进程窗口冲突);裁剪确认/弹窗全程@try兜底+CGImage检查。选择器两个图标再改小(26×26,卡片250×118)。
+Description: [v3.15] 按真实交互重做:①选择器极简——去标题/文字/卡片外框,只留2个适中最底下图标;②自由截图=冻结当前画面(全屏无黑边、无默认框、无确认按钮),自己手绘框选,松手自动弹功能栏;③长截图滚动拼接加即时提示(SB提示+App执行),不再"没反应";④整体响应加快(CC收起后约0.5s出选择器)。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

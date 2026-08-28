@@ -27,8 +27,8 @@ static void xz_showMenu(void) {
     // 总开关（设置面板里的 Menu_Enabled，默认开）
     if (![Common boolPref:XZ_KEY_MENU_ENABLED default:YES]) return;
     @try {
-        // 控制中心模块已 dismiss CC；这里再等 0.35s 确保收起动画完全结束，双保险
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // CC 模块已 dismiss CC 并延迟 0.35s 发通知；这里只再等 0.15s 双保险
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIImage *screenshot = [ImageUtils captureScreen];
             if (screenshot) {
                 [FloatingMenu showChooser:screenshot];
@@ -65,16 +65,18 @@ static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
 }
 
 // 长截图：选择器点「长截图」后发出。
-// SpringBoard 进程忽略（App 进程负责滚动拼接）；普通 App 进程执行滚动拼接。
+// SpringBoard：给个即时反馈 toast（提示已通知 App）；App 进程真正执行滚动拼接。
 static void xz_ccLongShot(CFNotificationCenterRef center, void *observer,
                           CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     NSString *proc = [NSProcessInfo processInfo].processName;
     if ([proc isEqualToString:@"SpringBoard"]) {
-        NSLog(@"[SN3] longshot: SB ignores (App will do)");
+        // SB 拿不到前台 App 的 scrollview，只提示；App 进程完成拼接后会弹操作行
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [Common toast:@"长截图：正在 App 内滚动生成..."];
+        });
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        [Common toast:@"正在滚动生成长截图..."];
         Class longShot = NSClassFromString(@"LongShotController");
         if (!longShot) { [Common toast:@"长截图模块未加载"]; return; }
         SEL sel = NSSelectorFromString(@"captureStitchedInCurrentProcessCompletion:");
