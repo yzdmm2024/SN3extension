@@ -112,4 +112,49 @@
     return nil;
 }
 
+#pragma mark - v4.1 新增
+
++ (UIEdgeInsets)screenSafeInsets {
+    if (@available(iOS 11.0, *)) {
+        UIWindow *w = [self topWindow];
+        if (w) return w.safeAreaInsets;
+    }
+    return UIEdgeInsetsMake(20, 0, 0, 0);
+}
+
++ (UIViewController *)topViewControllerFrom:(UIWindow *)win {
+    UIViewController *root = win.rootViewController;
+    NSInteger guard = 0;
+    while (root.presentedViewController && guard++ < 16) {
+        root = root.presentedViewController;
+    }
+    return root;
+}
+
++ (void)present:(UIViewController *)vc fromWindow:(UIWindow *)win {
+    if (!vc) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIViewController *host = [self topViewControllerFrom:win];
+            if (!host) host = [self topViewControllerFrom:[self topWindow]];
+            if (host && host.view.window) {
+                [host presentViewController:vc animated:YES completion:nil];
+            } else {
+                NSLog(@"[SN3] present failed: no host view controller");
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[SN3] present exception: %@ %@", e.name, e.reason);
+        }
+    });
+}
+
++ (void)runOnMain:(dispatch_block_t)block {
+    if (!block) return;
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), block);
+    }
+}
+
 @end

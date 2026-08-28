@@ -28,11 +28,8 @@
 #define XZ_KEY_AI_MODEL         @"AskAI_Model"
 #define XZ_KEY_AI_PROMPT        @"AskAI_Prompt"
 
-// 各插件注册到 Snapper3 的 pluginIdentifier
-#define XZ_ID_OCR      @"com.axs.snapper3zhext.zhocr"
-#define XZ_ID_TRANS    @"com.axs.snapper3zhext.translate"
-#define XZ_ID_LONG     @"com.axs.snapper3zhext.longshot"
-#define XZ_ID_AI       @"com.axs.snapper3zhext.askai"
+// 长截图：帧间重叠比例（0~0.3），Vision 配准失败时的兜底值
+#define XZ_LONG_OVERLAP_DEFAULT  0.15
 
 @interface Common : NSObject
 + (BOOL)boolPref:(NSString *)key default:(BOOL)def;
@@ -44,4 +41,20 @@
 + (UIColor *)accentColor;
 + (UIWindow *)topWindow;
 + (UIWindowScene *)activeWindowScene;   // iOS 13+：弹窗必须挂到 scene 才能显示
+
+#pragma mark - v4.1 新增
+
+// 当前屏幕安全区（取 keyWindow 的 safeAreaInsets，取不到时按顶部 20pt 兜底）
++ (UIEdgeInsets)screenSafeInsets;
+
+// 最上层可 present 的 ViewController（沿 presentedViewController 链走到最后）
+// 窗口B 自带 rootViewController，present 一律走它，不再依赖 SpringBoard 的 keyWindow
++ (UIViewController *)topViewControllerFrom:(UIWindow *)win;
+
+// 安全 present：找不到承载 VC 时降级为 toast，避免静默失败
++ (void)present:(UIViewController *)vc fromWindow:(UIWindow *)win;
+
+// 主线程执行（darwin 通知回调不在主线程）
++ (void)runOnMain:(dispatch_block_t)block;
+
 @end

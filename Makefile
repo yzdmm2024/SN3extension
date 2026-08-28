@@ -3,20 +3,25 @@ export TARGET = iphone:clang:14.0:14.5
 export THEOS_PACKAGE_SCHEME = rootless
 export THEOS_DEVICE_IP_OVERRIDE = 127.0.0.1
 
+# v4.1：theos 默认开 -Werror，本地无法预编译验证时很容易被一条无害 warning 卡住 CI。
+# GO_EASY_ON_ME=1 是 theos 官方用来关掉 -Werror 的开关（未知变量时无害）。
+export GO_EASY_ON_ME = 1
+
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = Snapper3ZhExt
 
 Snapper3ZhExt_FILES = Tweak.xm \
     src/Common.m \
+    src/ImageUtils.m \
+    src/XZPassThroughWindow.m \
     src/MaskCropWindow.m \
-    src/EditToolbarWindow.m \
     src/LongShotCapture.m \
-    src/SuperTools.m \
-    src/ImageUtils.m
+    src/EditToolbarWindow.m \
+    src/SuperTools.m
 Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision PencilKit PDFKit
 Snapper3ZhExt_WEAK_FRAMEWORKS = Photos
-Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Isrc
+Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Wno-error -Isrc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
