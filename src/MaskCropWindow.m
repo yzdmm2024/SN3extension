@@ -90,7 +90,7 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     UIViewController *_hostVC;      // 承载 OCR/翻译等结果弹窗的 rootVC（挂在窗口A）
 
     // ---- v4.9：面板独立窗口（同步渲染，消除闪现/延迟）----
-    UIWindow       *_panelWin;      // 承载功能面板的独立 UIWindow（抓屏隐藏窗口A时面板不受影响）
+    XZPassThroughWindow *_panelWin;  // 承载功能面板的独立 UIWindow（抓屏隐藏窗口A时面板不受影响）
     UIViewController *_panelVC;     // 面板窗口的 rootVC（结果弹窗 present 落点）
     CGRect          _cropScreenRect; // 当前选区屏幕坐标（后台抓屏裁剪用）
 }
@@ -659,7 +659,6 @@ typedef NS_ENUM(NSInteger, XZDragTarget) {
     _editingPanel = YES;                        // 先锁手势，避免面板出现前误触发框选
     [self refreshChrome];                        // 立即隐藏三按钮、保留选区边框（同步生效）
 
-    CGRect scr = [UIScreen mainScreen].bounds;
     CGRect screenRect = rect;
     if (_contentView) screenRect = [_contentView convertRect:rect toView:nil];
     NSLog(@"[SN3] free crop requested screenRect=(%.0f,%.0f,%.0f,%.0f)",
