@@ -229,7 +229,7 @@ static LongShotCapture *_shared = nil;
         return [UIImage imageWithCGImage:outCG scale:scale orientation:UIImageOrientationUp];
     } @catch (NSException *e) {
         NSLog(@"[SN3] stitch exception: %@ %@", e.name, e.reason);
-        return [self simpleConcat:frames];
+        return [self simpleConcat:_frames];
     }
 }
 
