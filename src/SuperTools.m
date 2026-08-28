@@ -15,29 +15,35 @@
 
 @implementation SuperTools
 
-#pragma mark - 1. OCR（Vision 本地离线）
+#pragma mark - 1. OCR（Vision 本地离线，KVC 动态调用避免依赖 SDK 头文件版本）
 
 + (void)ocr:(UIImage *)image completion:(void (^)(NSString *text))completion {
     if (!image.CGImage) { if (completion) completion(nil); return; }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        if (@available(iOS 13.0, *)) {
-            VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
-            req.recognitionLevel = VNRequestAccuracyHigh;
-            req.recognitionLanguages = @[@"zh-Hans", @"zh-Hant", @"en-US"];
-            VNImageRequestHandler *h = [[VNImageRequestHandler alloc] initWithCGImage:image.CGImage options:@{}];
-            NSError *err = nil;
-            [h performRequests:@[req] error:&err];
-            NSMutableString *txt = [NSMutableString string];
-            for (VNRecognizedTextObservation *obs in req.results) {
-                VNRecognizedText *t = obs.topCandidates.firstObject;
-                if (t.string.length) [txt appendFormat:@"%@\n", t.string];
+        NSMutableString *txt = [NSMutableString string];
+        @try {
+            Class reqCls = NSClassFromString(@"VNRecognizeTextRequest");
+            Class handlerCls = NSClassFromString(@"VNImageRequestHandler");
+            if (reqCls && handlerCls) {
+                id req = [[reqCls alloc] init];
+                [req setValue:@1 forKey:@"recognitionLevel"];                 // VNRequestAccuracyHigh
+                [req setValue:@[@"zh-Hans", @"zh-Hant", @"en-US"] forKey:@"recognitionLanguages"];
+                id handler = [[handlerCls alloc] initWithCGImage:image.CGImage options:@{}];
+                NSError *err = nil;
+                [handler performRequests:@[req] error:&err];
+                NSArray *results = [req valueForKey:@"results"];
+                for (id obs in results) {
+                    NSArray *cands = [obs valueForKey:@"topCandidates"];
+                    NSString *s = [[cands firstObject] valueForKey:@"string"];
+                    if (s.length) [txt appendFormat:@"%@\n", s];
+                }
             }
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (completion) completion(txt.length ? txt : nil);
-            });
-        } else {
-            dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(nil); });
+        } @catch (NSException *e) {
+            NSLog(@"[SN3] OCR failed: %@ %@", e.name, e.reason);
         }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(txt.length ? txt : nil);
+        });
     });
 }
 
