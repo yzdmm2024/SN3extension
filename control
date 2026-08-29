@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.25.3
+Version: 5.25.4
 Architecture: iphoneos-arm64
-Description: [v5.25.3] 修「智谱 API Key 填了也不生效」的键名错配. Common.h 里 XZ_KEY_AI_BASEURL / _KEY / _MODEL / _PROMPT 被定义了两次: 一次指向 BigModel_* (OCR 段), 一次指向 AskAI_* (问 AI 段). C 预处理器取最后一次定义, 结果 OCR 主流程 (SuperTools.ocrViaBigModel) 和设置面板的「粘贴 API Key」「测试连接」两个按钮全都去读 AskAI_APIKey, 而 Root.plist 里用户实际填写的那一栏 key 是 BigModel_APIKey —— 两边对不上, 填了也永远是空的, OCR 只会报「未配置智谱 API Key」, 测试连接也只会报「未配置 API Key」. 修复: 把 OCR 段拆成独立的 XZ_KEY_BM_* 前缀, 与问 AI 段的 XZ_KEY_AI_* 互不干扰; 改 SuperTools.m 与 Snapper3ZhExtPrefs.m 的读取键. 现在只需在「设置→超级截图→识别引擎(智谱 BigModel)」里填 API Key 即可, Base URL 与模型名已有默认值 (https://open.bigmodel.cn/api/paas/v4 + glm-4v-flash, 注册送 2000 万 tokens 永久免费), 填完点「测试连接」可验证。
+Description: [v5.25.4] 修「OCR/翻译/识别结果弹窗被工具栏遮罩挡住看不清」. 工具栏窗口是全屏半透明遮罩(windowLevel=Alert+200), 而 UIAlertController 默认 Alert 层级更低, 导致文字识别结果、翻译结果、识别结果、错误提示都被盖在遮罩下面. 在 Common.present:fromWindow: 与 sn3AlertError 里把弹窗窗口层级抬到宿主窗口之上 (+50), 覆盖 EditToolbarWindow/MaskCropWindow 全部结果弹窗.
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
