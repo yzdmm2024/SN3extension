@@ -32,6 +32,7 @@
     [[self defaults] synchronize];
 }
 
+// v5.23.0: 此方法保留, 供 VisionOCR / 翻译/AskAI 三个 plugin 内部使用. 主 OCR 入口已改走智谱 BigModel, 不依赖此方法.
 + (NSArray<NSString *> *)ocrLanguages {
     id v = [[self defaults] objectForKey:XZ_KEY_OCR_LANGS];
     if ([v isKindOfClass:[NSArray class]] && [v count]) return v;
@@ -84,6 +85,22 @@
                              animations:^{ l.alpha = 0; }
                              completion:^(BOOL f){ [l removeFromSuperview]; }];
         }];
+    });
+}
+
+// v5.23.0: OCR/网络等失败时弹的 alert (不静默, 用户必须看到)
++ (void)sn3AlertError:(NSString *)title message:(NSString *)msg {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *w = [self topWindow];
+        if (!w) return;
+        UIViewController *root = w.rootViewController;
+        while (root.presentedViewController) root = root.presentedViewController;
+        if (!root) return;
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:title
+                                                                    message:msg
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [root presentViewController:a animated:YES completion:nil];
     });
 }
 

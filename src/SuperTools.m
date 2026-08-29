@@ -46,11 +46,6 @@
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
 + (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
-+ (void)ocrVisionChain:(UIImage *)image languages:(NSArray *)langs
-            completion:(void (^)(NSArray<NSDictionary *> *items))completion;   // v5.13
-+ (void)ocrViaBaidu:(UIImage *)image
-         completion:(void (^)(NSArray<NSDictionary *> *items))completion;       // v5.13 百度云端OCR
-+ (NSString *)urlenc:(NSString *)s;                                              // v5.13
 + (UIImage *)bdShrink:(UIImage *)src maxDim:(CGFloat)maxDim;                     // v5.13
 + (void)detectSensitiveRects:(UIImage *)image
                   completion:(void (^)(NSArray<NSValue *> *rects))completion;
@@ -61,8 +56,6 @@
                            rects:(NSArray<NSValue *> *)rects
                            paths:(NSArray<UIBezierPath *> *)paths
                       pathWidths:(NSArray<NSNumber *> *)widths;
-+ (void)runOcrOnce:(UIImage *)image languages:(NSArray *)langs
-        completion:(void (^)(NSArray<NSDictionary *> *items))completion;
 + (UIImage *)gaussianBlurImage:(UIImage *)src radius:(CGFloat)radius;
 @end
 
@@ -96,207 +89,121 @@ static CGRect XZRectFromValue(id v) {
 
 @implementation SuperTools
 
-#pragma mark - 1. OCR（底层：逐行 + 坐标）
+#pragma mark - 1. OCR（v5.23.0 整块重做: 只走智谱 BigModel glm-4v-flash, OpenAI 兼容协议）
 
+// 入口: ocrObservations: → ocrViaBigModel → 失败弹 alert (不静默, 不 fallback)
 // 返回 items: @[ @{@"text":NSString, @"box":NSValue(CGRect 像素坐标)} ]
 + (void)ocrObservations:(UIImage *)image
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    [self ocrObservations:image languages:[Common ocrLanguages] completion:completion];
+    [self ocrObservations:image languages:nil completion:completion];
 }
 
-// v5.10：识别文字总是「静默空结果」的修复。根因多为——语言代码无效 / 中文识别模型
-// 未就绪导致 VNRecognizeTextRequest 一次出 0 条。对策＝候选语言集依次重试：
-//   ① 用户配置的语言（含默认 zh-Hans/zh-Hant/en-US）
-//   ② 中英组合 zh-Hans+en-US（覆盖绝大多数中文/英文截图）
-//   ③ 只 en-US（iOS 内置英文模型最稳，至少能救回英文部分）
-// 直到某套语言出文字为止；每套都空才返回空（此时才提示「未识别到文字」）。
+// languages 参数保留只是为了不破坏旧调用方, v5.23.0 走 BigModel 完全不依赖它
 + (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    if (!image.CGImage) { if (completion) completion(nil); return; }
-
-    // v5.21：OCR 引擎由用户在设置里三选一(默认本地, 0=本地/1=百度/2=大模型).
-    //        每路失败都自动回退到本地（保证零配置也能用）。
-    int engine = [Common intPref:XZ_KEY_OCR_ENGINE default:0];
-    if (engine == 2) {
-        // 强制走大模型(未配/失败 → 回退本地)
-        NSString *bu = [Common stringPref:XZ_KEY_AI_BASEURL default:@""];
-        NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
-        NSString *md  = [Common stringPref:XZ_KEY_AI_MODEL default:@""];
-        if (bu.length && key.length && md.length) {
-            [self ocrViaLLM:image completion:^(NSArray<NSDictionary *> *items) {
-                if (items.count) { if (completion) completion(items); }
-                else { [self ocrVisionChain:image languages:langs completion:completion]; }
-            }];
-            return;
+    if (!image.CGImage) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(nil); });
         }
-        // 配置缺失：toast 提示
-        [Common toast:@"大模型OCR未配置，请先到「AI 提问」填 接口地址/Access Token/模型"];
-    } else if (engine == 1) {
-        // 强制走百度(未配/失败 → 回退本地)
-        NSString *ak = [Common stringPref:XZ_KEY_OCR_BD_APIKEY default:@""];
-        NSString *sk = [Common stringPref:XZ_KEY_OCR_BD_SECRET default:@""];
-        if (ak.length && sk.length) {
-            [self ocrViaBaidu:image completion:^(NSArray<NSDictionary *> *items) {
-                if (items.count) { if (completion) completion(items); }
-                else { [self ocrVisionChain:image languages:langs completion:completion]; }
-            }];
-            return;
-        }
-        [Common toast:@"百度OCR未配置 API Key/Secret Key，已回退本地"];
+        return;
     }
-    // 默认或上述两路失败 → 本地
-    [self ocrVisionChain:image languages:langs completion:completion];
-}
-
-// v5.17：多模态大模型 OCR（免费，OpenAI 兼容接口）。把截图作为图片消息发给模型，取回逐行文字。
-+ (void)ocrViaLLM:(UIImage *)image completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    if (!image.CGImage) { if (completion) completion(nil); return; }
-    NSString *bu = [Common stringPref:XZ_KEY_AI_BASEURL default:@""];
-    NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
-    NSString *md  = [Common stringPref:XZ_KEY_AI_MODEL default:@""];
-    if (!bu.length || !key.length || !md.length) { if (completion) completion(nil); return; }
-
-    UIImage *tiny = [self bdShrink:image maxDim:2048];   // OCR 够用即可，减流量提速度
-    NSData *png = UIImagePNGRepresentation(tiny);
-    if (!png) { if (completion) completion(nil); return; }
-    NSString *b64 = [png base64EncodedStringWithOptions:0];
-    if (!b64.length) { if (completion) completion(nil); return; }
-    NSString *dataURL = [@"data:image/png;base64," stringByAppendingString:b64];
-
-    NSDictionary *pic = @{ @"type": @"image_url",
-                           @"image_url": @{ @"url": dataURL } };
-    NSDictionary *txt = @{ @"type": @"text",
-                           @"text": @"识别这张图片中的全部文字，按原文从上到下逐行输出。只输出识别到的文字，不要任何解释、不要代码块、不要编号、不要翻译。" };
-    NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt, pic ] } ];
-
-    [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
-                  completion:^(NSString *answer, NSString *err) {
+    [self ocrViaBigModel:image completion:^(NSArray<NSDictionary *> *items, NSString *err) {
         if (err.length) {
-            NSLog(@"[SN3] 大模型OCR失败: %@", err);
+            // 失败弹 alert (不静默, 不 fallback, 不回退本地/百度)
             dispatch_async(dispatch_get_main_queue(), ^{
-                [Common toast:[NSString stringWithFormat:@"大模型OCR失败：%@（可改回百度或本地识别）", err]];
+                [Common sn3AlertError:@"OCR 失败" message:err];
             });
-            if (completion) completion(nil);
-            return;
         }
-        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-        NSArray *lines = [answer componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-        for (NSString *ln in lines) {
-            NSString *s = [ln stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if (s.length) [items addObject:@{@"text": s, @"box": [NSValue valueWithCGRect:CGRectZero]}];
-        }
-        if (completion) completion(items.count ? items : nil);
+        if (completion) completion(items);
     }];
 }
 
-// 本地 Vision 多语言重试链（原 ocrObservations 的主体，现作为云端 OCR 的兜底）
-+ (void)ocrVisionChain:(UIImage *)image languages:(NSArray *)langs
-            completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    NSArray *userLangs = (langs.count ? langs : @[@"zh-Hans", @"zh-Hant", @"en-US"]);
-    NSArray *sets = @[ userLangs,
-                       @[@"zh-Hans", @"en-US"],
-                       @[@"en-US"] ];
+// v5.23.0: 智谱 BigModel glm-4v-flash 多模态 OCR
+//   BaseURL  默认 https://open.bigmodel.cn/api/paas/v4
+//   Endpoint /chat/completions
+//   协议     OpenAI 兼容 (messages:[{role:user, content:[{type:text,...},{type:image_url,image_url:{url:data:image/jpeg;base64,...}}]}])
+//   响应     choices[0].message.content (纯文本, 无 markdown 代码块)
+// 失败: 弹 alert 显示原始 error message, 调用方收到 nil items
++ (void)ocrViaBigModel:(UIImage *)image
+            completion:(void (^)(NSArray<NSDictionary *> *items, NSString *err))completion {
+    NSString *bu   = [Common stringPref:XZ_KEY_AI_BASEURL default:@"https://open.bigmodel.cn/api/paas/v4"];
+    NSString *key  = [Common stringPref:XZ_KEY_AI_KEY     default:@""];
+    NSString *md   = [Common stringPref:XZ_KEY_AI_MODEL   default:@"glm-4v-flash"];
+    NSString *pr   = [Common stringPref:XZ_KEY_AI_PROMPT  default:@""];
 
-    __block void (^trySet)(NSArray *, NSInteger);
-    trySet = ^(NSArray *set, NSInteger i) {
-        [self runOcrOnce:image languages:set completion:^(NSArray<NSDictionary *> *items) {
-            if (items.count || i >= (NSInteger)sets.count - 1) {
-                if (completion) completion(items);
-            } else {
-                trySet(sets[i + 1], i + 1);
+    if (!key.length) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"未配置智谱 API Key，请到「设置→超级截图」填写");
+            });
+        }
+        return;
+    }
+
+    // 缩图: 智谱多模态限 4MB, 截全屏可能超, 压到最长边 2048 + JPEG 0.7 一般 200-500KB
+    UIImage *tiny = [self bdShrink:image maxDim:2048];
+    NSData *jpeg = UIImageJPEGRepresentation(tiny, 0.7);
+    if (!jpeg.length) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, @"图像编码失败"); });
+        }
+        return;
+    }
+    NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
+    NSString *dataURL = [@"data:image/jpeg;base64," stringByAppendingString:b64];
+
+    NSString *prompt = pr.length ? pr : @"识别这张图片中的全部文字，按原文从上到下逐行输出。只输出识别到的文字，不要任何解释、不要代码块、不要编号、不要翻译。";
+    NSDictionary *pic = @{ @"type": @"image_url",
+                           @"image_url": @{ @"url": dataURL } };
+    NSDictionary *txt = @{ @"type": @"text", @"text": prompt };
+    NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt, pic ] } ];
+
+    // 复用 AskAIEngine 的 OpenAI 兼容 askMessages: (已支持 BigModel / 智谱)
+    [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
+                  completion:^(NSString *answer, NSString *err) {
+        if (err.length) {
+            NSLog(@"[SN3] BigModel OCR failed: %@", err);
+            if (completion) completion(nil, err);
+            return;
+        }
+        if (!answer.length) {
+            if (completion) completion(nil, @"智谱返回为空（模型未识别到任何文字）");
+            return;
+        }
+        // 清理 markdown 代码块 (```...```) 和多余空行
+        NSString *clean = [self _stripMarkdownCodeBlocks:answer];
+        NSArray *lines = [clean componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+        for (NSString *ln in lines) {
+            NSString *s = [ln stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if (s.length) {
+                [items addObject:@{ @"text": s, @"box": [NSValue valueWithCGRect:CGRectZero] }];
             }
-        }];
-    };
-    trySet(sets[0], 0);
+        }
+        if (!items.count) {
+            if (completion) completion(nil, @"智谱返回为空（模型未识别到任何文字）");
+            return;
+        }
+        if (completion) completion(items, nil);
+    }];
 }
 
-// 运行单次 Vision OCR（languages 传空数组 → 不手动设置，交给 SDK 默认语言，最稳）
-+ (void)runOcrOnce:(UIImage *)image languages:(NSArray *)langs
-        completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    CGFloat pxW = (CGFloat)CGImageGetWidth(image.CGImage);
-    CGFloat pxH = (CGFloat)CGImageGetHeight(image.CGImage);
-
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-        @try {
-            // 显式强引用：block 捕获 CGImageRef 不会自动 retain 宿主 UIImage，
-            // 不写这行 image 可能在后台线程执行前就被释放，CGImageRef 变悬垂指针
-            UIImage *img = image;
-            CGImageRef cg = img.CGImage;
-            if (!cg) {
-                dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(items); });
-                return;
-            }
-
-            Class reqCls = NSClassFromString(@"VNRecognizeTextRequest");
-            Class handlerCls = NSClassFromString(@"VNImageRequestHandler");
-            if (reqCls && handlerCls) {
-                id req = [[reqCls alloc] init];
-                @try {
-                    [req setValue:@(1) forKey:@"recognitionLevel"];                 // VNRequestTextRecognitionLevelAccurate
-                    [req setValue:@(YES) forKey:@"usesLanguageCorrection"];
-                    if (langs.count) [req setValue:langs forKey:@"recognitionLanguages"];
-                } @catch (NSException *e) { /* 老系统不支持的键忽略 */ }
-
-                id handler = [[handlerCls alloc] init];
-                SEL hSel = NSSelectorFromString(@"initWithCGImage:options:");
-                if ([handler respondsToSelector:hSel]) {
-                    handler = ((id (*)(id, SEL, CGImageRef, NSDictionary *))objc_msgSend)(handler, hSel, cg, @{});
-                } else {
-                    handler = nil;
-                }
-                if (handler) {
-                    NSError *err = nil;
-                    SEL pSel = NSSelectorFromString(@"performRequests:error:");
-                    ((BOOL (*)(id, SEL, NSArray *, NSError **))objc_msgSend)(
-                        handler, pSel, [NSArray arrayWithObject:req], &err);
-
-                    NSArray *results = nil;
-                    @try { results = [req valueForKey:@"results"]; } @catch (NSException *e) { results = nil; }
-
-                    for (id obs in results) {
-                        NSString *line = nil;
-                        @try {
-                            NSArray *cands = [obs valueForKey:@"topCandidates"];
-                            // topCandidates 是方法，KVC 取不到；用 msgSend 取前 1 个
-                            if (![cands isKindOfClass:[NSArray class]] || cands.count == 0) {
-                                SEL tc = NSSelectorFromString(@"topCandidates:");
-                                if ([obs respondsToSelector:tc]) {
-                                    cands = ((NSArray *(*)(id, SEL, NSUInteger))objc_msgSend)(obs, tc, 1);
-                                }
-                            }
-                            id cand = [cands isKindOfClass:[NSArray class]] ? cands.firstObject : nil;
-                            if (cand) {
-                                id s = [cand valueForKey:@"string"];
-                                if ([s isKindOfClass:[NSString class]]) line = (NSString *)s;
-                            }
-                        } @catch (NSException *e) { line = nil; }
-
-                        CGRect box = CGRectZero;
-                        @try {
-                            id bv = [obs valueForKey:@"boundingBox"];
-                            if ([bv isKindOfClass:[NSValue class]]) {
-                                CGRect n = [(NSValue *)bv CGRectValue];   // 归一化，原点左下
-                                box = CGRectMake(n.origin.x * pxW,
-                                                 (1.0 - n.origin.y - n.size.height) * pxH,
-                                                 n.size.width * pxW,
-                                                 n.size.height * pxH);
-                            }
-                        } @catch (NSException *e) { box = CGRectZero; }
-
-                        if (line.length) {
-                            [items addObject:@{@"text": line, @"box": [NSValue valueWithCGRect:box]}];
-                        }
-                    }
-                }
-            }
-        } @catch (NSException *e) {
-            NSLog(@"[SN3] OCR exception: %@ %@", e.name, e.reason);
+// 去掉 ```xxx\n...\n``` 代码块包裹 (智谱有时会包)
++ (NSString *)_stripMarkdownCodeBlocks:(NSString *)s {
+    if (![s containsString:@"```"]) return s;
+    NSMutableString *out = [NSMutableString stringWithCapacity:s.length];
+    BOOL inBlock = NO;
+    NSArray *lines = [s componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    for (NSString *ln in lines) {
+        NSString *t = [ln stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([t hasPrefix:@"```"]) {
+            inBlock = !inBlock;
+            continue;
         }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (completion) completion(items);
-        });
-    });
+        if (inBlock) continue;
+        [out appendFormat:@"%@\n", ln];
+    }
+    return [out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 
 + (void)ocr:(UIImage *)image completion:(void (^)(NSString *text))completion {
@@ -365,103 +272,8 @@ static CGRect XZRectFromValue(id v) {
     return out;
 }
 
-// v5.13：百度云端 OCR —— 通用文字识别 general_basic（PaddleOCR 商用免费版）。
-//   step1: APIKey+SecretKey 换 access_token；step2: POST base64 图片。
-//   中文识别远比本地 Vision 强；失败/为空时由上层回退本地 Vision。
-+ (void)ocrViaBaidu:(UIImage *)image completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    if (!image.CGImage) { if (completion) completion(nil); return; }
-    NSString *ak = [Common stringPref:XZ_KEY_OCR_BD_APIKEY default:@""];
-    NSString *sk = [Common stringPref:XZ_KEY_OCR_BD_SECRET default:@""];
-    if (!ak.length || !sk.length) { if (completion) completion(nil); return; }
 
-    NSString *tokUrl = [NSString stringWithFormat:
-                        @"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%@&client_secret=%@",
-                        [self urlenc:ak], [self urlenc:sk]];
-    NSURL *tu = [NSURL URLWithString:tokUrl];
-    if (!tu) { if (completion) completion(nil); return; }
-
-    [[[NSURLSession sharedSession] dataTaskWithURL:tu completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
-        NSString *token = nil;
-        NSString *tokErr = nil;
-        if (e) {
-            tokErr = e.localizedDescription;
-        } else if (d) {
-            id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
-            if ([j isKindOfClass:[NSDictionary class]]) {
-                token = j[@"access_token"];
-                if (!token) {
-                    tokErr = [NSString stringWithFormat:@"%@ %@", j[@"error"] ?: @"", j[@"error_description"] ?: @"apiKey/Secret配对无效"];
-                }
-            } else {
-                tokErr = @"OCR令牌响应无法解析";
-            }
-        }
-        if (!token.length) {
-            NSLog(@"[SN3] 百度OCR获取access_token失败: %@", tokErr ?: @"空返回");
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [Common toast:[NSString stringWithFormat:@"百度OCR配置有误：%@", tokErr ?: @"token获取失败"]];
-            });
-            if (completion) completion(nil);
-            return;
-        }
-
-        UIImage *tiny = [self bdShrink:image maxDim:4096];
-        NSData *png = UIImagePNGRepresentation(tiny);
-        if (!png) { if (completion) completion(nil); return; }
-        NSData *b64d = [png base64EncodedDataWithOptions:0];
-        NSString *b64 = [[NSString alloc] initWithData:b64d encoding:NSUTF8StringEncoding] ?: @"";
-        NSString *body = [@"image=" stringByAppendingString:[self urlenc:b64]];
-
-        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:
-            [NSString stringWithFormat:@"https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=%@",
-             [self urlenc:token]]]];
-        req.HTTPMethod = @"POST";
-        [req setValue:@"application/x-www-form-urlencoded" forHTTPHeaderField:@"Content-Type"];
-        req.HTTPBody = [body dataUsingEncoding:NSUTF8StringEncoding];
-
-        [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d2, NSURLResponse *r2, NSError *e2) {
-            NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-            NSString *apiErr = nil;
-            if (!e2 && d2) {
-                @try {
-                    id j2 = [NSJSONSerialization JSONObjectWithData:d2 options:0 error:nil];
-                    if ([j2 isKindOfClass:[NSDictionary class]]) {
-                        id words = j2[@"words_result"];
-                        if ([words isKindOfClass:[NSArray class]]) {
-                            for (id w in words) {
-                                if ([w isKindOfClass:[NSDictionary class]]) {
-                                    id t = w[@"words"];
-                                    if ([t isKindOfClass:[NSString class]] && [t length])
-                                        [items addObject:@{@"text": (NSString *)t, @"box": [NSValue valueWithCGRect:CGRectZero]}];
-                                }
-                            }
-                        }
-                        id ec = j2[@"error_code"], em = j2[@"error_msg"];
-                        if (ec) apiErr = [NSString stringWithFormat:@"%@ %@", ec, em ?: @""];
-                    }
-                } @catch (NSException *ex) { apiErr = ex.reason; }
-            } else if (e2) {
-                apiErr = e2.localizedDescription;
-            }
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (items.count) { if (completion) completion(items); }
-                else {
-                    if (apiErr.length) {
-                        NSLog(@"[SN3] 百度OCR识别失败: %@", apiErr);
-                        [Common toast:[NSString stringWithFormat:@"百度OCR失败：%@（如未开通服务/无额度，请到设置-API开通里检查）", apiErr]];
-                    }
-                    if (completion) completion(nil);
-                }
-            });
-        }] resume];
-    }] resume];
-}
-
-+ (NSString *)urlenc:(NSString *)s {
-    return [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: @"";
-}
-
-// 等比缩到长边不超过 maxDim，避免百度OCR因图片过大/超长报错
+// 等比缩到长边不超过 maxDim，避免大模型OCR因图片过大/超长报错
 + (UIImage *)bdShrink:(UIImage *)src maxDim:(CGFloat)maxDim {
     CGFloat w = src.size.width, h = src.size.height;
     if (w < 1 || h < 1) return src;

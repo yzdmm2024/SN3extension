@@ -66,38 +66,48 @@
     });
 }
 
-// v5.15：微信输入法等第三方键盘在设置里弹不出来 —— 提供「从剪贴板一键粘贴密钥」，
-//        用户先在备忘录/别处复制好「API Key 和 Secret（换行/逗号/空格分隔）」，点此按钮一键填入。
-//        只复制了一段则填到「百度OCR API Key」，再复制 Secret 再点一次即补上。
-- (void)pasteClipboardKeys:(PSSpecifier *)spec {
+// v5.23.0: 智谱 BigModel API Key 一键粘贴 (单段, 没有 Secret 概念)
+- (void)pasteBigModelKey:(PSSpecifier *)spec {
     NSString *pb = [UIPasteboard generalPasteboard].string ?: @"";
     pb = [pb stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!pb.length) {
-        [self _sn3Alert:@"剪贴板为空" msg:@"请先在别处复制好百度 OCR 的 API Key 和 Secret Key。"];
-        return;
-    }
-    NSCharacterSet *sep = [NSCharacterSet characterSetWithCharactersInString:@"\n,;\t|/ "];
-    NSArray *raw = [pb componentsSeparatedByCharactersInSet:sep];
-    NSMutableArray *toks = [NSMutableArray array];
-    for (NSString *t in raw) {
-        NSString *tt = [t stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (tt.length) [toks addObject:tt];
-    }
-    if (!toks.count) {
-        [self _sn3Alert:@"解析失败" msg:@"剪贴板里没有可用的文本，请确认复制的是 API Key/Secret。"];
+        [self _sn3Alert:@"剪贴板为空" msg:@"请先在别处复制好智谱 BigModel 的 API Key。"];
         return;
     }
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
-    [d setObject:toks[0] forKey:XZ_KEY_OCR_BD_APIKEY];
-    if (toks.count > 1) [d setObject:toks[1] forKey:XZ_KEY_OCR_BD_SECRET];
+    [d setObject:pb forKey:XZ_KEY_AI_KEY];
     [d synchronize];
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                          (CFStringRef)@"com.axs.snapper3zhext.prefsChanged",
                                          NULL, NULL, YES);
-    NSString *msg = toks.count > 1
-        ? @"已填入百度OCR 的 API Key 和 Secret Key。返回主面板即可看到（若仍为空请退出设置重进）。"
-        : @"已填入百度OCR API Key。再来一次、复制 Secret 后点此按钮即可补上第二段。";
-    [self _sn3Alert:@"粘贴完成" msg:msg];
+    [self _sn3Alert:@"粘贴完成" msg:[NSString stringWithFormat:@"已填入 API Key（前 8 位: %@…）。\n返回主面板即可看到。", [pb substringToIndex:MIN(8u, pb.length)]]];
+}
+
+// v5.23.0: 用当前配置打一发最小的 chat 请求验证 Key 是否有效
+- (void)testBigModelConnection:(PSSpecifier *)spec {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+    NSString *bu   = [d stringForKey:XZ_KEY_AI_BASEURL] ?: @"https://open.bigmodel.cn/api/paas/v4";
+    NSString *key  = [d stringForKey:XZ_KEY_AI_KEY]     ?: @"";
+    NSString *md   = [d stringForKey:XZ_KEY_AI_MODEL]   ?: @"glm-4v-flash";
+    if (!key.length) {
+        [self _sn3Alert:@"未配置 API Key" msg:@"请先在「API Key」项填写（也可点「从剪贴板粘贴」按钮一键填入）。"];
+        return;
+    }
+    [self _sn3Alert:@"测试中" msg:@"正在用当前配置打一发请求，请稍候 3-5 秒…"];
+
+    NSDictionary *txt = @{ @"type": @"text", @"text": @"ping, reply with one word: pong" };
+    NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt ] } ];
+
+    [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
+                  completion:^(NSString *answer, NSString *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (err.length) {
+                [self _sn3Alert:@"✗ 连接失败" msg:err];
+            } else {
+                [self _sn3Alert:@"✓ 连接成功" msg:[NSString stringWithFormat:@"模型 %@ 返回:\n\n%@", md, answer ?: @"(空)"]];
+            }
+        });
+    }];
 }
 
 - (void)_sn3Alert:(NSString *)title msg:(NSString *)msg {
@@ -122,13 +132,7 @@
 
     NSMutableArray *specs = [NSMutableArray array];
 
-    PSSpecifier *gOcr = [PSSpecifier groupSpecifierWithName:@"百度智能云 · 文字识别 (PaddleOCR)"];
-    [specs addObject:gOcr];
-    [specs addObject:[self urlCell:@"打开 OCR 开通/控制台页"
-                               url:@"https://console.bce.baidu.com/ai/#/ai/ocr/overview/index"]];
-    [specs addObject:[self urlCell:@"打开 OCR API 说明文档"
-                               url:@"https://cloud.baidu.com/doc/OCR/s/ik3h7y3db"]];
-
+    // v5.23.0: 砍掉百度 OCR 段 (不再支持), 保留翻译段, AI Studio 段改为智谱 BigModel
     PSSpecifier *gTr = [PSSpecifier groupSpecifierWithName:@"百度翻译开放平台"];
     [specs addObject:gTr];
     [specs addObject:[self urlCell:@"打开 翻译平台首页（通用文本翻译）"
@@ -136,17 +140,14 @@
     [specs addObject:[self urlCell:@"打开 翻译开发者管理/控制台"
                                url:@"https://fanyi-api.baidu.com/manage/developer"]];
 
-    // v5.21：AI Studio / 其它平台（OCR/翻译/多模态模型，自带 access token）
-    PSSpecifier *gAI = [PSSpecifier groupSpecifierWithName:@"AI Studio / 其它大模型(免费/自带 access token)"];
-    [specs addObject:gAI];
-    [specs addObject:[self urlCell:@"打开 百度 AI Studio · Access Token 页"
-                               url:@"https://aistudio.baidu.com/account/accessToken"]];
-    [specs addObject:[self urlCell:@"打开 百度 AI Studio · 模型库(选多模态模型,如 ERNIE-4.5-VL 等)"
-                               url:@"https://aistudio.baidu.com/modeloverview/list"]];
-    [specs addObject:[self urlCell:@"打开 火山方舟·API 控制台(豆包等)"
-                               url:@"https://www.volcengine.com/product/doubao"]];
-    [specs addObject:[self urlCell:@"打开 阿里云·百炼(通义千问 Qwen-VL 等)"
-                               url:@"https://bailian.console.aliyun.com/"]];
+    PSSpecifier *gBM = [PSSpecifier groupSpecifierWithName:@"智谱 BigModel (glm-4v-flash, 永久免费额度)"];
+    [specs addObject:gBM];
+    [specs addObject:[self urlCell:@"打开 智谱 BigModel 控制台 (拿 API Key)"
+                               url:@"https://bigmodel.cn/usercenter/apikeys"]];
+    [specs addObject:[self urlCell:@"打开 智谱 BigModel · 模型广场 (选多模态模型)"
+                               url:@"https://bigmodel.cn/console/modelsquare"]];
+    [specs addObject:[self urlCell:@"打开 智谱 BigModel · 文档 (OpenAI 兼容协议说明)"
+                               url:@"https://bigmodel.cn/dev/api/normal-model/glm-4v"]];
 
     self.specifiers = specs;
 }

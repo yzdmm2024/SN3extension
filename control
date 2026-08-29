@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.22.2
+Version: 5.23.0
 Architecture: iphoneos-arm64
-Description: [v5.22.2] ①修 v5.22.1 设置面板空白的真凶: Root.plist「识别引擎」分组 PSGroupCell 的 footerText 缺 <string> 节点(我之前 Edit 改 OCR 段时只写了 <key>footerText</key> 没接值), plist 解析到那行抛错, 整 panel 跳空 → iOS 显示无任何设置项. 已补 footerText 文字+plistlib 解析验证通过. ②同 v5.22.1: 弹窗宿主从 _panelWin 改 _win 修"知道了"按不动.
+Description: [v5.23.0] OCR 整块重做, 砍掉百度 OCR / Apple Vision / AI Studio 三档引擎选择, 只保留智谱 BigModel glm-4v-flash (OpenAI 兼容协议). ①Common.h 删 OCR_Engine/百度键, 新增 BigModel_BaseURL/Key/Model/Prompt. ②SuperTools.m 删 ocrVisionChain/ocrViaBaidu/ocrViaLLM 三档分支, 新增 ocrViaBigModel 单路, 失败弹 alert 不静默不fallback. ③Root.plist 删 PSSegmentCell识别引擎/百度双Key/AI Studio链接/LLM_OCR开关, 增 BaseURL/Key/Model/Prompt 输入+粘贴按钮+测试连接按钮. ④SN3LinksController 删百度OCR段, AI Studio 段改为智谱 BigModel 段. ⑤新 Common.h/m 加 sn3AlertError: 弹 alert 工具. 智谱注册送 2000 万 tokens 永久免费, 截图 OCR 个人用不完.
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

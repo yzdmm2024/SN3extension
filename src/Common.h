@@ -12,12 +12,13 @@
 #define XZ_KEY_MENU_ENABLED     @"Menu_Enabled"
 
 // 各插件开关
-#define XZ_KEY_OCR_ENABLED      @"OCR_Enabled"
-#define XZ_KEY_OCR_LANGS        @"OCR_Languages"
-#define XZ_KEY_OCR_BD_APIKEY    @"OCR_Baidu_APIKey"       // v5.13：百度OCR(文字识别) 密钥（须与密钥成对填写才启用云端OCR）
-#define XZ_KEY_OCR_BD_SECRET    @"OCR_Baidu_SecretKey"
-#define XZ_KEY_LLM_OCR_ENABLED  @"LLM_OCR_Enabled"        // v5.17：用「AI 提问」里的多模态大模型(大模型OCR/豆包等)做免费OCR
-#define XZ_KEY_OCR_ENGINE       @"OCR_Engine"             // v5.21：OCR 引擎选择(0=本地/1=百度/2=大模型), UI 用 PSSegmentCell, 0=默认
+// v5.23.0: OCR 整块重做, 砍掉百度/本地/Vision, 只走智谱 BigModel glm-4v-flash (OpenAI 兼容协议)
+#define XZ_KEY_AI_BASEURL       @"BigModel_BaseURL"      // 默认 https://open.bigmodel.cn/api/paas/v4
+#define XZ_KEY_AI_KEY           @"BigModel_APIKey"       // 智谱 API Key
+#define XZ_KEY_AI_MODEL         @"BigModel_Model"        // 默认 glm-4v-flash
+#define XZ_KEY_AI_PROMPT        @"BigModel_Prompt"       // 提示词 (可选, 默认「识别图中所有文字」)
+// 旧键保留, 仅供 VisionOCR / 翻译/AskAI 三个 plugin 内部使用
+#define XZ_KEY_OCR_LANGS        @"OCR_Languages"         // v5.23.0 保留, 供 VisionOCR 类内部读取
 #define XZ_KEY_TB_ORDER         @"Toolbar_Order"         // v5.18：工具栏按钮顺序(逗号分隔的tag)
 #define XZ_KEY_TB_DISABLED      @"Toolbar_Disabled"      // v5.18：工具栏禁用的按钮(逗号分隔的tag)
 #define XZ_KEY_TB_LAYOUT        @"Toolbar_Layout"        // v5.18：工具栏布局 — 0=双排(默认), 1=单排滑动
@@ -44,9 +45,10 @@
 + (NSString *)stringPref:(NSString *)key default:(NSString *)def;
 + (int)intPref:(NSString *)key default:(int)def;       // v5.18
 + (void)setPref:(NSString *)key value:(id)value;
-+ (NSArray<NSString *> *)ocrLanguages;      // 从偏好读取，默认 zh-Hans/zh-Hant/en-US
++ (NSArray<NSString *> *)ocrLanguages;   // 供 VisionOCR / 翻译/AskAI 三个 plugin 读取识别语言 (v5.23.0 主 OCR 走 BigModel, 此方法保留为 plugin 内部使用)
 + (UIImage *)systemIcon:(NSString *)name;   // SF Symbol 渲染成 UIImage（iOS>=13）
 + (void)toast:(NSString *)msg;              // 顶部轻量提示
++ (void)sn3AlertError:(NSString *)title message:(NSString *)msg;  // v5.23.0: 弹 alert 提示 (不静默, 用户必须看到)
 + (UIColor *)accentColor;
 + (UIWindow *)topWindow;
 + (UIWindowScene *)activeWindowScene;   // iOS 13+：弹窗必须挂到 scene 才能显示

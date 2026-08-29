@@ -30,136 +30,98 @@
 				<key>cell</key>
 				<string>PSGroupCell</string>
 				<key>footerText</key>
-				<string>默认走本地 Apple Vision 识别(免费离线)。需要更高准确度可切到「百度 OCR(PaddleOCR, 需 API Key/Secret)」或「AI Studio/豆包/通义千问 等大模型(免费, 需自备 access token / API key)」。</string>
+				<string>v5.23.0: 整块重做, 只走智谱 BigModel glm-4v-flash (OpenAI 兼容协议)。注册智谱送 2000 万 tokens 永久免费额度, 个人截图 OCR 用不完。需登录 bigmodel.cn 控制台拿 API Key, 填到下面「API Key」项即可。未配置或网络失败时弹 alert 提示, 不静默, 不回退本地 Vision。</string>
 				<key>label</key>
-				<string>识别引擎</string>
+				<string>识别引擎（智谱 BigModel）</string>
 			</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSSegmentCell</string>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>OCR_Engine</string>
-			<key>label</key>
-			<string>OCR 引擎（默认本地）</string>
-			<key>validTitles</key>
-			<array>
-				<string>本地</string>
-				<string>百度</string>
-				<string>大模型</string>
-			</array>
-			<key>default</key>
-			<integer>0</integer>
-		</dict>
+				<key>PostNotification</key>
+				<string>com.axs.snapper3zhext.prefsChanged</string>
+				<key>cell</key>
+				<string>PSEditTextCell</string>
+				<key>default</key>
+				<string>https://open.bigmodel.cn/api/paas/v4</string>
+				<key>defaults</key>
+				<string>com.axs.snapper3zhext</string>
+				<key>key</key>
+				<string>BigModel_BaseURL</string>
+				<key>label</key>
+				<string>Base URL</string>
+				<key>placeholder</key>
+				<string>https://open.bigmodel.cn/api/paas/v4</string>
+			</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>默认走本地 Apple Vision 识别 (离线免费)，不满意时可切到「百度 OCR(PaddleOCR, 准确率高, 需配 API Key/Secret)」或「AI Studio/豆包/通义千问 等大模型 (免费, 需自备 access token / API key)。</string>
-			<key>label</key>
-			<string>识别语言 / 百度云端 Key（仅当上面选了「百度」才需要）</string>
-		</dict>
+				<key>PostNotification</key>
+				<string>com.axs.snapper3zhext.prefsChanged</string>
+				<key>cell</key>
+				<string>PSSecureEditTextCell</string>
+				<key>defaults</key>
+				<string>com.axs.snapper3zhext</string>
+				<key>key</key>
+				<string>BigModel_APIKey</string>
+				<key>label</key>
+				<string>API Key</string>
+				<key>placeholder</key>
+				<string>智谱 API Key (注册即送永久免费额度)</string>
+			</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>OCR_Enabled</string>
-			<key>label</key>
-			<string>启用 OCR</string>
-		</dict>
+				<key>PostNotification</key>
+				<string>com.axs.snapper3zhext.prefsChanged</string>
+				<key>cell</key>
+				<string>PSEditTextCell</string>
+				<key>default</key>
+				<string>glm-4v-flash</string>
+				<key>defaults</key>
+				<string>com.axs.snapper3zhext</string>
+				<key>key</key>
+				<string>BigModel_Model</string>
+				<key>label</key>
+				<string>模型名</string>
+				<key>placeholder</key>
+				<string>glm-4v-flash</string>
+			</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSEditTextCell</string>
-			<key>default</key>
-			<string>zh-Hans,zh-Hant,en-US</string>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>OCR_Languages</string>
-			<key>label</key>
-			<string>识别语言</string>
-			<key>placeholder</key>
-			<string>zh-Hans,zh-Hant,en-US</string>
-		</dict>
+				<key>PostNotification</key>
+				<string>com.axs.snapper3zhext.prefsChanged</string>
+				<key>cell</key>
+				<string>PSEditTextCell</string>
+				<key>defaults</key>
+				<string>com.axs.snapper3zhext</string>
+				<key>key</key>
+				<string>BigModel_Prompt</string>
+				<key>label</key>
+				<string>提示词（可改）</string>
+				<key>placeholder</key>
+				<string>留空用默认：识别图中所有文字按原文逐行输出</string>
+			</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSEditTextCell</string>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>OCR_Baidu_APIKey</string>
-			<key>label</key>
-			<string>百度OCR API Key</string>
-			<key>placeholder</key>
-			<string>需与Secret成对填写才启用云端</string>
-		</dict>
+				<key>action</key>
+				<string>pasteBigModelKey</string>
+				<key>cell</key>
+				<string>PSButtonCell</string>
+				<key>label</key>
+				<string>    从剪贴板粘贴 API Key（微信输入法弹不出时用）</string>
+			</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSSecureEditTextCell</string>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>OCR_Baidu_SecretKey</string>
-			<key>label</key>
-			<string>百度OCR Secret Key</string>
-			<key>placeholder</key>
-			<string>百度智能云应用密钥</string>
-		</dict>
+				<key>action</key>
+				<string>testBigModelConnection</string>
+				<key>cell</key>
+				<string>PSButtonCell</string>
+				<key>label</key>
+				<string>    测试连接（点此用当前配置打一发请求验证 Key 是否有效）</string>
+			</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>SN3LinksController</string>
-			<key>isController</key>
-			<true/>
-			<key>label</key>
-			<string>打开 AI Studio Access Token 页</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>LLM_OCR_Enabled</string>
-			<key>label</key>
-			<string>大模型OCR(同上「AI 提问」段,免费)</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>免费方案：打开「大模型OCR」开关，并到下方「AI 提问」段填好 接口地址/APIKey(令牌)/模型名 —— 用你自己的 AI Studio(火山方舟/豆包等)多模态模型识别文字，不用百度付费。若没填或失败，自动回退本地Vision。</string>
-			<key>label</key>
-			<string>免费 Ocr 大模型（不用百度）</string>
-		</dict>
-		<dict>
-			<key>action</key>
-			<string>pasteClipboardKeys</string>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>    从剪贴板一键粘贴密钥（微信输入法弹不出时用）</string>
-		</dict>
+				<key>PostNotification</key>
+				<string>com.axs.snapper3zhext.prefsChanged</string>
+				<key>cell</key>
+				<string>PSLinkCell</string>
+				<key>detail</key>
+				<string>SN3LinksController</string>
+				<key>isController</key>
+				<true/>
+				<key>label</key>
+				<string>打开 智谱 BigModel API Key 申请页</string>
+			</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
