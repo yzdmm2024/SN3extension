@@ -27,106 +27,104 @@
 			<string>启用浮动菜单</string>
 		</dict>
 		<dict>
-				<key>cell</key>
-				<string>PSGroupCell</string>
-				<key>footerText</key>
-				<string>v5.23.0: 整块重做, 只走智谱 BigModel glm-4v-flash (OpenAI 兼容协议)。注册智谱送 2000 万 tokens 永久免费额度, 个人截图 OCR 用不完。需登录 bigmodel.cn 控制台拿 API Key, 填到下面「API Key」项即可。未配置或网络失败时弹 alert 提示, 不静默, 不回退本地 Vision。</string>
-				<key>label</key>
-				<string>识别引擎（智谱 BigModel）</string>
-			</dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>v5.23.0: 整块重做, 只走智谱 BigModel glm-4v-flash (OpenAI 兼容协议)。注册智谱送 2000 万 tokens 永久免费额度, 个人截图 OCR 用不完。需登录 bigmodel.cn 控制台拿 API Key, 填到下面「API Key」项即可。未配置或网络失败时弹 alert 提示, 不静默, 不回退本地 Vision。</string>
+			<key>label</key>
+			<string>识别引擎（智谱 BigModel）</string>
+		</dict>
 		<dict>
-				<key>PostNotification</key>
-				<string>com.axs.snapper3zhext.prefsChanged</string>
-				<key>cell</key>
-				<string>PSEditTextCell</string>
-				<key>default</key>
-				<string>https://open.bigmodel.cn/api/paas/v4</string>
-				<key>defaults</key>
-				<string>com.axs.snapper3zhext</string>
-				<key>key</key>
-				<string>BigModel_BaseURL</string>
-				<key>label</key>
-				<string>Base URL</string>
-				<key>placeholder</key>
-				<string>https://open.bigmodel.cn/api/paas/v4</string>
-			</dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>https://open.bigmodel.cn/api/paas/v4</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>BigModel_BaseURL</string>
+			<key>label</key>
+			<string>Base URL</string>
+			<key>placeholder</key>
+			<string>https://open.bigmodel.cn/api/paas/v4</string>
+		</dict>
 		<dict>
-				<key>PostNotification</key>
-				<string>com.axs.snapper3zhext.prefsChanged</string>
-				<key>cell</key>
-				<string>PSSecureEditTextCell</string>
-				<key>defaults</key>
-				<string>com.axs.snapper3zhext</string>
-				<key>key</key>
-				<string>BigModel_APIKey</string>
-				<key>label</key>
-				<string>API Key</string>
-				<key>placeholder</key>
-				<string>智谱 API Key (注册即送永久免费额度)</string>
-			</dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSecureEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>BigModel_APIKey</string>
+			<key>label</key>
+			<string>API Key</string>
+			<key>placeholder</key>
+			<string>智谱 API Key (注册即送永久免费额度)</string>
+		</dict>
 		<dict>
-				<key>PostNotification</key>
-				<string>com.axs.snapper3zhext.prefsChanged</string>
-				<key>cell</key>
-				<string>PSEditTextCell</string>
-				<key>default</key>
-				<string>glm-4v-flash</string>
-				<key>defaults</key>
-				<string>com.axs.snapper3zhext</string>
-				<key>key</key>
-				<string>BigModel_Model</string>
-				<key>label</key>
-				<string>模型名</string>
-				<key>placeholder</key>
-				<string>glm-4v-flash</string>
-			</dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>glm-4v-flash</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>BigModel_Model</string>
+			<key>label</key>
+			<string>模型名</string>
+			<key>placeholder</key>
+			<string>glm-4v-flash</string>
+		</dict>
 		<dict>
-				<key>PostNotification</key>
-				<string>com.axs.snapper3zhext.prefsChanged</string>
-				<key>cell</key>
-				<string>PSEditTextCell</string>
-				<key>defaults</key>
-				<string>com.axs.snapper3zhext</string>
-				<key>key</key>
-				<string>BigModel_Prompt</string>
-				<key>label</key>
-				<string>提示词（可改）</string>
-				<key>placeholder</key>
-				<string>留空用默认：识别图中所有文字按原文逐行输出</string>
-			</dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>BigModel_Prompt</string>
+			<key>label</key>
+			<string>提示词（可改）</string>
+			<key>placeholder</key>
+			<string>留空用默认：识别图中所有文字按原文逐行输出</string>
+		</dict>
 		<dict>
-				<key>action</key>
-				<string>pasteBigModelKey</string>
-				<key>cell</key>
-				<string>PSButtonCell</string>
-				<key>label</key>
-				<string>    从剪贴板粘贴 API Key（微信输入法弹不出时用）</string>
-			</dict>
+			<key>action</key>
+			<string>pasteBigModelKey</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    从剪贴板粘贴 API Key（微信输入法弹不出时用）</string>
+		</dict>
 		<dict>
-				<key>action</key>
-				<string>testBigModelConnection</string>
-				<key>cell</key>
-				<string>PSButtonCell</string>
-				<key>label</key>
-				<string>    测试连接（点此用当前配置打一发请求验证 Key 是否有效）</string>
-			</dict>
+			<key>action</key>
+			<string>testBigModelConnection</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    测试连接（点此用当前配置打一发请求验证 Key 是否有效）</string>
+		</dict>
 		<dict>
-				<key>PostNotification</key>
-				<string>com.axs.snapper3zhext.prefsChanged</string>
-				<key>cell</key>
-				<string>PSLinkCell</string>
-				<key>detail</key>
-				<string>SN3LinksController</string>
-				<key>isController</key>
-				<true/>
-				<key>label</key>
-				<string>打开 智谱 BigModel API Key 申请页</string>
-			</dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>SN3LinksController</string>
+			<key>label</key>
+			<string>打开 智谱 BigModel API Key 申请页</string>
+		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>OCR 用「百度智能云·文字识别(PaddleOCR)」，翻译用「百度翻译开放平台」；两者都提供免费额度。点下方直接打开对应开通页。</string>
+			<string>OCR 用智谱 BigModel glm-4v-flash，翻译用百度翻译开放平台。点下方直接打开对应申请页。</string>
 			<key>label</key>
 			<string>API 开通与申请</string>
 		</dict>
@@ -135,8 +133,6 @@
 			<string>PSLinkCell</string>
 			<key>detail</key>
 			<string>SN3LinksController</string>
-			<key>isController</key>
-			<true/>
 			<key>label</key>
 			<string>打开 API 开通页面</string>
 		</dict>
