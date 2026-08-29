@@ -150,7 +150,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         _cropRect = CGRectZero;
         _hasCrop = NO;
         _capturing = NO;
-        _lsAlgo = 0;                // v5.4：默认自动滚动模式（驱动 App 滚动）
+        _lsAlgo = 1;                // v5.16：默认自动(SAD)模式 —— 打开长截图即可滑动采集，免预设
     }
     return self;
 }
@@ -316,7 +316,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     _entryTile = nil;
     _lastAddedTile = nil;
     if (_lsActive) { _lsActive = NO; [self stopLsWatchdog]; notify_post(SN3_LS_DISARM); }
-    _lsAlgo = 0;               // v5.4：退出长截图复位为自动滚动模式
+    _lsAlgo = 1;               // v5.16：退出长截图复位为自动(SAD)模式（打开即采集）
     _modeToggleBtn = nil;      // v5.2
     _nextBtn = nil;            // v5.2
     _startBtn = nil;           // v5.3

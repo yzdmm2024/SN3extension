@@ -19,9 +19,10 @@
 // v5.15：从其他 app 切回设置后偶发空白 —— 兜底重建（object 还在但 specifiers 被清空/未重载时）
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    if (!self.specifiers || self.specifiers.count == 0) {
-        self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-    }
+    // v5.16：从其它 app 切回设置时 PSListController 常不自刷新/被清空导致整页白屏。
+    //        本页每次回到前台都从 Root.plist 重建 specifiers，保证一定有内容；
+    //        各输入框的值存在 defaults，重建会自动回填，不会丢失已填的密钥。
+    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
 }
 
 // v5.15：微信输入法等第三方键盘在设置里弹不出来 —— 提供「从剪贴板一键粘贴密钥」，
@@ -68,12 +69,9 @@
 
 @end
 
-// v5.14：API 开通页面 —— 点击行直接打开 Safari 到「百度智能云·文字识别(OCR)」与「百度翻译开放平台」。
-//         不用 PSListController 未公开的 specifierForIndexPath:（会导致编译失败），
-//         直接按 (section,row) 从实例变量二维数组映射 URL，稳定可靠。
-@interface SN3LinksController : PSListController {
-    NSArray *_sectionURLs;   // [section][row] → url
-}
+// v5.16：API 开通页面 —— 用 PSButtonCell（带 buttonAction），点行直接打开 Safari。
+//         PSLinkCell 无 detail 时会被渲染成灰色禁用、点了没反应，这里改用可点的按钮行。
+@interface SN3LinksController : PSListController
 @end
 
 @implementation SN3LinksController
@@ -98,14 +96,6 @@
                                url:@"https://fanyi-api.baidu.com/manage/developer"]];
 
     self.specifiers = specs;
-
-    // 与上面的 group 顺序严格一致：[0]=OCR、[1]=翻译，每组内按行序对应 URL。
-    _sectionURLs = @[
-        @[ @"https://console.bce.baidu.com/ai/#/ai/ocr/overview/index",
-           @"https://cloud.baidu.com/doc/OCR/s/ik3h7y3db" ],
-        @[ @"https://fanyi-api.baidu.com/",
-           @"https://fanyi-api.baidu.com/manage/developer" ],
-    ];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -115,21 +105,24 @@
 
 - (PSSpecifier *)urlCell:(NSString *)label url:(NSString *)url {
     PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label
-                                                    target:nil
+                                                    target:self
                                                        set:NULL
                                                        get:NULL
                                                     detail:nil
-                                                      cell:PSLinkCell
+                                                      cell:PSButtonCell
                                                       edit:nil];
     [s setProperty:url forKey:@"url"];
+    [s setButtonAction:@selector(openLink:)];
     return s;
 }
 
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    NSArray *rowURLs = (_sectionURLs.count > (NSUInteger)indexPath.section)
-                        ? _sectionURLs[indexPath.section] : nil;
-    NSString *url = (rowURLs.count > (NSUInteger)indexPath.row) ? rowURLs[indexPath.row] : nil;
+- (void)openLink:(id)sender {
+    // 不同 iOS 版本点击回调传的可能是 PSSpecifier，也可能是承载它的 cell，做兼容取 specifier。
+    id spec = sender;
+    if (![spec isKindOfClass:[PSSpecifier class]] && [spec respondsToSelector:@selector(specifier)]) {
+        spec = [spec specifier];
+    }
+    NSString *url = [spec isKindOfClass:[PSSpecifier class]] ? [spec propertyForKey:@"url"] : nil;
     if ([url isKindOfClass:[NSString class]] && url.length) {
         NSURL *u = [NSURL URLWithString:url];
         if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];

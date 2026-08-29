@@ -13,9 +13,9 @@
 		<key>isController</key>
 		<true/>
 		<key>icon</key>
-		<string>Snapper3ZhExtPrefs.bundle/icon.png</string>
-		<key>label</key>
-		<string>SN3延伸板</string>
+			<string>Snapper3ZhExtPrefs.bundle/icon.png</string>
+			<key>label</key>
+			<string>超级截图</string>
 	</dict>
 </dict>
 </plist>
