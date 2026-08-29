@@ -17,8 +17,12 @@
 
 @end
 
-// v5.13：API 开通页面 —— 点击行直接打开 Safari 到「百度智能云·文字识别(OCR)」与「百度翻译开放平台」。
-@interface SN3LinksController : PSListController
+// v5.14：API 开通页面 —— 点击行直接打开 Safari 到「百度智能云·文字识别(OCR)」与「百度翻译开放平台」。
+//         不用 PSListController 未公开的 specifierForIndexPath:（会导致编译失败），
+//         直接按 (section,row) 从实例变量二维数组映射 URL，稳定可靠。
+@interface SN3LinksController : PSListController {
+    NSArray *_sectionURLs;   // [section][row] → url
+}
 @end
 
 @implementation SN3LinksController
@@ -43,6 +47,14 @@
                                url:@"https://fanyi-api.baidu.com/manage/developer"]];
 
     self.specifiers = specs;
+
+    // 与上面的 group 顺序严格一致：[0]=OCR、[1]=翻译，每组内按行序对应 URL。
+    _sectionURLs = @[
+        @[ @"https://console.bce.baidu.com/ai/#/ai/ocr/overview/index",
+           @"https://cloud.baidu.com/doc/OCR/s/ik3h7y3db" ],
+        @[ @"https://fanyi-api.baidu.com/",
+           @"https://fanyi-api.baidu.com/manage/developer" ],
+    ];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -64,8 +76,9 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    PSSpecifier *spec = [self specifierForIndexPath:indexPath];
-    NSString *url = [spec propertyForKey:@"url"];
+    NSArray *rowURLs = (_sectionURLs.count > (NSUInteger)indexPath.section)
+                        ? _sectionURLs[indexPath.section] : nil;
+    NSString *url = (rowURLs.count > (NSUInteger)indexPath.row) ? rowURLs[indexPath.row] : nil;
     if ([url isKindOfClass:[NSString class]] && url.length) {
         NSURL *u = [NSURL URLWithString:url];
         if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
