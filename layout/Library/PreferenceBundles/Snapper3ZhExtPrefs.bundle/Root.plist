@@ -30,10 +30,37 @@
 				<key>cell</key>
 				<string>PSGroupCell</string>
 				<key>footerText</key>
-				<string>默认用本地 Vision 识别（离线、无需密钥）。想更准中文识别可填下方百度智能云「通用文字识别」API Key/Secret Key，成对填写后自动优先走云端OCR，失败再回退本地。</string>
 				<key>label</key>
-				<string>文字识别 (OCR)</string>
+				<string>识别引擎</string>
 			</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>OCR_Engine</string>
+			<key>label</key>
+			<string>OCR 引擎（默认本地）</string>
+			<key>validTitles</key>
+			<array>
+				<string>本地</string>
+				<string>百度</string>
+				<string>大模型</string>
+			</array>
+			<key>default</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>默认走本地 Apple Vision 识别 (离线免费)，不满意时可切到「百度 OCR(PaddleOCR, 准确率高, 需配 API Key/Secret)」或「AI Studio/豆包/通义千问 等大模型 (免费, 需自备 access token / API key)。</string>
+			<key>label</key>
+			<string>识别语言 / 百度云端 Key（仅当上面选了「百度」才需要）</string>
+		</dict>
 		<dict>
 			<key>PostNotification</key>
 			<string>com.axs.snapper3zhext.prefsChanged</string>
@@ -91,34 +118,6 @@
 			<string>百度OCR Secret Key</string>
 			<key>placeholder</key>
 			<string>百度智能云应用密钥</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>默认走本地 Apple Vision 识别 (离线免费)，不满意时可切到「百度 OCR(PaddleOCR, 准确率高, 需配 API Key/Secret)」或「AI Studio/豆包/通义千问 等大模型 (免费, 需自备 access token / API key)」。</string>
-			<key>label</key>
-			<string>OCR 引擎</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSSegmentCell</string>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>OCR_Engine</string>
-			<key>label</key>
-			<string>识别引擎</string>
-			<key>validTitles</key>
-			<array>
-				<string>本地</string>
-				<string>百度</string>
-				<string>大模型</string>
-			</array>
-			<key>default</key>
-			<integer>0</integer>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -444,19 +443,32 @@
 			<key>label</key>
 			<string>工具栏</string>
 		</dict>
-		<!-- v5.20: SN3ToolbarController 暂时从 plist 移除, 避免 Preferences 载入时崩溃;
-		     用列表里的 PSSwitchCell 「工具栏-单排滑动显示」+「工具栏-显示OCR/翻译/...」做精简版. -->
 		<dict>
 			<key>PostNotification</key>
 			<string>com.axs.snapper3zhext.prefsChanged</string>
 			<key>cell</key>
-			<string>PSSwitchCell</string>
+			<string>PSSegmentCell</string>
 			<key>defaults</key>
 			<string>com.axs.snapper3zhext</string>
 			<key>key</key>
 			<string>Toolbar_Layout</string>
 			<key>label</key>
-			<string>单排滑动显示</string>
+			<string>工具栏布局</string>
+			<key>validTitles</key>
+			<array>
+				<string>双排</string>
+				<string>单排滑动</string>
+			</array>
+			<key>default</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>单排滑动：所有按钮横排放在 UIScrollView 里，菜单可以左右循环滑到底。设置保存后下次打开局部截图自动生效。</string>
+			<key>label</key>
+			<string>说明</string>
 		</dict>
 	</array>
 	<key>title</key>

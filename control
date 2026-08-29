@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.21
+Version: 5.22.1
 Architecture: iphoneos-arm64
-Description: [v5.21] ①OCR 引擎三选一: 设置→OCR 引擎(本地/百度/大模型), 顶部 PSSegmentCell 切换, 配置缺失 toast 提示. ②SN3LinksController 新增 AI Studio Access Token + 模型库 + 火山方舟 + 阿里百炼入口(用户说"还是百度的"指 OCR 引擎这里之前没有显式选择). ③局部截图面板: 单排滑动=开 → UIScrollView 横向, 末尾接回开头循环(KVO 监听 contentOffset 跳变), 实时读偏好不用重启. ④kHandleHit 22→30, 四边四角手柄命中更宽松. ⑤框选+画新框重选逻辑原本就有, 验证.
+Description: [v5.22.1] ①翻译失败/识别结果/分享/复制弹窗的宿主从 `(_panelWin ?: _win)` 改为 `_win` —— `_panelWin` 是 XZPassThroughWindow(hit-test 穿透), 把 alert/share sheet 挂上去按钮 touch 会穿到下层 App, 表现为「知道了」按不动. OCR 段顺序、PSSegmentCell 单排段控同 v5.22.
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

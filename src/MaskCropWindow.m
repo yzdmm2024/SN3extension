@@ -771,6 +771,9 @@ static int SN3_LoopKVOContext = 0;
             _hasCrop = YES;
             _didDrawSelection = YES;
         }
+        NSLog(@"[SN3] handleCropPan begin loc=(%.1f,%.1f) sel=%d rect=%@ drag=%@ panel=%d",
+              loc.x, loc.y, [self hasSelection], NSStringFromCGRect(_cropRect),
+              @(_drag), _editingPanel ? 1 : 0);
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         if (_drag == XZDragDraw) {
             CGFloat x = MIN(_panStart.x, loc.x);
@@ -1309,6 +1312,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     // v5.21：单排滑动模式（设置→工具栏→单排滑动显示=开）：所有按钮塞一个 UIScrollView
     //         横向滚动, 末尾接回开头循环. 实时读偏好, 不需重启App.
     BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
+    NSLog(@"[SN3] buildLocalPanel layout: Toolbar_Layout=%d → singleRow=%d",
+          [Common intPref:XZ_KEY_TB_LAYOUT default:0], singleRow ? 1 : 0);
 
     CGFloat panelH = singleRow ? (vPad * 2 + rowH) : (vPad * 2 + rowH * 2 + rowGap);
 
@@ -1491,7 +1496,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
             [self dismiss];
         }];
     } else if (tag == XZLocalShare) {
-        [SuperTools share:img fromWindow:(_panelWin ?: _win)];
+        // v5.22：分享面板也是 UIKit 弹窗, 同样不能用穿透窗口
+        [SuperTools share:img fromWindow:_win];
     }
 }
 
@@ -1549,7 +1555,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [Common toast:@"已复制文本"];
     }]];
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:(_panelWin ?: _win)];
+    // v5.22：必须挂到 _win（不穿透），不能用 _panelWin（hit-test 穿透 → 弹窗按钮点不动）
+    [Common present:ac fromWindow:_win];
 }
 
 - (void)presentLocalTranslate:(NSString *)src dst:(NSString *)dst err:(NSString *)err {
@@ -1558,7 +1565,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
                                                                    message:err
                                                             preferredStyle:UIAlertControllerStyleAlert];
         [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
-        [Common present:ac fromWindow:(_panelWin ?: _win)];
+        // v5.22：同上, _panelWin 是穿透窗口, 弹窗挂上去按钮会被穿到下层 App
+        [Common present:ac fromWindow:_win];
         return;
     }
     if (!dst || dst.length == 0) { [Common toast:@"翻译失败"]; return; }
@@ -1575,7 +1583,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [Common toast:@"已复制原文"];
     }]];
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:(_panelWin ?: _win)];
+    [Common present:ac fromWindow:_win];
 }
 
 - (void)presentLocalCode:(NSString *)code {
@@ -1594,7 +1602,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         }]];
     }
     [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:(_panelWin ?: _win)];
+    // v5.22：弹窗宿主统一用 _win, _panelWin 穿透会吞掉按钮 touch
+    [Common present:ac fromWindow:_win];
 }
 
 // 正常截图：整屏 → 保存到相册「SN3截图」→ 直接结束（不弹编辑，仿原生）
