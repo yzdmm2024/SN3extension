@@ -13,10 +13,14 @@
 
 // 各插件开关
 // v5.23.0: OCR 整块重做, 砍掉百度/本地/Vision, 只走智谱 BigModel glm-4v-flash (OpenAI 兼容协议)
-#define XZ_KEY_AI_BASEURL       @"BigModel_BaseURL"      // 默认 https://open.bigmodel.cn/api/paas/v4
-#define XZ_KEY_AI_KEY           @"BigModel_APIKey"       // 智谱 API Key
-#define XZ_KEY_AI_MODEL         @"BigModel_Model"        // 默认 glm-4v-flash
-#define XZ_KEY_AI_PROMPT        @"BigModel_Prompt"       // 提示词 (可选, 默认「识别图中所有文字」)
+// v5.25.3 修: 这四个键原先也叫 XZ_KEY_AI_*, 和下面「问 AI」段的 XZ_KEY_AI_* 重名,
+//   C 预处理器取最后一次定义 → OCR 实际读的是 AskAI_APIKey,
+//   而 Root.plist 「识别引擎(智谱 BigModel)」段写的是 BigModel_APIKey, 两边对不上,
+//   用户填了 Key 也永远是空的。拆成独立的 XZ_KEY_BM_* 前缀, 两套互不干扰。
+#define XZ_KEY_BM_BASEURL       @"BigModel_BaseURL"      // 默认 https://open.bigmodel.cn/api/paas/v4
+#define XZ_KEY_BM_KEY           @"BigModel_APIKey"       // 智谱 API Key
+#define XZ_KEY_BM_MODEL         @"BigModel_Model"        // 默认 glm-4v-flash
+#define XZ_KEY_BM_PROMPT        @"BigModel_Prompt"       // 提示词 (可选, 默认「识别图中所有文字」)
 // 旧键保留, 仅供 VisionOCR / 翻译/AskAI 三个 plugin 内部使用
 #define XZ_KEY_OCR_LANGS        @"OCR_Languages"         // v5.23.0 保留, 供 VisionOCR 类内部读取
 #define XZ_KEY_TB_ORDER         @"Toolbar_Order"         // v5.18：工具栏按钮顺序(逗号分隔的tag)

@@ -126,10 +126,10 @@ static CGRect XZRectFromValue(id v) {
 // 失败: 弹 alert 显示原始 error message, 调用方收到 nil items
 + (void)ocrViaBigModel:(UIImage *)image
             completion:(void (^)(NSArray<NSDictionary *> *items, NSString *err))completion {
-    NSString *bu   = [Common stringPref:XZ_KEY_AI_BASEURL default:@"https://open.bigmodel.cn/api/paas/v4"];
-    NSString *key  = [Common stringPref:XZ_KEY_AI_KEY     default:@""];
-    NSString *md   = [Common stringPref:XZ_KEY_AI_MODEL   default:@"glm-4v-flash"];
-    NSString *pr   = [Common stringPref:XZ_KEY_AI_PROMPT  default:@""];
+    NSString *bu   = [Common stringPref:XZ_KEY_BM_BASEURL default:@"https://open.bigmodel.cn/api/paas/v4"];
+    NSString *key  = [Common stringPref:XZ_KEY_BM_KEY     default:@""];
+    NSString *md   = [Common stringPref:XZ_KEY_BM_MODEL   default:@"glm-4v-flash"];
+    NSString *pr   = [Common stringPref:XZ_KEY_BM_PROMPT  default:@""];
 
     if (!key.length) {
         if (completion) {

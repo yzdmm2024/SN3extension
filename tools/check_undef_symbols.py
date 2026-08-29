@@ -52,6 +52,10 @@ SYSTEM_C_SYMBOLS = {
     "_objc_opt_isKindOfClass", "_objc_opt_respondsToSelector", "_objc_exception_throw",
     "_OBJC_EHTYPE_$_NSException", "___cxa_throw", "___cxa_begin_catch",
     "___cxa_end_catch", "_malloc", "_free", "_memcpy", "_strlen", "_strcmp",
+    # Block 运行时 / CoreFoundation 常量
+    "__Block_object_assign", "__Block_object_dispose", "__Block_copy",
+    "__Block_release", "___kCFBooleanTrue", "___kCFBooleanFalse",
+    "__NSConcreteFinalizingBlock", "_kCFAllocatorDefault", "_kCFNull",
 }
 
 

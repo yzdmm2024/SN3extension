@@ -76,7 +76,7 @@
         return;
     }
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
-    [d setObject:pb forKey:XZ_KEY_AI_KEY];
+    [d setObject:pb forKey:XZ_KEY_BM_KEY];
     [d synchronize];
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                          (CFStringRef)@"com.axs.snapper3zhext.prefsChanged",
@@ -87,9 +87,9 @@
 // v5.23.0: 用当前配置打一发最小的 chat 请求验证 Key 是否有效
 - (void)testBigModelConnection:(PSSpecifier *)spec {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
-    NSString *bu   = [d stringForKey:XZ_KEY_AI_BASEURL] ?: @"https://open.bigmodel.cn/api/paas/v4";
-    NSString *key  = [d stringForKey:XZ_KEY_AI_KEY]     ?: @"";
-    NSString *md   = [d stringForKey:XZ_KEY_AI_MODEL]   ?: @"glm-4v-flash";
+    NSString *bu   = [d stringForKey:XZ_KEY_BM_BASEURL] ?: @"https://open.bigmodel.cn/api/paas/v4";
+    NSString *key  = [d stringForKey:XZ_KEY_BM_KEY]     ?: @"";
+    NSString *md   = [d stringForKey:XZ_KEY_BM_MODEL]   ?: @"glm-4v-flash";
     if (!key.length) {
         [self _sn3Alert:@"未配置 API Key" msg:@"请先在「API Key」项填写（也可点「从剪贴板粘贴」按钮一键填入）。"];
         return;
