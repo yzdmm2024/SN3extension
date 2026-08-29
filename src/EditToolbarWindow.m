@@ -170,14 +170,15 @@ static EditToolbarWindow *_shared = nil;
     NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
                                        @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave), @(ETBTagShare), @(ETBTagPhone),
                                        @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip), @(ETBTagColorPick), @(ETBTagReset) ];
-    NSArray<NSNumber *> *savedOrder = [[Common stringPref:XZ_KEY_TB_ORDER default:@""] length]
-        ? [[Common stringPref:XZ_KEY_TB_ORDER default:@""] componentsSeparatedByString:@","].mutableCopy
-        : [defOrder mutableCopy];
-    // 缺项补上 / 多余去掉，并按 tag 转成 NSNumber
+    NSMutableArray<NSNumber *> *savedOrder = [NSMutableArray array];
+    NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
+    if (orderStr.length) [savedOrder addObjectsFromArray:[orderStr componentsSeparatedByString:@","]];
+    if (savedOrder.count == 0) [savedOrder addObjectsFromArray:defOrder];
+    // 缺项补上 / 多余去掉
     NSMutableSet<NSNumber *> *orderSet = [NSMutableSet setWithArray:savedOrder];
-    for (NSNumber *t in defOrder) { if (![orderSet containsObject:t]) [savedOrder addObject:t]; }
+    for (NSNumber *t in defOrder) if (![orderSet containsObject:t]) [savedOrder addObject:t];
     for (NSNumber *t in [savedOrder copy]) {
-        if (![defOrder containsObject:t]) { NSMutableArray *m = [savedOrder mutableCopy]; [m removeObject:t]; savedOrder = m; }
+        if (![defOrder containsObject:t]) [savedOrder removeObject:t];
     }
     NSSet<NSNumber *> *disabled = [NSSet setWithArray:[[Common stringPref:XZ_KEY_TB_DISABLED default:@""] componentsSeparatedByString:@","]];
 
