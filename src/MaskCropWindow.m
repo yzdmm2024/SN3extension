@@ -136,6 +136,7 @@ static int SN3_LoopKVOContext = 0;
     UIViewController *_panelVC;     // 面板窗口的 rootVC（结果弹窗 present 落点）
     CGRect          _cropScreenRect; // 当前选区屏幕坐标（后台抓屏裁剪用）
     UIScrollView    *_panelScroll;   // v5.21：单排模式下的循环滑动滚动视图（用 KVO 监听 contentOffset 做循环）
+    UIButton        *_closeBtn;      // v5.25.0：✕ 关闭按钮（挂在 _panelWin 上，不在 panel 内）
 }
 
 #pragma mark - 单例 / 生命周期
@@ -335,6 +336,7 @@ static int SN3_LoopKVOContext = 0;
     _cropImage = nil;
     _cropScreenRect = CGRectZero;
     _localPanel = nil;
+    if (_closeBtn) { [_closeBtn removeFromSuperview]; _closeBtn = nil; }
     if (_panelWin) {
         _panelWin.hidden = YES;
         _panelWin.rootViewController = nil;
@@ -1294,15 +1296,18 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [panel addSubview:b];
     }
 
-    // 面板右上角关闭（✕/取消）：直接关闭整个局部截图（不再退回「再次编辑」框选模式——
-    // 需求：拖动选框已可实时编辑裁剪范围，无需单独的回退编辑流程）。
+    // 面板右上角关闭（✕/取消）：v5.25.0 改在 _panelWin 上 (不在 panel 子树内), 位置在 panel 右侧外面
+    //       加大到 44x44, 不与 sv 抢 pan 事件, 永远不与 panel 内的循环滚动打架.
+    if (_closeBtn) { [_closeBtn removeFromSuperview]; _closeBtn = nil; }
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(panelW - 30, 0, 30, 28);
-    [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
-    close.tintColor = [UIColor whiteColor];
-    close.titleLabel.font = [UIFont systemFontOfSize:13];
+    CGRect pf = panel.frame; // panel.frame 已经在前面算好 (y 已根据位置上下翻转)
+    close.frame = CGRectMake(CGRectGetMaxX(pf) - 6, CGRectGetMidY(pf) - 22, 44, 44);
+    [close setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
+    close.tintColor = [UIColor colorWithRed:1 green:0.4 blue:0.4 alpha:1.0];
     [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
-    [panel addSubview:close];
+    [_panelWin addSubview:close];
+    _closeBtn = close;
+    [_panelWin addInteractiveView:close]; // v5.25.0: 让 _panelWin 把它当白名单
     return panel;
 }
 
@@ -1534,24 +1539,12 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 }
 
 // v5.21: 单排滑动循环监听 —— 滚过"第二份开头"就跳回第一份; 反之亦然.
+// v5.25.0: 改为只在 scrollViewDidEndDecelerating/drag-end 时做对齐, 不在 KVO 中重设 contentOffset
+//          (因为 KVO 改 contentOffset 会触发 _contentView 的 pan 状态混乱, 导致选区调范围失效).
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                         change:(NSDictionary *)change context:(void *)context {
     if (context == &SN3_LoopKVOContext) {
-        UIScrollView *sv = (UIScrollView *)object;
-        NSNumber *ls = objc_getAssociatedObject(sv, "sn3_loop_start");
-        if (!sv.contentSize.width || !ls) return;
-        CGFloat loopStart = ls.floatValue;   // 第一份末尾 = 第二份开头
-        CGFloat fullW = sv.contentSize.width; // = loopStart * 2
-        // 把第二份对齐回第一份的对应偏移
-        if (sv.contentOffset.x >= fullW - 0.5) {
-            CGPoint p = sv.contentOffset;
-            p.x -= loopStart;
-            sv.contentOffset = p;
-        } else if (sv.contentOffset.x <= -0.5) {
-            CGPoint p = sv.contentOffset;
-            p.x += loopStart;
-            sv.contentOffset = p;
-        }
+        // v5.25.0: 拖动中不再对齐, 让 sv 自由滚动; 对齐改到 scrollViewDidScroll/didEndDecelerating 中
         return;
     }
     [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];

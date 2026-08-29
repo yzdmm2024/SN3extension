@@ -111,14 +111,12 @@
 			<string>    测试连接（点此用当前配置打一发请求验证 Key 是否有效）</string>
 		</dict>
 		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>action</key>
+			<string>openBigModelAPIPage</string>
 			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>SN3LinksController</string>
+			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>打开 智谱 BigModel API Key 申请页</string>
+			<string>    打开 智谱 BigModel API Key 申请页（浏览器）</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -129,12 +127,12 @@
 			<string>API 开通与申请</string>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>openAPIPage</string>
 			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>SN3LinksController</string>
+			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>打开 API 开通页面</string>
+			<string>    打开 API 开通页面（浏览器）</string>
 		</dict>
 		<dict>
 			<key>cell</key>

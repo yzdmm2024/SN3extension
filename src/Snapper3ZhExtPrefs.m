@@ -111,6 +111,19 @@
     }];
 }
 
+// v5.25.0: PSButtonCell 打开外部链接 (替代 PSLinkCell+detail=类名, 那个写法会让 iOS 14+ PSListController
+// 找不到 plist 文件而抛错, 整个 prefs bundle 被标记为损坏, 进设置报「未能载入软件包」).
+- (void)openBigModelAPIPage:(PSSpecifier *)spec {
+    NSURL *u = [NSURL URLWithString:@"https://bigmodel.cn/usercenter/apikeys"];
+    if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+}
+
+- (void)openAPIPage:(PSSpecifier *)spec {
+    // 这里保留「打开 API 开通页面」总入口, 跳到智谱 BigModel 申请页 (后续要分两段可拆)
+    NSURL *u = [NSURL URLWithString:@"https://bigmodel.cn/usercenter/apikeys"];
+    if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+}
+
 - (void)_sn3Alert:(NSString *)title msg:(NSString *)msg {
     UIAlertController *ac = [UIAlertController alertControllerWithTitle:title
                                                                 message:msg

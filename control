@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.24.0
+Version: 5.25.0
 Architecture: iphoneos-arm64
-Description: [v5.24.0] 改局部截图拖动手势设计 (用户最新需求). 之前 v5.22.x~v5.23.x 实现的是「框内平移 / 框外重选」, 用户新需求: 框外任意点拖动 = 整体平移 (不是重选), 边/角 = 改尺寸. 实现: handleCropPan 删掉「框外重选」分支, 改为 [self hasSelection] 时统一进 XZDragMove; 没选过时仍走 XZDragDraw 画新框 (但只触发一次). 关键: 框外拖动时旧版用「手指落点 -> 框左上角」做 _panGrab, 框会瞬移, 改为「手指落点 -> 框中心」做 _panGrab, XZDragMove Changed 时 newCenter = loc - _panGrab, 框中心跟手指走 (macOS/iOS 拖窗口行为). 第一次画完抬手弹菜单, 之后所有拖动 = 平移.
+Description: [v5.25.0] 3 个问题修复. ①设置面板「未能载入软件包」真凶: Root.plist 用了 PSLinkCell+detail=类名, iOS 14+ PSListController 把 detail 当 plist 文件名 (找不到 SN3LinksController.plist) → 装载时抛错, 整个 prefs bundle 标记为损坏. 改用 PSButtonCell+action=openBigModelAPIPage/openAPIPage, Snapper3ZhExtPrefs.m 加两个 action 直接 [[UIApplication sharedApplication] openURL:]. ②「滑动菜单后不能调范围」真凶: 单排 sv 的 KVO 监听 contentOffset 在拖动中重设 offset, 触发 _contentView 的 pan 状态混乱, 让 resize 路径失效. 改成拖动中直接 return, 抬手后用 scrollViewDidEndDecelerating 对齐 (循环暂时不完美, 但不影响功能). ③「取消按钮不好按」: 把 ✕ 从 panel 内的 30x28 移到 _panelWin 上的 44x44, 位置在 panel 右侧外面 (CGRectGetMaxX(panel)-6, midY-22), 红色 xmark.circle.fill.
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
