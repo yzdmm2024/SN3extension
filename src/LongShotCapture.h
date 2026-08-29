@@ -56,6 +56,9 @@
 // Vision 配准 + 垂直拼接；result = nil 表示失败
 - (void)stitchWithCompletion:(void (^)(UIImage *result))completion;
 
+// v5.13：最近一帧相对上一帧的重叠比例(0~1)，供上层做「自适应抓帧间隔」，NAN 表示不足两帧。
+- (CGFloat)lastOverlapRatio;
+
 // 拼接兜底（finishCapture 拼接失败分支调用）：复跑 stitchSync，绝不返回 nil
 - (UIImage *)stitchFallback;
 

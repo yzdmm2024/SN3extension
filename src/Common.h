@@ -14,6 +14,8 @@
 // 各插件开关
 #define XZ_KEY_OCR_ENABLED      @"OCR_Enabled"
 #define XZ_KEY_OCR_LANGS        @"OCR_Languages"
+#define XZ_KEY_OCR_BD_APIKEY    @"OCR_Baidu_APIKey"       // v5.13：百度OCR(文字识别) 密钥（须与密钥成对填写才启用云端OCR）
+#define XZ_KEY_OCR_BD_SECRET    @"OCR_Baidu_SecretKey"
 #define XZ_KEY_TRANS_ENABLED    @"Translate_Enabled"
 #define XZ_KEY_TRANS_APPID      @"Translate_APIAppID"
 #define XZ_KEY_TRANS_KEY        @"Translate_APIKey"

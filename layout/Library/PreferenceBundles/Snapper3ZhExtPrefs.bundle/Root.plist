@@ -27,13 +27,13 @@
 			<string>启用浮动菜单</string>
 		</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>使用设备本地 Vision 识别（离线、无需密钥）。识别语言填英文逗号分隔，如 zh-Hans,en-US。</string>
-			<key>label</key>
-			<string>文字识别 (OCR)</string>
-		</dict>
+				<key>cell</key>
+				<string>PSGroupCell</string>
+				<key>footerText</key>
+				<string>默认用本地 Vision 识别（离线、无需密钥）。想更准中文识别可填下方百度智能云「通用文字识别」API Key/Secret Key，成对填写后自动优先走云端OCR，失败再回退本地。</string>
+				<key>label</key>
+				<string>文字识别 (OCR)</string>
+			</dict>
 		<dict>
 			<key>PostNotification</key>
 			<string>com.axs.snapper3zhext.prefsChanged</string>
@@ -63,6 +63,52 @@
 			<string>识别语言</string>
 			<key>placeholder</key>
 			<string>zh-Hans,zh-Hant,en-US</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>OCR_Baidu_APIKey</string>
+			<key>label</key>
+			<string>百度OCR API Key</string>
+			<key>placeholder</key>
+			<string>需与Secret成对填写才启用云端</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSecureEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>OCR_Baidu_SecretKey</string>
+			<key>label</key>
+			<string>百度OCR Secret Key</string>
+			<key>placeholder</key>
+			<string>百度智能云应用密钥</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>OCR 用「百度智能云·文字识别(PaddleOCR)」，翻译用「百度翻译开放平台」；两者都提供免费额度。点下方直接打开对应开通页。</string>
+			<key>label</key>
+			<string>API 开通与申请</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>SN3LinksController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>打开 API 开通页面</string>
 		</dict>
 		<dict>
 			<key>cell</key>

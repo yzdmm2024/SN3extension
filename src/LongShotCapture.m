@@ -76,6 +76,15 @@ static LongShotCapture *_shared = nil;
 - (NSInteger)frameCount { return (NSInteger)_frames.count; }
 - (CGFloat)estimatedHeight { return _estimatedHeight; }
 
+// v5.13：最近一帧相对上一帧的重叠比例(点/点)。_overlaps 存的就是点，直接与帧高比。
+- (CGFloat)lastOverlapRatio {
+    if (_overlaps.count < 2 || _frames.count < 2) return (CGFloat)NAN;
+    CGFloat ovPts = [_overlaps.lastObject doubleValue];
+    CGFloat h = _frames.lastObject.size.height;
+    if (h <= 0) return (CGFloat)NAN;
+    return MAX(0.0, MIN(1.0, ovPts / h));
+}
+
 - (void)reset {
     [_frames removeAllObjects];
     [_overlaps removeAllObjects];

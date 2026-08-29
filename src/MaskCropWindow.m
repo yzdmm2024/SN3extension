@@ -97,6 +97,11 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     CGFloat  _lsPrevOffsetY;        // 上一帧 contentOffset.y（点），首帧为 NAN
     NSTimer *_lsWatchdog;           // 精确模式无响应→回退自动的看门狗
 
+    // v5.13：SAD 自动抓帧自适应间隔（随滚动速度调节，慢滚多等、快滚抓紧）
+    NSTimeInterval _lsInterval;
+    NSTimeInterval _lsLastCastTime;
+    BOOL          _forceTick;       // 外部强制立即抓一帧（保存/复制前补末屏）
+
     // ---- 状态 ----
     XZMaskMode   _mode;
     XZDragTarget _drag;
@@ -682,12 +687,16 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
 - (void)startCaptureTimer {
     [self stopCaptureTimer];
-    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.18
+    _lsInterval = 0.15;                      // v5.13：起点，随后随滚动速度自适应
+    _lsLastCastTime = 0;
+    _forceTick = NO;
+    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.05
                                                     target:self
                                                   selector:@selector(longCaptureTick)
                                                   userInfo:nil
                                                    repeats:YES];
-    [self longCaptureTick];   // 立即采一帧作为「未滑动基准」（仅存基准，不计入、不显示）
+    _forceTick = YES;
+    [self longCaptureTick];   // 立即采一帧作为「顶部基准帧」
 }
 
 - (void)stopCaptureTimer {
@@ -892,7 +901,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         return;
     }
     // v5.12：SAD 模式补抓末屏，避免底部/结尾内容被裁掉
-    if (_lsAlgo == 1) [self longCaptureTick];
+    if (_lsAlgo == 1) { _forceTick = YES; [self longCaptureTick]; }
     [Common toast:@"正在拼接长图..."];
     [self lsDisarmAndProceed:^{
         [self stopCaptureTimer];
@@ -920,7 +929,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         return;
     }
     // v5.12：SAD 模式补抓末屏，避免底部/结尾内容被裁掉
-    if (_lsAlgo == 1) [self longCaptureTick];
+    if (_lsAlgo == 1) { _forceTick = YES; [self longCaptureTick]; }
     [Common toast:@"正在拼接长图..."];
     [self lsDisarmAndProceed:^{
         [self stopCaptureTimer];
@@ -947,6 +956,16 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 - (void)longCaptureTick {
     if (!_win || _mode != XZMaskModeLong || _capturing) return;
     _capturing = YES;
+
+    // v5.13：自适应间隔门——不到点就轻量跳过，只有滚动速度变化时实际抓帧。
+    //        强制标记(_forceTick)用于「保存/复制前补末屏」立即抓。
+    NSTimeInterval now = [NSProcessInfo processInfo].systemUptime;
+    if (_lsLastCastTime > 0 && !_forceTick && (now - _lsLastCastTime) < _lsInterval) {
+        _capturing = NO;
+        return;
+    }
+    _forceTick = NO;
+    _lsLastCastTime = now;
 
     BOOL borderHidden = _borderLayer.hidden;
     _borderLayer.hidden = YES;                 // 抓帧时去掉边框，避免被截进长图
@@ -982,6 +1001,15 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
                 }
             }
         }
+    }
+    // v5.13：据最近重叠比例自适应抓帧间隔——
+    //        重叠过大(>80%，滚太慢/帧太密)→多等；过小(<15%，太快)→抓紧；
+    //        中档→轻微上调以稳在中段，让 SAD 始终落在可靠重叠，减少丢帧与强制补帧的重复。
+    CGFloat op = [[LongShotCapture sharedInstance] lastOverlapRatio];
+    if (!isnan(op)) {
+        if (op > 0.80)      _lsInterval = MIN(0.85, _lsInterval * 1.7);
+        else if (op < 0.15) _lsInterval = MAX(0.06, _lsInterval * 0.55);
+        else                _lsInterval = MAX(0.06, MIN(0.5, _lsInterval * 1.25));
     }
     _capturing = NO;
 }
@@ -1195,13 +1223,14 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [panel addSubview:b];
     }
 
-    // 面板右上角关闭（✕）：退回框选模式
+    // 面板右上角关闭（✕/取消）：直接关闭整个局部截图（不再退回「再次编辑」框选模式——
+    // 需求：拖动选框已可实时编辑裁剪范围，无需单独的回退编辑流程）。
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     close.frame = CGRectMake(panelW - 30, 0, 30, 28);
     [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
     close.tintColor = [UIColor whiteColor];
     close.titleLabel.font = [UIFont systemFontOfSize:13];
-    [close addTarget:self action:@selector(exitLocalPanel) forControlEvents:UIControlEventTouchUpInside];
+    [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:close];
     return panel;
 }

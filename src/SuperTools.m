@@ -45,6 +45,12 @@
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
 + (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
++ (void)ocrVisionChain:(UIImage *)image languages:(NSArray *)langs
+            completion:(void (^)(NSArray<NSDictionary *> *items))completion;   // v5.13
++ (void)ocrViaBaidu:(UIImage *)image
+         completion:(void (^)(NSArray<NSDictionary *> *items))completion;       // v5.13 百度云端OCR
++ (NSString *)urlenc:(NSString *)s;                                              // v5.13
++ (UIImage *)bdShrink:(UIImage *)src maxDim:(CGFloat)maxDim;                     // v5.13
 + (void)detectSensitiveRects:(UIImage *)image
                   completion:(void (^)(NSArray<NSValue *> *rects))completion;
 + (void)translateText:(NSString *)text completion:(void (^)(NSString *dst, NSString *err))completion;
@@ -107,6 +113,23 @@ static CGRect XZRectFromValue(id v) {
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     if (!image.CGImage) { if (completion) completion(nil); return; }
 
+    // v5.13：设置里填了百度文字识别(API Key+Secret) → 优先云端OCR（PaddleOCR 商用、中文识别强）。
+    //        云端失败或返回空（配错/额度/弱图）时，自动回退本地 Vision 多语言链，保证零配置也能用。
+    NSString *ak = [Common stringPref:XZ_KEY_OCR_BD_APIKEY default:@""];
+    NSString *sk = [Common stringPref:XZ_KEY_OCR_BD_SECRET default:@""];
+    if (ak.length && sk.length) {
+        [self ocrViaBaidu:image completion:^(NSArray<NSDictionary *> *bItems) {
+            if (bItems.count) { if (completion) completion(bItems); }
+            else { [self ocrVisionChain:image languages:langs completion:completion]; }
+        }];
+    } else {
+        [self ocrVisionChain:image languages:langs completion:completion];
+    }
+}
+
+// 本地 Vision 多语言重试链（原 ocrObservations 的主体，现作为云端 OCR 的兜底）
++ (void)ocrVisionChain:(UIImage *)image languages:(NSArray *)langs
+            completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     NSArray *userLangs = (langs.count ? langs : @[@"zh-Hans", @"zh-Hant", @"en-US"]);
     NSArray *sets = @[ userLangs,
                        @[@"zh-Hans", @"en-US"],
@@ -278,6 +301,88 @@ static CGRect XZRectFromValue(id v) {
     NSMutableString *out = [NSMutableString stringWithCapacity:CC_MD5_DIGEST_LENGTH * 2];
     for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++) [out appendFormat:@"%02x", dig[i]];
     return out;
+}
+
+// v5.13：百度云端 OCR —— 通用文字识别 general_basic（PaddleOCR 商用免费版）。
+//   step1: APIKey+SecretKey 换 access_token；step2: POST base64 图片。
+//   中文识别远比本地 Vision 强；失败/为空时由上层回退本地 Vision。
++ (void)ocrViaBaidu:(UIImage *)image completion:(void (^)(NSArray<NSDictionary *> *items))completion {
+    if (!image.CGImage) { if (completion) completion(nil); return; }
+    NSString *ak = [Common stringPref:XZ_KEY_OCR_BD_APIKEY default:@""];
+    NSString *sk = [Common stringPref:XZ_KEY_OCR_BD_SECRET default:@""];
+    if (!ak.length || !sk.length) { if (completion) completion(nil); return; }
+
+    NSString *tokUrl = [NSString stringWithFormat:
+                        @"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%@&client_secret=%@",
+                        [self urlenc:ak], [self urlenc:sk]];
+    NSURL *tu = [NSURL URLWithString:tokUrl];
+    if (!tu) { if (completion) completion(nil); return; }
+
+    [[[NSURLSession sharedSession] dataTaskWithURL:tu completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        NSString *token = nil;
+        if (!e && d) {
+            id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+            if ([j isKindOfClass:[NSDictionary class]]) token = j[@"access_token"];
+        }
+        if (!token.length) { if (completion) completion(nil); return; }
+
+        UIImage *tiny = [self bdShrink:image maxDim:4096];
+        NSData *png = UIImagePNGRepresentation(tiny);
+        if (!png) { if (completion) completion(nil); return; }
+        NSData *b64d = [png base64EncodedDataWithOptions:0];
+        NSString *b64 = [[NSString alloc] initWithData:b64d encoding:NSUTF8StringEncoding] ?: @"";
+        NSString *body = [@"image=" stringByAppendingString:[self urlenc:b64]];
+
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:
+            [NSString stringWithFormat:@"https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=%@",
+             [self urlenc:token]]]];
+        req.HTTPMethod = @"POST";
+        [req setValue:@"application/x-www-form-urlencoded" forHTTPHeaderField:@"Content-Type"];
+        req.HTTPBody = [body dataUsingEncoding:NSUTF8StringEncoding];
+
+        [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d2, NSURLResponse *r2, NSError *e2) {
+            NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+            if (!e2 && d2) {
+                @try {
+                    id j2 = [NSJSONSerialization JSONObjectWithData:d2 options:0 error:nil];
+                    if ([j2 isKindOfClass:[NSDictionary class]]) {
+                        id words = j2[@"words_result"];
+                        if ([words isKindOfClass:[NSArray class]]) {
+                            for (id w in words) {
+                                if ([w isKindOfClass:[NSDictionary class]]) {
+                                    id t = w[@"words"];
+                                    if ([t isKindOfClass:[NSString class]] && [t length])
+                                        [items addObject:@{@"text": (NSString *)t, @"box": [NSValue valueWithCGRect:CGRectZero]}];
+                                }
+                            }
+                        }
+                    }
+                } @catch (NSException *ex) {}
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (items.count) { if (completion) completion(items); }
+                else if (completion) completion(nil);
+            });
+        }] resume];
+    }] resume];
+}
+
++ (NSString *)urlenc:(NSString *)s {
+    return [s stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: @"";
+}
+
+// 等比缩到长边不超过 maxDim，避免百度OCR因图片过大/超长报错
++ (UIImage *)bdShrink:(UIImage *)src maxDim:(CGFloat)maxDim {
+    CGFloat w = src.size.width, h = src.size.height;
+    if (w < 1 || h < 1) return src;
+    CGFloat m = MAX(w, h);
+    if (m <= maxDim) return src;
+    CGFloat s = maxDim / m;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(w*s, h*s), NO, 1.0);
+    [src drawInRect:CGRectMake(0, 0, w*s, h*s)];
+    UIImage *o = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return o ?: src;
 }
 
 // 百度翻译开放平台「通用文本翻译」（需 APP ID + 密钥，见设置面板说明）。
@@ -681,6 +786,7 @@ static CGRect XZRectFromValue(id v) {
 #pragma mark - 7. 贴图（悬浮窗口）
 
 static UIWindow *_floatWin = nil;
+static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时随时可重绘更清晰
 
 // 贴图：浮窗尺寸默认匹配所选拖选框（rect，屏幕坐标）；rect 为空则用 120 默认
 + (void)floating:(UIImage *)image {
@@ -690,6 +796,7 @@ static UIWindow *_floatWin = nil;
 + (void)floating:(UIImage *)image withScreenRect:(CGRect)rect {
     if (!image) return;
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
+    _floatImage = image;
 
     CGRect scr = [UIScreen mainScreen].bounds;
     CGFloat fw, fh;
@@ -727,6 +834,7 @@ static UIWindow *_floatWin = nil;
     iv.clipsToBounds = YES;
     iv.layer.borderColor = [UIColor whiteColor].CGColor;
     iv.layer.borderWidth = 2;
+    iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight; // v5.14：随窗口缩放
     [win addSubview:iv];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -740,6 +848,10 @@ static UIWindow *_floatWin = nil;
     //        左上角再加一个「大头针」，拖大头针也能拖动整张贴图（更直观可靠）。
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panFloat:)];
     [iv addGestureRecognizer:pan];
+
+    // v5.14：贴图捏合缩放 —— 两指捏合放大/缩小整张贴图，中心不动。
+    UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(pinchFloat:)];
+    [win addGestureRecognizer:pinch];
 
     UIView *pin = [[UIView alloc] initWithFrame:CGRectMake(4, 4, 30, 30)];
     pin.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
@@ -764,14 +876,16 @@ static UIWindow *_floatWin = nil;
 
     _floatWin = win;
     win.hidden = NO;
-    [Common toast:@"已贴图：拖动图片或左上角大头针可移动，双击或点 X 关闭"];
+    [Common toast:@"已贴图：拖动图片或大头针移动，双指捏合缩放，双击或点 X 关闭"];
 }
 
 + (void)closeFloat {
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
+    _floatImage = nil;
 }
 + (void)closeFloatByGesture:(UITapGestureRecognizer *)g {
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
+    _floatImage = nil;
 }
 
 // v5.11：贴图显示图预缩放（按显示尺寸×屏scale，最多不超原图），大幅降低拖动逐帧合成开销
@@ -810,6 +924,48 @@ static UIWindow *_floatWin = nil;
         f.origin.y = MAX(0, MIN(f.origin.y + dy, scr.size.height - f.size.height));
         _floatWin.frame = f;
     }
+}
+
+// v5.14：贴图捏合缩放。以窗口中心为锚点等比缩放，限制在合理尺寸区间；
+//        缩放后按新尺寸重绘显示图（仅当放大超当前像素图时才重绘，避免糊且不浪费）：
+//        小于原显示尺寸时不重绘（直接拉伸缩小无损），放大到超像素图清晰度时才重算。
++ (void)pinchFloat:(UIPinchGestureRecognizer *)g {
+    if (!_floatWin) return;
+    static CGFloat _pinchLastScale = 1.0;
+    if (g.state == UIGestureRecognizerStateBegan) {
+        _pinchLastScale = 1.0;
+    } else if (g.state == UIGestureRecognizerStateChanged) {
+        CGFloat d = g.scale / MAX(0.01, _pinchLastScale);
+        _pinchLastScale = g.scale;
+        if (d <= 0 || !isfinite(d)) return;
+
+        CGRect scr = [UIScreen mainScreen].bounds;
+        CGRect f = _floatWin.frame;
+        CGFloat nw = MAX(36.0, MIN(f.size.width  * d, scr.size.width  * 0.92));
+        CGFloat nh = MAX(36.0, MIN(f.size.height * d, scr.size.height * 0.88));
+        if (nw == f.size.width && nh == f.size.height) return;
+
+        // 中心不动
+        CGFloat cx = f.origin.x + f.size.width / 2.0;
+        CGFloat cy = f.origin.y + f.size.height / 2.0;
+        f = CGRectMake(cx - nw / 2.0, cy - nh / 2.0, nw, nh);
+        f.origin.x = MAX(0, MIN(f.origin.x, scr.size.width  - f.size.width));
+        f.origin.y = MAX(0, MIN(f.origin.y, scr.size.height - f.size.height));
+        _floatWin.frame = f;
+
+        // 放大超过当前像素清晰度时，用原图重绘保持清晰
+        [self refreshFloatImage];
+    }
+}
+
+// v5.14：按当前窗口尺寸用 _floatImage 重新生成显示图（放大后防糊）
++ (void)refreshFloatImage {
+    if (!_floatWin || !_floatImage) return;
+    UIImageView *iv = [_floatWin.subviews firstObject];
+    if (![iv isKindOfClass:[UIImageView class]]) return;
+    CGRect b = _floatWin.bounds;
+    iv.image = [self downscaledToDisplay:_floatImage forSize:b.size scale:[UIScreen mainScreen].scale];
+    iv.frame = b;
 }
 
 #pragma mark - 8. 保存
