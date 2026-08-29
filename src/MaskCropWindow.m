@@ -1350,6 +1350,9 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     CGFloat y = [self localPanelYForScreenRect:rect panelHeight:panelH];
     panel.frame = CGRectMake(0, y, panelW, panelH);
     _localPanel = panel;
+    // v5.23.1 修: 把 panel 加到 _panelWin 的交互白名单. 否则 hitTest gateInteractive 路径
+    // 会把整个 panel 的 touch 全部穿透给下层 App, 表现为"菜单在那但点不动"
+    [_panelWin addInteractiveView:panel];
 
     // 全部 8 个按钮 — 单排时按工具栏顺序排序; 双排时按原 row1+row2 排
     NSArray<NSNumber *> *tags = @[ @(XZLocalOCR), @(XZLocalTranslate), @(XZLocalDraw), @(XZLocalCode),
