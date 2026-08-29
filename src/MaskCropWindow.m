@@ -216,7 +216,6 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     //               关键是让 pan 与 pinch 同时识别 —— pan 处理单指移动/拖角，pinch 接管双指缩放。
     UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self
                                                                                action:@selector(pinchCrop:)];
-    pinch.numberOfTouchesRequired = 2;
     pinch.delegate = self;
     [_contentView addGestureRecognizer:pinch];
 
