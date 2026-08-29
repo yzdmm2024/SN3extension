@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.19
+Version: 5.20
 Architecture: iphoneos-arm64
-Description: [v5.19] ①局部截图双指缩放/单指拖动同时识别(关键修复：移除错误的 pan.maxNumberOfTouches=1 限制,加 gestureRecognizer 同时识别代理,让 pan 与 pinch 共存)。②设置面板空白根本修复：viewWillAppear 的重建推到下一 runloop,加 try/catch,避免 iOS 14 PSListController 同帧改 specifiers 触发空白。③工具栏开关的 disabled 集合改为字符串 tag,修 setEnabledValue 不生效的 bug。
+Description: [v5.20] ①彻底修「未能载入软件包」: 从 plist 移除崩溃的 SN3ToolbarController 子页, 保留开关入口, Preferences.app 可正常载入. ②局部截图pinch/pan 真正共存: 在 pan 手势 Began/Changed 中加 pan.numberOfTouches>1 提前return, 把双指让给 pinch, 避免 pan 退化用质心loc把 _cropRect 重置成 0,0 导致 pinch 拿到 hasSelection=NO. ③同时识别代理已加 (v5.19).
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

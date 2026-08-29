@@ -743,6 +743,13 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     // v5.7：选框顶部不低于安全区上沿，避免手柄被状态栏/刘海遮住导致「顶部无法正常使用」
     CGFloat topLimit = [Common screenSafeInsets].top;
 
+    // v5.20：当用户用 ≥2 指时让位给 pinch（缩放），避免 pan 的 loc 退化成双指质心后
+    //         把 _cropRect 重置成 0,0 让 pinch 拿到 hasSelection=NO 而失效。
+    if (pan.numberOfTouches > 1) {
+        if (pan.state == UIGestureRecognizerStateBegan) _drag = XZDragNone;
+        return;
+    }
+
     if (pan.state == UIGestureRecognizerStateBegan) {
         _didDrawSelection = NO;
         XZResizeMask m = [self hasSelection] ? [self resizeMaskAtPoint:loc inRect:_cropRect] : XZResizeNone;

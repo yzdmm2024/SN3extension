@@ -404,16 +404,8 @@
 			<key>label</key>
 			<string>工具栏</string>
 		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>SN3ToolbarController</string>
-			<key>isController</key>
-			<true/>
-			<key>label</key>
-			<string>工具栏按钮 (排序 / 启用)</string>
-		</dict>
+		<!-- v5.20: SN3ToolbarController 暂时从 plist 移除, 避免 Preferences 载入时崩溃;
+		     用列表里的 PSSwitchCell 「工具栏-单排滑动显示」+「工具栏-显示OCR/翻译/...」做精简版. -->
 		<dict>
 			<key>PostNotification</key>
 			<string>com.axs.snapper3zhext.prefsChanged</string>
