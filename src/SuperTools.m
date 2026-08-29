@@ -720,7 +720,8 @@ static UIWindow *_floatWin = nil;
     if (@available(iOS 13.0, *)) win.windowScene = [Common activeWindowScene];
 
     UIImageView *iv = [[UIImageView alloc] initWithFrame:win.bounds];
-    iv.image = image;
+    // v5.11：贴图标识图按「显示尺寸」预缩放（不再是全分辨率原图），拖动无卡顿
+    iv.image = [self downscaledToDisplay:image forSize:win.bounds.size scale:[UIScreen mainScreen].scale];
     iv.contentMode = UIViewContentModeScaleAspectFit;
     iv.layer.cornerRadius = 12;
     iv.clipsToBounds = YES;
@@ -772,11 +773,28 @@ static UIWindow *_floatWin = nil;
 + (void)closeFloatByGesture:(UITapGestureRecognizer *)g {
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
 }
+
+// v5.11：贴图显示图预缩放（按显示尺寸×屏scale，最多不超原图），大幅降低拖动逐帧合成开销
++ (UIImage *)downscaledToDisplay:(UIImage *)img forSize:(CGSize)ptSize scale:(CGFloat)scl {
+    if (!img) return nil;
+    CGFloat maxPx = MAX(ptSize.width * scl, ptSize.height * scl);
+    CGFloat sx = MAX(1.0, (CGFloat)img.size.width);
+    CGFloat scale = MIN(1.0, maxPx / MAX(1.0, MAX(sx, (CGFloat)img.size.height)));
+    if (scale >= 1.0) return img;
+    CGSize newPx = CGSizeMake(floor(sx * scale), floor((CGFloat)img.size.height * scale));
+    UIGraphicsBeginImageContextWithOptions(newPx, NO, 1.0);
+    [img drawInRect:CGRectMake(0, 0, newPx.width, newPx.height)];
+    UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return out ?: img;
+}
+
+// v5.11：贴图拖动。注意不能配移动中的窗口用 translationInView:（参考系也在动会漂移）。
+//        用「连续两点屏幕坐标差」做位移——数学上严格等于手指移动量，稳且跟手。
+//        卡顿问题靠调用侧把显示图按显示尺寸预缩解决，这里只做位移。
 + (void)panFloat:(UIPanGestureRecognizer *)pan {
     if (!_floatWin) return;
-    // v5.10：UIWindow 没有 superview，用 translationInView:nil 偶发不生效（拖不动）。
-    //        改为记录连续两点坐标差来做位移，稳；并夹在屏幕内防止拖出屏。
-    static CGPoint _floatLast = (CGPoint){0, 0};
+    static CGPoint _floatLast;
     if (pan.state == UIGestureRecognizerStateBegan) {
         _floatLast = [pan locationInView:_floatWin];
     } else if (pan.state == UIGestureRecognizerStateChanged) {
@@ -785,11 +803,10 @@ static UIWindow *_floatWin = nil;
         CGFloat dy = loc.y - _floatLast.y;
         _floatLast = loc;
         if (dx == 0 && dy == 0) return;
+        CGRect scr = [UIScreen mainScreen].bounds;
         CGRect f = _floatWin.frame;
-        CGFloat W = [UIScreen mainScreen].bounds.size.width;
-        CGFloat H = [UIScreen mainScreen].bounds.size.height;
-        f.origin.x = MAX(0, MIN(f.origin.x + dx, W - f.size.width));
-        f.origin.y = MAX(0, MIN(f.origin.y + dy, H - f.size.height));
+        f.origin.x = MAX(0, MIN(f.origin.x + dx, scr.size.width  - f.size.width));
+        f.origin.y = MAX(0, MIN(f.origin.y + dy, scr.size.height - f.size.height));
         _floatWin.frame = f;
     }
 }
@@ -1325,25 +1342,25 @@ static UIWindow *_shareWin = nil;
     // 智能脱敏命中的区域（像素坐标）
     _smartRects = [NSMutableArray array];
 
-    // ---- 按钮区（三排，v5.10 重排，不再挤成一团）----
-    // 排1：档位（轻/中/重=像素化，模糊=高斯柔化）｜ 排2：撤销/清除 ｜ 排3：取消/完成
+    // ---- 按钮区（v5.11：只保留 2 档，观感清晰：像素马赛克 / 高斯模糊）----
     CGFloat barH = 156.0;
     UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
                                                            scr.size.width, barH)];
     bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.62];
     [_win addSubview:bar];
 
-    _mosaicRatio = 22.0; _mosaicBlur = NO; _blurRadius = 0;   // 默认「中」档
+    _mosaicRatio = 22.0; _mosaicBlur = NO; _blurRadius = 0;   // 默认「像素马赛克」档
 
-    // 排1：档位（差异放大，观感明显不同）
-    CGFloat sbw = (scr.size.width - 40 - 18) / 4.0;
-    NSArray *styles = @[@"轻", @"中", @"重", @"模糊"];
-    for (NSInteger i = 0; i < 4; i++) {
+    // 排1：2 档（方形像素马赛克 / 高斯模糊）
+    CGFloat sbw = (scr.size.width - 40 - 6) / 2.0;
+    NSArray *styles = @[@"方形像素马赛克", @"高斯模糊"];
+    for (NSInteger i = 0; i < 2; i++) {
         UIButton *sb = [self mkBtn:styles[i] frame:CGRectMake(10 + i * (sbw + 6), 10, sbw, 38)
                                sel:@selector(onStyle:) color:[UIColor systemTealColor]];
         sb.tag = 100 + i;
+        sb.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         [bar addSubview:sb];
-        if (i == 1) _activeStyle = sb;   // 默认「中」高亮
+        if (i == 0) _activeStyle = sb;   // 默认「像素马赛克」高亮
     }
 
     CGFloat rowW = (scr.size.width - 40 - 12) / 2.0;
@@ -1367,9 +1384,9 @@ static UIWindow *_shareWin = nil;
     [self refreshActiveStyle];
 
     UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(20, safe.top + 12, scr.size.width - 40, 30)];
-    tip.text = @"选档位后，在要打码的地方涂抹；轻细粒 / 重磅块 / 模糊柔化";
+    tip.text = @"选一种效果，在要打码的地方涂抹；方形像素马赛克 / 高斯模糊柔化";
     tip.textColor = [UIColor colorWithWhite:1 alpha:0.75];
-    tip.font = [UIFont systemFontOfSize:12];
+    tip.font = [UIFont systemFontOfSize:13];
     tip.textAlignment = NSTextAlignmentCenter;
     tip.numberOfLines = 2;
     [_win addSubview:tip];
@@ -1392,19 +1409,16 @@ static UIWindow *_shareWin = nil;
 }
 
 - (void)onStyle:(UIButton *)sender {
-    NSInteger idx = sender.tag - 100;   // 0轻 1中 2重 3模糊
+    NSInteger idx = sender.tag - 100;   // 0 方形像素马赛克 1 高斯模糊
     _activeStyle = sender;
     [self refreshActiveStyle];
-    // v5.10：档位差异放大——块太大/太细才看得出来区别（QQ/微信风格）
-    if (idx == 0)      { _mosaicRatio = 50.0; _mosaicBlur = NO; _blurRadius = 0;  _tipLabel.text = @"马赛克：轻（细颗粒）"; }
-    else if (idx == 1) { _mosaicRatio = 22.0; _mosaicBlur = NO; _blurRadius = 0;  _tipLabel.text = @"马赛克：中（默认）"; }
-    else if (idx == 2) { _mosaicRatio = 9.0;  _mosaicBlur = NO; _blurRadius = 0;  _tipLabel.text = @"马赛克：重（大粗块）"; }
-    else               { _mosaicRatio = 0;    _mosaicBlur = YES; _blurRadius = 26; _tipLabel.text = @"马赛克：模糊（平滑柔化）"; }
+    if (idx == 0) { _mosaicRatio = 22.0; _mosaicBlur = NO; _blurRadius = 0; _tipLabel.text = @"方块像素马赛克（涂抹处打码）"; }
+    else           { _mosaicRatio = 0;   _mosaicBlur = YES; _blurRadius = 26; _tipLabel.text = @"高斯模糊（涂抹处平滑柔化）"; }
 }
 
-// v5.10：高亮当前选中的档位（白框 + 略亮），一眼能看出选的是哪个
+// v5.11：高亮当前选中的效果（白框 + 略亮），一眼能看出选的是哪个
 - (void)refreshActiveStyle {
-    for (NSInteger i = 0; i < 4; i++) {
+    for (NSInteger i = 0; i < 2; i++) {
         UIButton *b = [_win viewWithTag:100 + i];
         if (!b) continue;
         if (b == _activeStyle) {

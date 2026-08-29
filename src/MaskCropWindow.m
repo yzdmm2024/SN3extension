@@ -88,9 +88,9 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     UIButton *_closeBtn;            // 关闭（框右上角）
     UILabel  *_longCountLabel;      // 已采集帧数
 
-    // ---- v5.3：长截图算法（精确读offset / 自动SAD / 手动下一屏）----
-    NSInteger _lsAlgo;              // 0=自动滚动(驱动App滚动) 1=自动(SAD) 2=手动(下一屏)
-    UIButton *_modeToggleBtn;       // 框左上角「模式:精确/自动/手动」切换
+    // ---- v5.3：长截图算法（精确读offset / 自动SAD；v5.11 移除手动模式）----
+    NSInteger _lsAlgo;              // 0=自动滚动(驱动App滚动) 1=自动(SAD)
+    UIButton *_modeToggleBtn;       // 框左上角「模式:自动滚动/自动(SAD)」切换
     UIButton *_nextBtn;             // 框左下「下一屏」（仅手动模式显示）
     UIButton *_startBtn;            // 框顶部「▶开始采集」（仅精确模式显示）
     BOOL     _lsActive;             // 自动滚动模式已 arm、正在接收 App 偏移抓帧
@@ -274,9 +274,9 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         _closeBtn.hidden    = NO;
         _longCountLabel.hidden = NO;
         _modeToggleBtn.hidden = NO;             // v5.3：模式切换常驻
-        [_modeToggleBtn setTitle:(_lsAlgo == 0 ? @"模式:自动滚动" : (_lsAlgo == 1 ? @"模式:自动(SAD)" : @"模式:手动"))
+        [_modeToggleBtn setTitle:(_lsAlgo == 1 ? @"模式:自动(SAD)" : @"模式:自动滚动")
                          forState:UIControlStateNormal];
-        _nextBtn.hidden      = (_lsAlgo != 2); // 仅手动模式显示
+        _nextBtn.hidden      = YES;   // v5.11：已移除「手动」模式，下一屏按钮永不再显示
         _startBtn.hidden     = (_lsAlgo != 0); // 仅精确模式显示
         _win.passthrough      = YES;             // 长截图：框内穿透、框外吞咽
         _win.passRect        = _longFrameRect;   // 框内坐标 → 穿透给 App
@@ -464,8 +464,9 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
 #pragma mark - v5.2：自动 / 手动模式切换
 
+// v5.11：只保留两种自动模式（0 自动滚动 / 1 自动SAD），移除了「手动」模式
 - (void)onToggleMode {
-    _lsAlgo = (_lsAlgo + 1) % 3;   // 0 精确 → 1 自动 → 2 手动 → 0
+    _lsAlgo = (_lsAlgo + 1) % 2;   // 0 自动滚动 → 1 自动(SAD) → 0
     [self refreshChrome];
     if (_lsAlgo == 0) {
         [self stopCaptureTimer];
@@ -476,9 +477,6 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         [self stopCaptureTimer];
         [self startCaptureTimer];
         [Common toast:@"自动(SAD)模式：框内手动滑动自动采集"];
-    } else {
-        [self stopCaptureTimer];
-        [Common toast:@"手动模式：框内滑完一屏点【下一屏】"];
     }
 }
 
@@ -562,14 +560,13 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 - (void)lsWatchdogFired {
     if (!_lsActive) return;
     if ([[LongShotCapture sharedInstance] frameCount] == 0) {
-        // 无响应：当前 App 未注入精确监听，回退自动 SAD
+        // v5.11：当前 App 未注入时静默回退自动(SAD)，不再弹警告提示打断用户
         _lsActive = NO;
         _lsAlgo = 1;
         [_startBtn setTitle:@"▶ 开始采集" forState:UIControlStateNormal];
         _startBtn.enabled = YES;
         [self refreshChrome];
         [self startCaptureTimer];
-        [Common toast:@"精确模式无响应，已切自动(SAD)"];
     }
 }
 
@@ -673,12 +670,9 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         if (_lsAlgo == 1) {
             [self startCaptureTimer];
             [Common toast:@"长截图·自动(SAD)：框内从顶部向下滑动，自动采集"];
-        } else if (_lsAlgo == 2) {
-            [self stopCaptureTimer];
-            [Common toast:@"长截图·手动：框内滑完一屏点【下一屏】"];
         } else {
             [self stopCaptureTimer];   // 精确模式：等用户点【开始采集】再 arm
-            [Common toast:@"长截图·精确：先滚到顶，框好区域点【开始采集】，再下滑"];
+            [Common toast:@"长截图·自动滚动：先滚到顶，框好区域点【开始采集】，再下滑"];
         }
     } else {
         [self stopCaptureTimer];
@@ -1237,6 +1231,30 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
                                            iconSize:iconS labelH:labelH rowH:rowH rowGap:rowGap vPad:vPad];
     [_panelWin addSubview:_localPanel];
     [_panelWin bringSubviewToFront:_localPanel];
+
+    // v5.11：功能面板可整块自由拖动（按按钮触点仍正常，拖空白处移动整块面板）
+    UIPanGestureRecognizer *panelPan = [[UIPanGestureRecognizer alloc] initWithTarget:self
+                                                                               action:@selector(handleLocalPanelPan:)];
+    [_localPanel addGestureRecognizer:panelPan];
+}
+
+- (void)handleLocalPanelPan:(UIPanGestureRecognizer *)pan {
+    if (!_localPanel || !_panelWin) return;
+    static CGPoint _lpStartOrigin;
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        _lpStartOrigin = _localPanel.frame.origin;
+    } else if (pan.state == UIGestureRecognizerStateChanged) {
+        CGPoint t = [pan translationInView:_panelWin];
+        CGRect scr = [UIScreen mainScreen].bounds;
+        UIEdgeInsets safe = [Common screenSafeInsets];
+        CGFloat pad = 8.0;
+        CGSize ps = _localPanel.frame.size;
+        CGFloat x = MAX(pad, MIN(_lpStartOrigin.x + t.x, scr.size.width  - ps.width  - pad));
+        CGFloat y = MAX(safe.top + 4, MIN(_lpStartOrigin.y + t.y, scr.size.height - ps.height - pad));
+        CGRect f = _localPanel.frame;
+        f.origin = CGPointMake(x, y);
+        _localPanel.frame = f;
+    }
 }
 
 - (UIButton *)makeLocalButton:(NSDictionary *)spec iconSize:(CGFloat)iconS labelH:(CGFloat)labelH width:(CGFloat)bw {
