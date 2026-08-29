@@ -30,7 +30,13 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 BUNDLE_NAME = Snapper3ZhExtPrefs SN3CCModule
 
-Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.m
+# v5.25.2：必须把 AskAIEngine.m 一起编进来。
+# Snapper3ZhExtPrefs.m 的「测试连接」按钮会用到 AskAIEngine，而 AskAIEngine.m 原先只编进 tweak
+# dylib。prefs bundle 靠 -undefined,dynamic_lookup 把解析推到运行时，但 tweak 的 Filter 里没有
+# com.apple.Preferences，设置进程里根本不存在这个类 → dlopen 直接失败：
+#   symbol not found in flat namespace '_OBJC_CLASS_$_AskAIEngine'
+# 表现就是「设置 → 超级截图」不显示 / 空白。prefs bundle 必须自包含。
+Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.m src/AskAIEngine.m
 Snapper3ZhExtPrefs_INSTALL_PATH = /Library/PreferenceBundles
 Snapper3ZhExtPrefs_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc
 Snapper3ZhExtPrefs_FRAMEWORKS = UIKit Foundation

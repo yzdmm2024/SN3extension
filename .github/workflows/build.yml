@@ -37,6 +37,22 @@ jobs:
           echo "=== Build output ==="
           find .theos -type f 2>/dev/null | head -50
 
+      # v5.25.2 新增：prefs bundle 必须自包含。
+      # 之前 v5.23.0 起的「测试连接」按钮在 prefs bundle 里引用了 AskAIEngine，
+      # 而该类只编进 tweak dylib，设置进程里 dlopen 直接报
+      #   symbol not found in flat namespace '_OBJC_CLASS_$_AskAIEngine'
+      # 导致「设置 → 超级截图」不显示。plist 检查发现不了，只能查二进制。
+      - name: Guard: prefs bundle must be self-contained
+        run: |
+          BIN=""
+          for c in .theos/obj/debug/Snapper3ZhExtPrefs.bundle/Snapper3ZhExtPrefs \
+                   .theos/obj/Snapper3ZhExtPrefs.bundle/Snapper3ZhExtPrefs; do
+            [ -f "$c" ] && BIN="$c" && break
+          done
+          if [ -z "$BIN" ]; then echo "FATAL: 找不到 prefs bundle 可执行文件"; exit 1; fi
+          echo "检查: $BIN"
+          python3 tools/check_undef_symbols.py "$BIN" src
+
       - name: Package deb manually
         run: |
           VERSION=$(grep '^Version:' control | awk '{print $2}')
