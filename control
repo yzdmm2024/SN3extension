@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.12
+Version: 5.14
 Architecture: iphoneos-arm64
-Description: [v5.12 修复] ①局部截图：拖动选框时功能面板【实时一起移动】（选区+面板整体跟手，无需关闭菜单）。②贴图拖动大头针/图片画面闪动修复（改屏幕固定坐标，跟手不闪）。③长截图：顶部首屏不再丢失(起始完整)、保存/复制前补抓末屏、抓帧频率提升减少丢帧/漏采。④移除打码入口（已有画笔）；局部截图右上角「✓完成」冗余按钮移除（拖选松手直接编辑）。
+Description: [v5.14] ①OCR改百度云端优先+本地Vision兜底，中文识别大幅提升。②翻译链打通(OCR→百度翻译，Google兜底)，设置面板可填百度OCR/翻译密钥。③长截图自适应抓帧间隔修卡顿丢帧+底部末尾补抓不裁。④贴图支持双指捏合缩放(自由拖动+缩放)。⑤局部截图面板右上角✕直接关闭不再退回再次编辑；拖动选框即可实时调整裁剪范围。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
