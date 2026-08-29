@@ -610,10 +610,11 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     CGFloat regionH = tile.size.height;         // 采集区域高（点）
     CGFloat offsetOv = regionH - delta;         // 偏移派生重叠（点）
 
-    // v5.8：聊天类 App（QQ/微信）上滑预载旧消息会改动 contentOffset，
-    //        使 delta 被夸大 → offsetOv 偏小 → 实际重叠被低估 → 重复画面。
-    //        用像素级 SAD 接缝探测核对「真实可见重叠」，取较大者（更激进去重），
-    //        并夹在 [0.18,0.94]×区域高 安全区间，消除重复且不露缝。
+    // v5.9：重叠取值优先信任「像素级 SAD 真实重叠」而不取 MAX。
+    //        取 MAX 会让重叠被高估 → 过度去重 → 中间缺内容/留白带；
+    //        SAD 是两帧实际像素一致区域，最接近真实重叠。
+    //        聊天 App 上滑预载会夸大 contentOffset 增量 → offsetOv 偏小，
+    //        SAD 恰好纠正这一点。仅当 SAD 不可靠时才回退 offsetOv。
     CGFloat scale = (tile.scale > 0) ? tile.scale : ([UIScreen mainScreen].scale > 0 ? [UIScreen mainScreen].scale : 2.0);
     CGFloat chosenOv = offsetOv;
     if (_lastLsTile && _lastLsTile.CGImage) {
@@ -621,13 +622,14 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         CGFloat sadPx = [[LongShotCapture sharedInstance] sadOverlapPxFromLast:_lastLsTile cur:tile confident:&conf];
         if (conf) {
             CGFloat sadOv = sadPx / scale;      // 像素→点
-            chosenOv = MAX(chosenOv, sadOv);    // 取更可信的较大重叠，专治重复
+            chosenOv = sadOv;
         }
     }
-    CGFloat lo = regionH * 0.18f, hi = regionH * 0.94f;
+    // 下限改为极小的 3%（不再强制吃掉 18% 造成丢内容），上限 90%
+    CGFloat lo = regionH * 0.03f, hi = regionH * 0.90f;
     if (chosenOv < lo) chosenOv = lo;
     if (chosenOv > hi) chosenOv = hi;
-    NSLog(@"[SN3] 精确帧重叠核对：offsetOv=%.1fpt sadOv(若) chosen=%.1fpt", offsetOv, chosenOv);
+    NSLog(@"[SN3] 精确帧重叠核对：offsetOv=%.1fpt chosen=%.1fpt", offsetOv, chosenOv);
 
     BOOL accepted = [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:chosenOv];
     if (accepted) {
@@ -772,17 +774,12 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     } else if (pan.state == UIGestureRecognizerStateEnded ||
                pan.state == UIGestureRecognizerStateCancelled) {
         _drag = XZDragNone;
-        // v5.6：选区过小则清空，否则保留选区并显示手柄 + ✓完成，让用户自由调整后再确认
+        // v5.9：松手【不】立即弹面板——保留选区 + 缩放手柄 + ✓完成，
+        //       让用户可继续整体拖动 / 拖角缩放调整，点「✓完成」才进入编辑
+        //       （解决 v5.8「选完就固定、非得事前确定」的体验问题）。
         if (_cropRect.size.width < kMinCrop || _cropRect.size.height < kMinCrop) {
             _hasCrop = NO;
             _cropRect = CGRectZero;
-        } else if (_didDrawSelection) {
-            // v5.8：从空白拖出新选区、松手即弹功能面板，省去「点✓完成」；微调仍可关面板后用✓完成重确认
-            _didDrawSelection = NO;
-            [self updateMask];
-            [self refreshChrome];
-            [self onConfirmCrop];
-            return;
         }
         _didDrawSelection = NO;
         [self updateMask];

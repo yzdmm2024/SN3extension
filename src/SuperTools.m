@@ -936,8 +936,17 @@ static UIWindow *_shareWin = nil;
     _eraser = NO;
     _completion = completion;
 
+    // v5.9 修复：工具按钮必须加到『工具条 bar』并使用 bar 相对坐标，
+    // 绝不能加到 _win（原实现 mkBtn 加在 _win 上、坐标 y=10/60/100 按窗口顶
+    // 算 → 工具面板永远出现在屏幕最上方、还被图片遮住/展示不全）。
+    CGFloat barH = 150.0;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
+                                                           scr.size.width, barH)];
+    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.7];
+    [_win addSubview:bar];
+
     CGRect fit = XZFitRect(image.size, CGRectMake(8, safe.top + 52, scr.size.width - 16,
-                                                  scr.size.height - safe.top - safe.bottom - 190));
+                                                  scr.size.height - safe.top - safe.bottom - 210));
     _iv = [[UIImageView alloc] initWithFrame:fit];
     _iv.image = image;
     _iv.contentMode = UIViewContentModeScaleToFill;
@@ -948,22 +957,16 @@ static UIWindow *_shareWin = nil;
     _canvas.userInteractionEnabled = YES;
     [_win addSubview:_canvas];
 
-    // 工具条
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - 130,
-                                                           scr.size.width, 130)];
-    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
-    [_win addSubview:bar];
-
     CGFloat bw = (scr.size.width - 50) / 2.0;
-    [self mkBtn:@"画笔"    frame:CGRectMake(20, 10, bw, 40) sel:@selector(onPen)     color:[UIColor systemRedColor]];
-    [self mkBtn:@"马克笔"  frame:CGRectMake(30 + bw, 10, bw, 40) sel:@selector(onMarker)  color:[UIColor systemOrangeColor]];
-    [self mkBtn:@"橡皮"    frame:CGRectMake(20, 60, bw, 40) sel:@selector(onEraser)  color:[UIColor systemGrayColor]];
-    [self mkBtn:@"换色"    frame:CGRectMake(30 + bw, 60, bw, 40) sel:@selector(onColor)  color:[UIColor systemBlueColor]];
-    [self mkBtn:@"撤销"    frame:CGRectMake(20, 100, bw, 40) sel:@selector(onUndo)    color:[UIColor systemGrayColor]];
-    [self mkBtn:@"完成"    frame:CGRectMake(30 + bw, 100, bw, 40) sel:@selector(onDone)   color:[UIColor systemGreenColor]];
+    [self mkBtn:@"画笔"   frame:CGRectMake(20,      10,  bw, 40) sel:@selector(onPen)    color:[UIColor systemRedColor]    host:bar];
+    [self mkBtn:@"马克笔" frame:CGRectMake(30 + bw, 10,  bw, 40) sel:@selector(onMarker) color:[UIColor systemOrangeColor] host:bar];
+    [self mkBtn:@"橡皮"   frame:CGRectMake(20,      60,  bw, 40) sel:@selector(onEraser) color:[UIColor systemGrayColor]   host:bar];
+    [self mkBtn:@"换色"   frame:CGRectMake(30 + bw, 60,  bw, 40) sel:@selector(onColor)  color:[UIColor systemBlueColor]   host:bar];
+    [self mkBtn:@"撤销"   frame:CGRectMake(20,      110, bw, 40) sel:@selector(onUndo)   color:[UIColor systemGrayColor]   host:bar];
+    [self mkBtn:@"完成"   frame:CGRectMake(30 + bw, 110, bw, 40) sel:@selector(onDone)   color:[UIColor systemGreenColor]  host:bar];
 
     [self mkBtn:@"取消" frame:CGRectMake(20, safe.top + 12, 80, 34)
-          sel:@selector(onCancel) color:[UIColor systemGrayColor]];
+          sel:@selector(onCancel) color:[UIColor systemGrayColor] host:_win];
 
     UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(110, safe.top + 12, scr.size.width - 130, 34)];
     tip.text = @"手指在图上涂抹；画笔/马克笔/橡皮，点完成合成回原图";
@@ -977,7 +980,7 @@ static UIWindow *_shareWin = nil;
     objc_setAssociatedObject(_win, "xz_draw_editor", self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (UIButton *)mkBtn:(NSString *)title frame:(CGRect)f sel:(SEL)sel color:(UIColor *)color {
+- (UIButton *)mkBtn:(NSString *)title frame:(CGRect)f sel:(SEL)sel color:(UIColor *)color host:(UIView *)host {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = f;
     b.backgroundColor = color;
@@ -986,7 +989,7 @@ static UIWindow *_shareWin = nil;
     [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     b.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
-    [_win addSubview:b];
+    [host addSubview:b];
     return b;
 }
 
@@ -1095,7 +1098,9 @@ static UIWindow *_shareWin = nil;
 }
 
 - (void)drawRect:(CGRect)rect {
-    [[UIColor colorWithWhite:1 alpha:0.35] setStroke];
+    // v5.9：预览线条从 0.35 提到 0.92——原 alpha 太淡太透明，涂抹时几乎看不见，
+    //       让用户误以为打码效果很弱。预览与最终合成应同样清晰可辨。
+    [[UIColor colorWithWhite:1 alpha:0.92] setStroke];
     for (UIBezierPath *p in _paths) {
         p.lineWidth = _strokeWidth;
         p.lineCapStyle = kCGLineCapRound;
