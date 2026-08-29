@@ -209,7 +209,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     // 框选手势：框外 = 重画，框内 = 整体移动
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self
                                                                          action:@selector(handleCropPan:)];
-    pan.maximumNumberOfTouchesRequired = 1;   // v5.18：限定单指，避免双指捏合时被 pan 抢走导致 pinch 失灵
+    pan.maximumNumberOfTouches = 1;   // v5.18：限定单指，避免双指捏合时被 pan 抢走导致 pinch 失灵
     pan.delegate = self;
     [_contentView addGestureRecognizer:pan];
 
