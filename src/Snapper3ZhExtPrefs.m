@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import <Preferences/Preferences.h>
 #import "Common.h"
+#import "AskAIEngine.h"
 
 // 设置面板主控制器：iOS 设置 → 超级截图
 @interface SN3PrefsController : PSListController
