@@ -170,7 +170,8 @@ static int SN3_LoopKVOContext = 0;
     CGRect scr = [UIScreen mainScreen].bounds;
 
     _win = [[XZPassThroughWindow alloc] initWithFrame:scr];
-    _win.windowLevel = UIWindowLevelAlert + 200;
+    // v5.25.6: 同 EditToolbarWindow, 降到 Alert-10, 避免 OCR/弹窗被遮罩盖住 + 抬层 hack 残留关不掉
+    _win.windowLevel = UIWindowLevelAlert - 10;
     _win.backgroundColor = [UIColor clearColor];
     _win.userInteractionEnabled = YES;
     _win.passthrough = NO;                       // 框选阶段要吃下全屏拖拽

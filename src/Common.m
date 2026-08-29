@@ -100,11 +100,8 @@
                                                                     message:msg
                                                              preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        CGFloat baseLevel = w.windowLevel;
-        [root presentViewController:a animated:YES completion:^{
-            // v5.25.4: 同样抬到工具栏(windowLevel=Alert+200)之上, 否则错误提示也会被遮罩盖住
-            if (a.view.window) a.view.window.windowLevel = baseLevel + 50;
-        }];
+        // v5.25.6: 删除抬层 hack (工具栏已降到 Alert-10, 系统 alert 自然浮在其上)
+        [root presentViewController:a animated:YES completion:nil];
     });
 }
 
@@ -174,13 +171,9 @@
             UIViewController *host = [self topViewControllerFrom:win];
             if (!host) host = [self topViewControllerFrom:[self topWindow]];
             if (host && host.view.window) {
-                CGFloat baseLevel = win.windowLevel;
-                [host presentViewController:vc animated:YES completion:^{
-                    // v5.25.4: OCR/翻译/识别结果弹窗必须盖在工具栏(windowLevel=Alert+200)之上。
-                    // UIAlertController 默认 Alert 层级低于工具栏, 会被全屏半透明遮罩挡住, 导致看不清。
-                    // 弹窗窗口滞后一级, 保证浮在工具栏上方。
-                    if (vc.view.window) vc.view.window.windowLevel = baseLevel + 50;
-                }];
+                // v5.25.6: 不再手动抬层。工具栏窗口已降到 Alert-10(1990) < 系统 alert(2000),
+                // 弹窗由系统自然浮在工具栏之上, 且 dismiss 后正常清理, 无残留(修复「关不掉」)。
+                [host presentViewController:vc animated:YES completion:nil];
             } else {
                 NSLog(@"[SN3] present failed: no host view controller");
             }

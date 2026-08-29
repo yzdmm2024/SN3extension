@@ -148,7 +148,13 @@ static EditToolbarWindow *_shared = nil;
     UIEdgeInsets safe = [Common screenSafeInsets];
 
     _win = [[UIWindow alloc] initWithFrame:scr];
-    _win.windowLevel = UIWindowLevelAlert + 200;
+    // v5.25.6: 层级从 Alert+200 降到 Alert-10。
+    // 原 Alert+200(2200) 高于系统 UIAlertController 默认层级(Alert=2000),
+    // 导致 OCR/翻译/识别结果弹窗被全屏遮罩盖住; v5.25.4 用「把弹窗窗口硬抬到 2250」的 hack 修复,
+    // 但那个被抬高的 alert 窗口 dismiss 后残留 2250 盖住全屏, 使工具栏「关闭」按钮点不到, 界面关不掉。
+    // 降到 Alert-10(1990): 仍高于所有 app 内容(盖住截图背景), 但低于系统 alert(2000),
+    // 于是 OCR 弹窗由系统自然浮在工具栏之上, 且 dismiss 后正常清理, 无残留。
+    _win.windowLevel = UIWindowLevelAlert - 10;
     _win.backgroundColor = [UIColor colorWithWhite:0 alpha:0.82];
     _win.userInteractionEnabled = YES;
     if (@available(iOS 13.0, *)) _win.windowScene = [Common activeWindowScene];
