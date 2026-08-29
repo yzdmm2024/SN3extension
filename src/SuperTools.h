@@ -16,8 +16,8 @@
 // 1b. OCR 带文字框：boxes 为 NSValue(CGRect)，坐标系是图片「像素」左上原点
 + (void)ocr:(UIImage *)image withBoxes:(void (^)(NSString *text, NSArray<NSValue *> *boxes))completion;
 
-// 2. 翻译：OCR 取文 → 网络翻译接口 → src=原文 dst=译文
-+ (void)translate:(UIImage *)image completion:(void (^)(NSString *src, NSString *dst))completion;
+// 2. 翻译：OCR 取文 → 网络翻译接口 → src=原文 dst=译文 err=失败原因(非空)
++ (void)translate:(UIImage *)image completion:(void (^)(NSString *src, NSString *dst, NSString *err))completion;
 
 // 3. 画图：自绘 CoreGraphics 画板（画笔/马克笔/橡皮/换色/撤销），edited=nil 表示取消
 + (void)draw:(UIImage *)image completion:(void (^)(UIImage *edited))completion;
