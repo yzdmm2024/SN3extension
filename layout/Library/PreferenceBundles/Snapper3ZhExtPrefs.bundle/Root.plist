@@ -93,6 +93,46 @@
 			<string>百度智能云应用密钥</string>
 		</dict>
 		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>默认走本地 Apple Vision 识别 (离线免费)，不满意时可切到「百度 OCR(PaddleOCR, 准确率高, 需配 API Key/Secret)」或「AI Studio/豆包/通义千问 等大模型 (免费, 需自备 access token / API key)」。</string>
+			<key>label</key>
+			<string>OCR 引擎</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>OCR_Engine</string>
+			<key>label</key>
+			<string>识别引擎</string>
+			<key>validTitles</key>
+			<array>
+				<string>本地</string>
+				<string>百度</string>
+				<string>大模型</string>
+			</array>
+			<key>default</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>SN3LinksController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>打开 AI Studio Access Token 页</string>
+		</dict>
+		<dict>
 			<key>PostNotification</key>
 			<string>com.axs.snapper3zhext.prefsChanged</string>
 			<key>cell</key>
@@ -102,7 +142,7 @@
 			<key>key</key>
 			<string>LLM_OCR_Enabled</string>
 			<key>label</key>
-			<string>大模型OCR（免费，AI Studio/豆包等）</string>
+			<string>大模型OCR(同上「AI 提问」段,免费)</string>
 		</dict>
 		<dict>
 			<key>cell</key>

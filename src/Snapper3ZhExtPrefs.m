@@ -136,6 +136,18 @@
     [specs addObject:[self urlCell:@"打开 翻译开发者管理/控制台"
                                url:@"https://fanyi-api.baidu.com/manage/developer"]];
 
+    // v5.21：AI Studio / 其它平台（OCR/翻译/多模态模型，自带 access token）
+    PSSpecifier *gAI = [PSSpecifier groupSpecifierWithName:@"AI Studio / 其它大模型(免费/自带 access token)"];
+    [specs addObject:gAI];
+    [specs addObject:[self urlCell:@"打开 百度 AI Studio · Access Token 页"
+                               url:@"https://aistudio.baidu.com/account/accessToken"]];
+    [specs addObject:[self urlCell:@"打开 百度 AI Studio · 模型库(选多模态模型,如 ERNIE-4.5-VL 等)"
+                               url:@"https://aistudio.baidu.com/modeloverview/list"]];
+    [specs addObject:[self urlCell:@"打开 火山方舟·API 控制台(豆包等)"
+                               url:@"https://www.volcengine.com/product/doubao"]];
+    [specs addObject:[self urlCell:@"打开 阿里云·百炼(通义千问 Qwen-VL 等)"
+                               url:@"https://bailian.console.aliyun.com/"]];
+
     self.specifiers = specs;
 }
 

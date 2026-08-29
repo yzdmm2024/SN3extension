@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 5.20
+Version: 5.21
 Architecture: iphoneos-arm64
-Description: [v5.20] ①彻底修「未能载入软件包」: 从 plist 移除崩溃的 SN3ToolbarController 子页, 保留开关入口, Preferences.app 可正常载入. ②局部截图pinch/pan 真正共存: 在 pan 手势 Began/Changed 中加 pan.numberOfTouches>1 提前return, 把双指让给 pinch, 避免 pan 退化用质心loc把 _cropRect 重置成 0,0 导致 pinch 拿到 hasSelection=NO. ③同时识别代理已加 (v5.19).
+Description: [v5.21] ①OCR 引擎三选一: 设置→OCR 引擎(本地/百度/大模型), 顶部 PSSegmentCell 切换, 配置缺失 toast 提示. ②SN3LinksController 新增 AI Studio Access Token + 模型库 + 火山方舟 + 阿里百炼入口(用户说"还是百度的"指 OCR 引擎这里之前没有显式选择). ③局部截图面板: 单排滑动=开 → UIScrollView 横向, 末尾接回开头循环(KVO 监听 contentOffset 跳变), 实时读偏好不用重启. ④kHandleHit 22→30, 四边四角手柄命中更宽松. ⑤框选+画新框重选逻辑原本就有, 验证.
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

@@ -23,6 +23,7 @@
 #import "MaskCropWindow.h"
 #import "XZPassThroughWindow.h"
 #import "Common.h"
+#import <objc/runtime.h>
 #import "ImageUtils.h"
 #import "EditToolbarWindow.h"
 #import "LongShotCapture.h"
@@ -59,7 +60,7 @@ typedef NS_OPTIONS(NSInteger, XZResizeMask) {
     XZResizeBottom= 1 << 3,
 };
 
-static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
+static const CGFloat kHandleHit = 30.0;   // 手柄命中半边长（pt）—— v5.21:加大到 30, 让四边四角的"上下左右"调整更容易命中
 
 @interface MaskCropWindow () <UIGestureRecognizerDelegate>
 - (void)setWindowHidden:(BOOL)hidden;
@@ -67,6 +68,9 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 - (void)captureFullScreenAndSave;                  // 正常截图 → 相册（无编辑）
 - (void)refreshChrome;                             // 强制刷新 UI
 @end
+
+// v5.21: 单排滑动循环用的 KVO context
+static int SN3_LoopKVOContext = 0;
 
 @implementation MaskCropWindow {
     XZPassThroughWindow *_win;      // 窗口A（可穿透）
@@ -131,6 +135,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     XZPassThroughWindow *_panelWin;  // 承载功能面板的独立 UIWindow（抓屏隐藏窗口A时面板不受影响）
     UIViewController *_panelVC;     // 面板窗口的 rootVC（结果弹窗 present 落点）
     CGRect          _cropScreenRect; // 当前选区屏幕坐标（后台抓屏裁剪用）
+    UIScrollView    *_panelScroll;   // v5.21：单排模式下的循环滑动滚动视图（用 KVO 监听 contentOffset 做循环）
 }
 
 #pragma mark - 单例 / 生命周期
@@ -1298,20 +1303,31 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     CGFloat rowH = iconS + labelH + 12.0;   // 单排高
     CGFloat rowGap = 6.0;
     CGFloat vPad = 8.0;
-    CGFloat panelH = vPad * 2 + rowH * 2 + rowGap;
     CGFloat pad = 12.0;
     CGFloat panelW = scr.size.width - pad * 2;
 
-    // 默认放在选区下方；若溢出底部则放到选区上方；都放不下则贴顶部（v5.12 复用统一 helper）
-    CGFloat y = [self localPanelYForScreenRect:rect panelHeight:panelH];
+    // v5.21：单排滑动模式（设置→工具栏→单排滑动显示=开）：所有按钮塞一个 UIScrollView
+    //         横向滚动, 末尾接回开头循环. 实时读偏好, 不需重启App.
+    BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
 
+    CGFloat panelH = singleRow ? (vPad * 2 + rowH) : (vPad * 2 + rowH * 2 + rowGap);
+
+    // v5.21 重新 build 时, 先移除旧面板, 再创建新面板(设置切换单/双排时不用重启)
+    if (_localPanel) { [_localPanel removeFromSuperview]; _localPanel = nil; }
+    if (_panelScroll) {   // 先把旧 sv 的 KVO 解绑, 避免 dealloc 后回调崩
+        @try { [_panelScroll removeObserver:self forKeyPath:@"contentOffset" context:(void *)&SN3_LoopKVOContext]; }
+        @catch (__unused NSException *e) {}
+        _panelScroll = nil;
+    }
+    if (_panelWin) { [_panelWin removeAllInteractiveViews]; }
+
+    // v5.21：创建承载面板的独立窗口（一次创建后保留；切换单/双排时复用）
     if (!_panelWin) {
         _panelWin = [[XZPassThroughWindow alloc] initWithFrame:scr];
-        _panelWin.windowLevel = _win.windowLevel + 10;   // 永远盖在遮罩窗口之上
+        _panelWin.windowLevel = _win.windowLevel + 10;
         _panelWin.backgroundColor = [UIColor clearColor];
         _panelWin.userInteractionEnabled = YES;
-        // v5.12：面板窗口只占「面板自身」一块，其余位置触摸穿透给遮罩窗口 → 可直接拖动选区框
-        _panelWin.passthrough = YES;
+        _panelWin.passthrough = YES;            // 面板外触摸穿透给遮罩窗口
         _panelWin.gateInteractive = YES;
         _panelVC = [[UIViewController alloc] init];
         _panelVC.view.backgroundColor = [UIColor clearColor];
@@ -1321,9 +1337,89 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     }
     _panelWin.hidden = NO;
 
-    if (_localPanel) [_localPanel removeFromSuperview];
-    _localPanel = [self makeLocalPanelViewWithFrame:CGRectMake(pad, y, panelW, panelH)
-                                           iconSize:iconS labelH:labelH rowH:rowH rowGap:rowGap vPad:vPad];
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(0, 0, panelW, panelH)];
+    panel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.82];
+    panel.layer.cornerRadius = 14;
+    panel.userInteractionEnabled = YES;
+    CGFloat y = [self localPanelYForScreenRect:rect panelHeight:panelH];
+    panel.frame = CGRectMake(0, y, panelW, panelH);
+    _localPanel = panel;
+
+    // 全部 8 个按钮 — 单排时按工具栏顺序排序; 双排时按原 row1+row2 排
+    NSArray<NSNumber *> *tags = @[ @(XZLocalOCR), @(XZLocalTranslate), @(XZLocalDraw), @(XZLocalCode),
+                                   @(XZLocalCopy), @(XZLocalFloating), @(XZLocalSave), @(XZLocalShare) ];
+    NSArray<NSString *> *icons = @[ @"text.viewfinder", @"translate", @"pencil.tip", @"qrcode.viewfinder",
+                                    @"doc.on.doc", @"pin", @"square.and.arrow.down", @"square.and.arrow.up" ];
+    NSArray<NSString *> *labels = @[ @"OCR", @"翻译", @"画图", @"识码",
+                                     @"复制", @"贴图", @"保存", @"分享" ];
+    NSArray<NSDictionary *> *all = @[
+        @{@"icon":icons[0], @"label":labels[0], @"tag":tags[0]},
+        @{@"icon":icons[1], @"label":labels[1], @"tag":tags[1]},
+        @{@"icon":icons[2], @"label":labels[2], @"tag":tags[2]},
+        @{@"icon":icons[3], @"label":labels[3], @"tag":tags[3]},
+        @{@"icon":icons[4], @"label":labels[4], @"tag":tags[4]},
+        @{@"icon":icons[5], @"label":labels[5], @"tag":tags[5]},
+        @{@"icon":icons[6], @"label":labels[6], @"tag":tags[6]},
+        @{@"icon":icons[7], @"label":labels[7], @"tag":tags[7]},
+    ];
+
+    if (singleRow) {
+        // 单排 + 横向滑动; 末尾接回开头循环(末尾后再划会自动滚回开头)
+        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, vPad, panelW, rowH)];
+        sv.showsHorizontalScrollIndicator = NO;
+        sv.alwaysBounceHorizontal = YES;          // 允许末端回弹
+        sv.decelerationRate = 0.0;                // 即停, 方便循环
+        sv.pagingEnabled = NO;                    // 自由滑动 + 循环(自定义)
+        [panel addSubview:sv];
+        CGFloat bw = 64.0, gap = 8.0;
+        CGFloat x = 10.0;
+        for (NSDictionary *d in all) {
+            UIButton *b = [self makeLocalButton:d iconSize:iconS labelH:labelH width:bw];
+            b.frame = CGRectMake(x, 0, bw, rowH);
+            [sv addSubview:b];
+            x += bw + gap;
+        }
+        // 末尾再复制一份同样的按钮, 滚到第二份的对应位置时瞬移回第一份, 实现无缝循环
+        for (NSDictionary *d in all) {
+            UIButton *b = [self makeLocalButton:d iconSize:iconS labelH:labelH width:bw];
+            b.frame = CGRectMake(x, 0, bw, rowH);
+            [sv addSubview:b];
+            x += bw + gap;
+        }
+        CGFloat totalW = x;
+        sv.contentSize = CGSizeMake(totalW, rowH);
+        // v5.21 无缝循环: KVO 监听 contentOffset, 滚过"第二份开头"就瞬移回第一份开头;
+        // 滑到第一份开头前时跳到第一份末尾. 视觉上看就是无限左右滑.
+        objc_setAssociatedObject(sv, "sn3_loop_start", @(loopStart), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        _panelScroll = sv;
+        [sv addObserver:self forKeyPath:@"contentOffset" options:NSKeyValueObservingOptionNew
+                 context:(void *)&SN3_LoopKVOContext];
+    } else {
+        // 双排 4+4, 与原版一致
+        CGFloat gap = 6.0;
+        CGFloat bw = (panelW - gap * 3) / 4.0;
+        for (NSInteger i = 0; i < 4; i++) {
+            UIButton *b = [self makeLocalButton:all[i] iconSize:iconS labelH:labelH width:bw];
+            b.frame = CGRectMake(gap + i * (bw + gap), vPad, bw, rowH);
+            [panel addSubview:b];
+        }
+        for (NSInteger i = 0; i < 4; i++) {
+            UIButton *b = [self makeLocalButton:all[4 + i] iconSize:iconS labelH:labelH width:bw];
+            b.frame = CGRectMake(gap + i * (bw + gap), vPad + rowH + rowGap, bw, rowH);
+            [panel addSubview:b];
+        }
+    }
+
+    // 面板右上角关闭（✕/取消）：直接关闭整个局部截图（不再退回「再次编辑」框选模式——
+    // 需求：拖动选框已可实时编辑裁剪范围，无需单独的回退编辑流程）。
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(panelW - 30, 0, 30, 28);
+    [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    close.tintColor = [UIColor whiteColor];
+    close.titleLabel.font = [UIFont systemFontOfSize:13];
+    [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:close];
+
     [_panelWin addSubview:_localPanel];
     [_panelWin addInteractiveView:_localPanel];   // 面板本身作为交互白名单
     [_panelWin bringSubviewToFront:_localPanel];
@@ -1400,6 +1496,11 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 // 退出原地面板，回到框选模式（v5.6：保留选区，可直接拖动/缩放调整，不必重新截图）
 - (void)exitLocalPanel {
     if (_localPanel) { [_localPanel removeFromSuperview]; _localPanel = nil; }
+    if (_panelScroll) {
+        @try { [_panelScroll removeObserver:self forKeyPath:@"contentOffset" context:(void *)&SN3_LoopKVOContext]; }
+        @catch (__unused NSException *e) {}
+        _panelScroll = nil;
+    }
     if (_panelWin) { _panelWin.hidden = YES; }   // 隐藏独立面板窗口（保留以便复用）
     _editingPanel = NO;
     _cropImage = nil;
@@ -1408,6 +1509,30 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     [self updateMask];
     [self refreshChrome];
     [Common toast:@"已退出编辑，可拖动选框调整或点「✓完成」"];
+}
+
+// v5.21: 单排滑动循环监听 —— 滚过"第二份开头"就跳回第一份; 反之亦然.
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context {
+    if (context == &SN3_LoopKVOContext) {
+        UIScrollView *sv = (UIScrollView *)object;
+        NSNumber *ls = objc_getAssociatedObject(sv, "sn3_loop_start");
+        if (!sv.contentSize.width || !ls) return;
+        CGFloat loopStart = ls.floatValue;   // 第一份末尾 = 第二份开头
+        CGFloat fullW = sv.contentSize.width; // = loopStart * 2
+        // 把第二份对齐回第一份的对应偏移
+        if (sv.contentOffset.x >= fullW - 0.5) {
+            CGPoint p = sv.contentOffset;
+            p.x -= loopStart;
+            sv.contentOffset = p;
+        } else if (sv.contentOffset.x <= -0.5) {
+            CGPoint p = sv.contentOffset;
+            p.x += loopStart;
+            sv.contentOffset = p;
+        }
+        return;
+    }
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 }
 
 #pragma mark - 原地面板结果展示（复用窗口A 的 hostVC 弹窗）

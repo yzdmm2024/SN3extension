@@ -17,6 +17,7 @@
 #define XZ_KEY_OCR_BD_APIKEY    @"OCR_Baidu_APIKey"       // v5.13：百度OCR(文字识别) 密钥（须与密钥成对填写才启用云端OCR）
 #define XZ_KEY_OCR_BD_SECRET    @"OCR_Baidu_SecretKey"
 #define XZ_KEY_LLM_OCR_ENABLED  @"LLM_OCR_Enabled"        // v5.17：用「AI 提问」里的多模态大模型(大模型OCR/豆包等)做免费OCR
+#define XZ_KEY_OCR_ENGINE       @"OCR_Engine"             // v5.21：OCR 引擎选择(0=本地/1=百度/2=大模型), UI 用 PSSegmentCell, 0=默认
 #define XZ_KEY_TB_ORDER         @"Toolbar_Order"         // v5.18：工具栏按钮顺序(逗号分隔的tag)
 #define XZ_KEY_TB_DISABLED      @"Toolbar_Disabled"      // v5.18：工具栏禁用的按钮(逗号分隔的tag)
 #define XZ_KEY_TB_LAYOUT        @"Toolbar_Layout"        // v5.18：工具栏布局 — 0=双排(默认), 1=单排滑动
