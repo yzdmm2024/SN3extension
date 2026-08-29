@@ -150,7 +150,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         _cropRect = CGRectZero;
         _hasCrop = NO;
         _capturing = NO;
-        _lsAlgo = 1;                // v5.16：默认自动(SAD)模式 —— 打开长截图即可滑动采集，免预设
+        _lsAlgo = 0;                // v5.17：默认自动滚动(精确)模式 —— 微信/QQ 0 重叠；其它 App 可切「自动(SAD)」
     }
     return self;
 }
@@ -316,7 +316,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     _entryTile = nil;
     _lastAddedTile = nil;
     if (_lsActive) { _lsActive = NO; [self stopLsWatchdog]; notify_post(SN3_LS_DISARM); }
-    _lsAlgo = 1;               // v5.16：退出长截图复位为自动(SAD)模式（打开即采集）
+    _lsAlgo = 0;               // v5.17：退出长截图复位为自动滚动(精确)模式
     _modeToggleBtn = nil;      // v5.2
     _nextBtn = nil;            // v5.2
     _startBtn = nil;           // v5.3
@@ -693,7 +693,11 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
 - (void)startCaptureTimer {
     [self stopCaptureTimer];
-    _lsInterval = 0.15;                      // v5.13：起点，随后随滚动速度自适应
+    // v5.17：以设置里的「每帧间隔」为起点（限 0.1~1.0s，避免 0.05 帧过密造成大量重叠重复），
+    //        随后仍随滚动速度自适应（重叠过大自动拉长、过小自动收紧）。
+    CGFloat iv = [[Common stringPref:XZ_KEY_LONG_INTERVAL default:@"0.15"] doubleValue];
+    if (!(iv >= 0.1)) iv = 0.15; else if (iv > 1.0) iv = 1.0;
+    _lsInterval = iv;
     _lsLastCastTime = 0;
     _forceTick = NO;
     _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.05

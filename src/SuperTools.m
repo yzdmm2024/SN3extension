@@ -18,6 +18,7 @@
 
 #import "SuperTools.h"
 #import "Common.h"
+#import "AskAIEngine.h"   // v5.17：大模型OCR（OpenAI 兼容，AI Studio/Doubao 等免费）
 #import "ImageUtils.h"
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
@@ -113,8 +114,26 @@ static CGRect XZRectFromValue(id v) {
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     if (!image.CGImage) { if (completion) completion(nil); return; }
 
-    // v5.13：设置里填了百度文字识别(API Key+Secret) → 优先云端OCR（PaddleOCR 商用、中文识别强）。
-    //        云端失败或返回空（配错/额度/弱图）时，自动回退本地 Vision 多语言链，保证零配置也能用。
+    // v5.17：免费大模型 OCR —— 开启且填好「AI 提问」的多模态模型(大模型OCR/Doubao豆包等)时，
+    //        优先用 OpenAI 兼容接口识别（无需百度付费）。失败/未配置才依次回退百度→本地 Vision。
+    if ([Common boolPref:XZ_KEY_LLM_OCR_ENABLED default:NO]) {
+        NSString *bu = [Common stringPref:XZ_KEY_AI_BASEURL default:@""];
+        NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
+        NSString *md  = [Common stringPref:XZ_KEY_AI_MODEL default:@""];
+        if (bu.length && key.length && md.length) {
+            [self ocrViaLLM:image completion:^(NSArray<NSDictionary *> *items) {
+                if (items.count) { if (completion) completion(items); }
+                else { [self ocrViaBaiduOrVision:image languages:langs completion:completion]; }
+            }];
+            return;
+        }
+    }
+    [self ocrViaBaiduOrVision:image languages:langs completion:completion];
+}
+
+// 百度(已填密钥)→本地 Vision 的回退链
++ (void)ocrViaBaiduOrVision:(UIImage *)image languages:(NSArray *)langs
+                 completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     NSString *ak = [Common stringPref:XZ_KEY_OCR_BD_APIKEY default:@""];
     NSString *sk = [Common stringPref:XZ_KEY_OCR_BD_SECRET default:@""];
     if (ak.length && sk.length) {
@@ -125,6 +144,47 @@ static CGRect XZRectFromValue(id v) {
     } else {
         [self ocrVisionChain:image languages:langs completion:completion];
     }
+}
+
+// v5.17：多模态大模型 OCR（免费，OpenAI 兼容接口）。把截图作为图片消息发给模型，取回逐行文字。
++ (void)ocrViaLLM:(UIImage *)image completion:(void (^)(NSArray<NSDictionary *> *items))completion {
+    if (!image.CGImage) { if (completion) completion(nil); return; }
+    NSString *bu = [Common stringPref:XZ_KEY_AI_BASEURL default:@""];
+    NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
+    NSString *md  = [Common stringPref:XZ_KEY_AI_MODEL default:@""];
+    if (!bu.length || !key.length || !md.length) { if (completion) completion(nil); return; }
+
+    UIImage *tiny = [self bdShrink:image maxDim:2048];   // OCR 够用即可，减流量提速度
+    NSData *png = UIImagePNGRepresentation(tiny);
+    if (!png) { if (completion) completion(nil); return; }
+    NSString *b64 = [png base64EncodedStringWithOptions:0];
+    if (!b64.length) { if (completion) completion(nil); return; }
+    NSString *dataURL = [@"data:image/png;base64," stringByAppendingString:b64];
+
+    NSDictionary *pic = @{ @"type": @"image_url",
+                           @"image_url": @{ @"url": dataURL } };
+    NSDictionary *txt = @{ @"type": @"text",
+                           @"text": @"识别这张图片中的全部文字，按原文从上到下逐行输出。只输出识别到的文字，不要任何解释、不要代码块、不要编号、不要翻译。" };
+    NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt, pic ] } ];
+
+    [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
+                  completion:^(NSString *answer, NSString *err) {
+        if (err.length) {
+            NSLog(@"[SN3] 大模型OCR失败: %@", err);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [Common toast:[NSString stringWithFormat:@"大模型OCR失败：%@（可改回百度或本地识别）", err]];
+            });
+            if (completion) completion(nil);
+            return;
+        }
+        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+        NSArray *lines = [answer componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+        for (NSString *ln in lines) {
+            NSString *s = [ln stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if (s.length) [items addObject:@{@"text": s, @"box": [NSValue valueWithCGRect:CGRectZero]}];
+        }
+        if (completion) completion(items.count ? items : nil);
+    }];
 }
 
 // 本地 Vision 多语言重试链（原 ocrObservations 的主体，现作为云端 OCR 的兜底）

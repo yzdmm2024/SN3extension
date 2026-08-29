@@ -19,10 +19,15 @@
 // v5.15：从其他 app 切回设置后偶发空白 —— 兜底重建（object 还在但 specifiers 被清空/未重载时）
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // v5.16：从其它 app 切回设置时 PSListController 常不自刷新/被清空导致整页白屏。
-    //        本页每次回到前台都从 Root.plist 重建 specifiers，保证一定有内容；
+    // v5.17：从其它 app 切回设置时 PSListController 常不自刷新/被清空导致整页白屏。
+    //        每次回到前台都从 Root.plist 重建 specifiers 并强刷表格，保证一定有内容；
     //        各输入框的值存在 defaults，重建会自动回填，不会丢失已填的密钥。
-    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    if (!self.specifiers || self.specifiers.count == 0) {
+        self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    }
+    if ([self.view respondsToSelector:@selector(reloadData)]) {
+        [(UITableView *)self.view reloadData];
+    }
 }
 
 // v5.15：微信输入法等第三方键盘在设置里弹不出来 —— 提供「从剪贴板一键粘贴密钥」，

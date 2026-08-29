@@ -93,6 +93,26 @@
 			<string>百度智能云应用密钥</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LLM_OCR_Enabled</string>
+			<key>label</key>
+			<string>大模型OCR（免费，AI Studio/豆包等）</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>免费方案：打开「大模型OCR」开关，并到下方「AI 提问」段填好 接口地址/APIKey(令牌)/模型名 —— 用你自己的 AI Studio(火山方舟/豆包等)多模态模型识别文字，不用百度付费。若没填或失败，自动回退本地Vision。</string>
+			<key>label</key>
+			<string>免费 Ocr 大模型（不用百度）</string>
+		</dict>
+		<dict>
 			<key>action</key>
 			<string>pasteClipboardKeys</string>
 			<key>cell</key>
