@@ -136,7 +136,6 @@ static int SN3_LoopKVOContext = 0;
     UIViewController *_panelVC;     // 面板窗口的 rootVC（结果弹窗 present 落点）
     CGRect          _cropScreenRect; // 当前选区屏幕坐标（后台抓屏裁剪用）
     UIScrollView    *_panelScroll;   // v5.21：单排模式下的循环滑动滚动视图（用 KVO 监听 contentOffset 做循环）
-    UIButton        *_closeBtn;      // v5.25.0：✕ 关闭按钮（挂在 _panelWin 上，不在 panel 内）
 }
 
 #pragma mark - 单例 / 生命周期
@@ -1300,7 +1299,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     //       加大到 44x44, 不与 sv 抢 pan 事件, 永远不与 panel 内的循环滚动打架.
     if (_closeBtn) { [_closeBtn removeFromSuperview]; _closeBtn = nil; }
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    CGRect pf = panel.frame; // panel.frame 已经在前面算好 (y 已根据位置上下翻转)
+    // 形参 pf 就是 panel 的 frame, 不重新定义
     close.frame = CGRectMake(CGRectGetMaxX(pf) - 6, CGRectGetMidY(pf) - 22, 44, 44);
     [close setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
     close.tintColor = [UIColor colorWithRed:1 green:0.4 blue:0.4 alpha:1.0];
