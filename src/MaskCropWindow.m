@@ -206,16 +206,17 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     _handleLayer.hidden = YES;
     [_contentView.layer addSublayer:_handleLayer];
 
-    // 框选手势：框外 = 重画，框内 = 整体移动
+    // 框选手势：框外 = 重画，框内 = 整体移动（不限指数，配合 pinch 同时识别）
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self
                                                                          action:@selector(handleCropPan:)];
-    pan.maximumNumberOfTouches = 1;   // v5.18：限定单指，避免双指捏合时被 pan 抢走导致 pinch 失灵
     pan.delegate = self;
     [_contentView addGestureRecognizer:pan];
 
-    // v5.15：双指捏合等比缩放选区（围绕选区中心），面板阶段同样生效、同步跟随
+    // v5.15 / v5.19：双指捏合等比缩放选区（围绕选区中心）。
+    //               关键是让 pan 与 pinch 同时识别 —— pan 处理单指移动/拖角，pinch 接管双指缩放。
     UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self
                                                                                action:@selector(pinchCrop:)];
+    pinch.numberOfTouchesRequired = 2;
     pinch.delegate = self;
     [_contentView addGestureRecognizer:pinch];
 
@@ -228,6 +229,12 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     _win.hidden = NO;
     [Common toast:@"拖出要截取的区域，可拖动/缩放调整，点「✓完成」编辑"];
     NSLog(@"[SN3] mask window A shown (v4.8)");
+}
+
+// v5.19：允许 pan 与 pinch 同时识别 —— 单指走 pan（拖框/拉角），双指走 pinch（缩放）。
+//         没有这一句时，UIGestureRecognizer 默认让先识别的手势独占，会出现"双指不缩放"或"单指也跑缩放"的问题。
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return YES;
 }
 
 - (void)refreshChrome {

@@ -9,24 +9,36 @@
 
 @implementation SN3PrefsController
 
-// 用框架自带的 setSpecifiers: 把 Root.plist 解析出的 specifiers 写入框架内部存储，
-// 避免子类重复声明 _specifiers 与 PSListController 父类 ivar 冲突（那个冲突会让面板空白）。
+// v5.19：设置面板偶发空白（iOS 14 PSListController 在 viewWillAppear 同帧改 specifiers 时
+//        会把 table 刷空）。把重建推到下一 runloop，并加 try/catch 兜底；监听
+//        UIApplicationDidBecomeActiveNotification + prefsChanged 通知双保险。
+// 各输入框的值存在 defaults，重建会自动回填，不会丢失已填的密钥。
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    @try { self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self]; }
+    @catch (NSException *e) { NSLog(@"[SN3] prefs init failed: %@", e.reason); }
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                              selector:@selector(handleBecomeActive)
+                                                  name:UIApplicationDidBecomeActiveNotification
+                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                              selector:@selector(handlePrefsChanged)
+                                                  name:@"com.axs.snapper3zhext.prefsChanged"
+                                                object:nil];
 }
 
-// v5.18：从其他 app 切回设置后偶发空白 —— 三层兜底：
-//   (a) 每次回到前台无脑重建（specifiers 存了但 table 不刷、或内部状态错位时也能自愈）；
-//   (b) 监听 UIApplicationDidBecomeActiveNotification，强行重新触发 reloadData；
-//   (c) 监听 prefsChanged 通知（剪贴板一键粘贴等动作改键后刷新）。
-// 各输入框的值存在 defaults，重建会自动回填，不会丢失已填的密钥。
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-    if ([self.view respondsToSelector:@selector(reloadData)]) {
-        [(UITableView *)self.view reloadData];
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            if (!self.specifiers || self.specifiers.count == 0) {
+                self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+            }
+            if ([self.view respondsToSelector:@selector(reloadData)]) {
+                [(UITableView *)self.view reloadData];
+            }
+        } @catch (NSException *e) { NSLog(@"[SN3] prefs reload failed: %@", e.reason); }
+    });
 }
 
 - (void)dealloc {
@@ -34,16 +46,24 @@
 }
 
 - (void)handleBecomeActive {
-    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-    if ([self.view respondsToSelector:@selector(reloadData)]) {
-        [(UITableView *)self.view reloadData];
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            if (!self.specifiers || self.specifiers.count == 0) {
+                self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+            }
+            if ([self.view respondsToSelector:@selector(reloadData)]) {
+                [(UITableView *)self.view reloadData];
+            }
+        } @catch (NSException *e) { NSLog(@"[SN3] prefs become-active failed: %@", e.reason); }
+    });
 }
 
 - (void)handlePrefsChanged {
-    if ([self.view respondsToSelector:@selector(reloadData)]) {
-        [(UITableView *)self.view reloadData];
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([self.view respondsToSelector:@selector(reloadData)]) {
+            [(UITableView *)self.view reloadData];
+        }
+    });
 }
 
 // v5.15：微信输入法等第三方键盘在设置里弹不出来 —— 提供「从剪贴板一键粘贴密钥」，
@@ -223,8 +243,19 @@
     [self rebuildSpecs];
 }
 
+- (NSSet<NSString *> *)disabledSet {
+    NSString *raw = [Common stringPref:@"Toolbar_Disabled" default:@""];
+    if (!raw.length) return [NSSet set];
+    NSMutableSet *s = [NSMutableSet set];
+    for (NSString *t in [raw componentsSeparatedByString:@","]) {
+        NSString *tt = [t stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (tt.length) [s addObject:tt];
+    }
+    return s;
+}
+
 - (void)rebuildSpecs {
-    NSMutableSet<NSNumber *> *disabled = [NSMutableSet setWithArray:[[Common stringPref:@"Toolbar_Disabled" default:@""] componentsSeparatedByString:@","]];
+    NSSet<NSString *> *disabled = [self disabledSet];
 
     NSMutableArray *specs = [NSMutableArray array];
     PSSpecifier *grp = [PSSpecifier groupSpecifierWithName:@"拖动右侧 ≡ 调整顺序，点开关控制是否在工具栏显示"];
@@ -251,18 +282,16 @@
 
 - (id)getEnabledValue:(id)value specifier:(PSSpecifier *)spec {
     NSNumber *tag = [spec propertyForKey:@"tag"];
-    NSString *raw = [Common stringPref:@"Toolbar_Disabled" default:@""];
-    BOOL inDisabled = [[raw componentsSeparatedByString:@","] containsObject:tag.stringValue];
+    BOOL inDisabled = [[self disabledSet] containsObject:tag.stringValue];
     return @(! inDisabled);
 }
 
 - (void)setEnabledValue:(id)value specifier:(PSSpecifier *)spec {
     NSNumber *tag = [spec propertyForKey:@"tag"];
-    NSMutableSet *disabled = [NSMutableSet setWithArray:[[Common stringPref:@"Toolbar_Disabled" default:@""] componentsSeparatedByString:@","]];
-    if ([value boolValue]) [disabled removeObject:tag]; else [disabled addObject:tag];
-    NSMutableArray *arr = [NSMutableArray array];
-    for (id x in disabled) if (![x isEqual:@""]) [arr addObject:x];
-    [Common setPref:@"Toolbar_Disabled" value:[arr componentsJoinedByString:@","]];
+    NSMutableSet *disabled = [[self disabledSet] mutableCopy];
+    if ([value boolValue]) [disabled removeObject:tag.stringValue];
+    else [disabled addObject:tag.stringValue];
+    [Common setPref:@"Toolbar_Disabled" value:[[disabled allObjects] componentsJoinedByString:@","]];
 }
 
 - (void)toggleEdit { self.table.editing = !self.table.editing; }
