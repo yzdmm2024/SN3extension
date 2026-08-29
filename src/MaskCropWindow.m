@@ -761,15 +761,22 @@ static int SN3_LoopKVOContext = 0;
         if (m) {
             _drag = XZDragResize;
             _resizeMask = m;          // v5.6：拖手柄缩放
-        } else if ([self hasSelection] && CGRectContainsPoint(_cropRect, loc)) {
-            _drag = XZDragMove;       // 框内拖动：整体平移
-            _panGrab = CGPointMake(loc.x - _cropRect.origin.x, loc.y - _cropRect.origin.y);
         } else {
-            _drag = XZDragDraw;       // 框外：重新画新框（即「重选」）
-            _panStart = loc;
-            _cropRect = CGRectMake(loc.x, loc.y, 0, 0);
-            _hasCrop = YES;
-            _didDrawSelection = YES;
+            // v5.24.0: 任意点拖动都视为「整体平移」, 框外/框内空白统一行为. 不再有「框外重选」分支.
+            if ([self hasSelection]) {
+                _drag = XZDragMove;
+                // v5.24.0: 以「框中心」为锚点 (而不是框左上角), 框外点拖时框中心跟随手指,
+                // 不会出现「框跳到手指位置」; 框内点拖时也跟手指走, 跟旧版行为等价.
+                CGPoint center = CGPointMake(CGRectGetMidX(_cropRect), CGRectGetMidY(_cropRect));
+                _panGrab = CGPointMake(loc.x - center.x, loc.y - center.y);
+            } else {
+                // 还没选过任何区: 第一次拖动才进入「画框」模式, 画完保持选区, 之后所有拖动都平移
+                _drag = XZDragDraw;
+                _panStart = loc;
+                _cropRect = CGRectMake(loc.x, loc.y, 0, 0);
+                _hasCrop = YES;
+                _didDrawSelection = YES;
+            }
         }
         NSLog(@"[SN3] handleCropPan begin loc=(%.1f,%.1f) sel=%d rect=%@ drag=%@ panel=%d",
               loc.x, loc.y, [self hasSelection], NSStringFromCGRect(_cropRect),
@@ -785,11 +792,15 @@ static int SN3_LoopKVOContext = 0;
             h = MIN(h, b.size.height - y);
             _cropRect = CGRectMake(x, y, MAX(0, w), MAX(0, h));
         } else if (_drag == XZDragMove) {
-            CGFloat nx = loc.x - _panGrab.x;
-            CGFloat ny = loc.y - _panGrab.y;
-            nx = MAX(0, MIN(nx, b.size.width - _cropRect.size.width));
-            ny = MAX(topLimit, MIN(ny, b.size.height - _cropRect.size.height));
-            _cropRect = CGRectMake(nx, ny, _cropRect.size.width, _cropRect.size.height);
+            // v5.24.0: 框中心跟随手指. newCenter = loc - _panGrab (即 oldCenter), 再夹边.
+            CGFloat cx = loc.x - _panGrab.x;
+            CGFloat cy = loc.y - _panGrab.y;
+            CGFloat w = _cropRect.size.width, h = _cropRect.size.height;
+            CGFloat nx = cx - w / 2.0;
+            CGFloat ny = cy - h / 2.0;
+            nx = MAX(0, MIN(nx, b.size.width - w));
+            ny = MAX(topLimit, MIN(ny, b.size.height - h));
+            _cropRect = CGRectMake(nx, ny, w, h);
         } else if (_drag == XZDragResize) {   // v5.6：拖边/角缩放
             CGFloat left  = _cropRect.origin.x, top = _cropRect.origin.y;
             CGFloat right = left + _cropRect.size.width, bot = top + _cropRect.size.height;
