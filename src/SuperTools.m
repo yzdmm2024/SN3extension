@@ -789,16 +789,17 @@ static UIWindow *_floatWin = nil;
     return out ?: img;
 }
 
-// v5.11：贴图拖动。注意不能配移动中的窗口用 translationInView:（参考系也在动会漂移）。
-//        用「连续两点屏幕坐标差」做位移——数学上严格等于手指移动量，稳且跟手。
-//        卡顿问题靠调用侧把显示图按显示尺寸预缩解决，这里只做位移。
+// v5.11：贴图拖动。注意不能配移动中的窗口用 translationInView（参考系也在动会漂移）。
+// v5.12：改用 locationInView:nil（窗口 base / 屏幕固定坐标）做位移，根除窗口移动导致的
+//         反馈漂移——旧实现用 locationInView:_floatWin，窗口每移动一次参考系就同步变化，
+//         前后两点的参考系不一致，位移被重复折算→抖动/闪烁。
 + (void)panFloat:(UIPanGestureRecognizer *)pan {
     if (!_floatWin) return;
     static CGPoint _floatLast;
     if (pan.state == UIGestureRecognizerStateBegan) {
-        _floatLast = [pan locationInView:_floatWin];
+        _floatLast = [pan locationInView:nil];
     } else if (pan.state == UIGestureRecognizerStateChanged) {
-        CGPoint loc = [pan locationInView:_floatWin];
+        CGPoint loc = [pan locationInView:nil];
         CGFloat dx = loc.x - _floatLast.x;
         CGFloat dy = loc.y - _floatLast.y;
         _floatLast = loc;

@@ -27,7 +27,6 @@ typedef NS_ENUM(NSInteger, ETBTag) {
     ETBTagTranslate  = 2,
     ETBTagDraw       = 3,
     ETBTagCodeScan   = 4,
-    ETBTagMosaic     = 5,
     ETBTagAI        = 17,   // 问 AI（大模型）
     // 第 2 排：输出操作
     ETBTagCopy       = 6,
@@ -177,7 +176,6 @@ static EditToolbarWindow *_shared = nil;
         @{@"icon":@"translate",         @"label":@"翻译", @"tag":@(ETBTagTranslate)},
         @{@"icon":@"pencil.tip",        @"label":@"画图", @"tag":@(ETBTagDraw)},
         @{@"icon":@"qrcode.viewfinder", @"label":@"识码", @"tag":@(ETBTagCodeScan)},
-        @{@"icon":@"rectangle.dashed",  @"label":@"打码", @"tag":@(ETBTagMosaic)},
         @{@"icon":@"sparkles",          @"label":@"AI",   @"tag":@(ETBTagAI)},
     ];
     NSArray *row2 = @[
@@ -263,10 +261,6 @@ static EditToolbarWindow *_shared = nil;
         [Common toast:@"正在识别二维码..."];
         [SuperTools codeScan:img completion:^(NSString *code) {
             [self presentCodeAction:code];
-        }];
-    } else if (tag == ETBTagMosaic) {
-        [SuperTools mosaic:img completion:^(UIImage *edited) {
-            if (edited) [self replaceImage:edited];
         }];
     } else if (tag == ETBTagAI) {
         NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];

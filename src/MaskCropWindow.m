@@ -245,7 +245,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             _btnNormal.hidden   = NO;
             _btnLong.hidden     = NO;
             _btnCancel.hidden   = NO;
-            _confirmBtn.hidden  = !_hasCrop;     // v5.6：有选区才显示完成按钮
+            _confirmBtn.hidden  = YES;     // v5.12：拖选松手直接弹面板，「✓完成」已冗余，永远隐藏
             _saveLongBtn.hidden = YES;
             _copyLongBtn.hidden = YES;
             _closeBtn.hidden    = YES;
@@ -682,7 +682,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
 - (void)startCaptureTimer {
     [self stopCaptureTimer];
-    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.3
+    _captureTimer = [NSTimer scheduledTimerWithTimeInterval:0.18
                                                     target:self
                                                   selector:@selector(longCaptureTick)
                                                   userInfo:nil
@@ -766,6 +766,10 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             _cropRect = CGRectMake(left, top, right - left, bot - top);
         }
         [self updateMask];
+        // v5.12：拖选过程中【实时】把功能面板跟着平移，实现「选区与面板一起移动」
+        if (_editingPanel && (_drag == XZDragMove || _drag == XZDragResize)) {
+            [self layoutLocalPanelForCropLive];
+        }
     } else if (pan.state == UIGestureRecognizerStateEnded ||
                pan.state == UIGestureRecognizerStateCancelled) {
         _drag = XZDragNone;
@@ -887,6 +891,8 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         [Common toast:@"请先在框内滑动页面采集内容"];
         return;
     }
+    // v5.12：SAD 模式补抓末屏，避免底部/结尾内容被裁掉
+    if (_lsAlgo == 1) [self longCaptureTick];
     [Common toast:@"正在拼接长图..."];
     [self lsDisarmAndProceed:^{
         [self stopCaptureTimer];
@@ -913,6 +919,8 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         [Common toast:@"请先在框内滑动页面采集内容"];
         return;
     }
+    // v5.12：SAD 模式补抓末屏，避免底部/结尾内容被裁掉
+    if (_lsAlgo == 1) [self longCaptureTick];
     [Common toast:@"正在拼接长图..."];
     [self lsDisarmAndProceed:^{
         [self stopCaptureTimer];
@@ -953,14 +961,15 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     if (tile) {
         if ([[LongShotCapture sharedInstance] frameCount] == 0) {
             if (!_entryTile) {
-                _entryTile = tile;             // 未滑动基准：不采集、不计数
+                _entryTile = tile;             // 顶部基准帧（首屏）
             } else if ([self tile:tile differsFrom:_entryTile]) {
-                // 用户开始滑动 → 采集首帧
+                // 用户开始滑动 → 先把「顶部基准帧」写入为第 0 帧，再采集当前帧。
+                // 否则首屏顶部会被整体丢弃 → 长图起始不完整。
+                [[LongShotCapture sharedInstance] addFrame:_entryTile];
+                _lastAddedTile = _entryTile;
                 BOOL accepted = [[LongShotCapture sharedInstance] addFrame:tile];
-                if (accepted) {
-                    _lastAddedTile = tile;
-                    [self updateLongCounter];
-                }
+                if (accepted) _lastAddedTile = tile;
+                [self updateLongCounter];
             }
         } else {
             if (_lastAddedTile && ![self tile:tile differsFrom:_lastAddedTile]) {
@@ -1084,6 +1093,27 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     return r;
 }
 
+// v5.12：功能面板应放置的 Y 坐标（默认选区下方，溢出则上方，都放不下贴顶部）
+- (CGFloat)localPanelYForScreenRect:(CGRect)rect panelHeight:(CGFloat)panelH {
+    CGRect scr = [UIScreen mainScreen].bounds;
+    UIEdgeInsets safe = [Common screenSafeInsets];
+    CGFloat belowY = rect.origin.y + rect.size.height + 12.0;
+    CGFloat aboveY = rect.origin.y - panelH - 12.0;
+    CGFloat y = belowY;
+    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) y = aboveY;
+    if (y < safe.top + 4.0) y = safe.top + 4.0;
+    return y;
+}
+
+// v5.12：拖动选框时【实时】把功能面板跟着挪到新选区旁（选区与面板一起移动，跟手无延迟）
+- (void)layoutLocalPanelForCropLive {
+    if (!_panelWin || !_localPanel || !_contentView) return;
+    CGRect screenRect = [_contentView convertRect:_cropRect toView:nil];
+    CGRect pf = _localPanel.frame;
+    pf.origin.y = [self localPanelYForScreenRect:screenRect panelHeight:pf.size.height];
+    _localPanel.frame = pf;
+}
+
 // v5.10：面板弹出后用户拖动/缩放选框 —— 选区变了要把功能面板跟着挪到新选框下方，
 //        并异步重新裁剪选区图片，确保后续 OCR/打码等用的是新位置内容。
 - (void)syncPanelAfterCropRectChange {
@@ -1091,20 +1121,9 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     CGRect screenRect = [_contentView convertRect:_cropRect toView:nil];
     _cropScreenRect = screenRect;
 
-    CGRect scr = [UIScreen mainScreen].bounds;
-    UIEdgeInsets safe = [Common screenSafeInsets];
     CGRect pf = _localPanel.frame;
-    CGFloat panelH = pf.size.height;
-    CGFloat belowY = screenRect.origin.y + screenRect.size.height + 12.0;
-    CGFloat aboveY = screenRect.origin.y - panelH - 12.0;
-    CGFloat y = belowY;
-    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) y = aboveY;
-    if (y < safe.top + 4.0) y = safe.top + 4.0;
-    [UIView animateWithDuration:0.15 animations:^{
-        CGRect f = pf;
-        f.origin.y = y;
-        self->_localPanel.frame = f;
-    }];
+    pf.origin.y = [self localPanelYForScreenRect:screenRect panelHeight:pf.size.height];
+    _localPanel.frame = pf;                    // v5.12：去掉动画，跟手不延迟
 
     [self recropOnPanelMove];
 }
@@ -1133,7 +1152,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     XZLocalTranslate= 2,
     XZLocalDraw     = 3,
     XZLocalCode     = 4,
-    XZLocalMosaic   = 5,
     XZLocalCopy     = 6,
     XZLocalFloating = 7,
     XZLocalSave     = 8,
@@ -1156,7 +1174,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @{@"icon":@"translate",         @"label":@"翻译", @"tag":@(XZLocalTranslate)},
         @{@"icon":@"pencil.tip",        @"label":@"画图", @"tag":@(XZLocalDraw)},
         @{@"icon":@"qrcode.viewfinder", @"label":@"识码", @"tag":@(XZLocalCode)},
-        @{@"icon":@"rectangle.dashed",  @"label":@"打码", @"tag":@(XZLocalMosaic)},
     ];
     NSArray *row2 = @[
         @{@"icon":@"doc.on.doc",             @"label":@"复制", @"tag":@(XZLocalCopy)},
@@ -1166,7 +1183,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     ];
 
     CGFloat gap = 6.0;
-    CGFloat bw = (panelW - gap * 4) / 5.0;
+    CGFloat bw = (panelW - gap * 3) / 4.0;   // 去打码后两排均为 4 列
     for (NSInteger i = 0; i < row1.count; i++) {
         UIButton *b = [self makeLocalButton:row1[i] iconSize:iconS labelH:labelH width:bw];
         b.frame = CGRectMake(gap + i * (bw + gap), vPad, bw, rowH);
@@ -1194,7 +1211,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 - (void)buildLocalPanelOnOwnWindowWithRect:(CGRect)rect {
     if (!_win) return;
     CGRect scr = [UIScreen mainScreen].bounds;
-    UIEdgeInsets safe = [Common screenSafeInsets];
 
     CGFloat iconS = 16.0;     // 图标更小（用户要求缩小）
     CGFloat labelH = 12.0;
@@ -1205,19 +1221,17 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     CGFloat pad = 12.0;
     CGFloat panelW = scr.size.width - pad * 2;
 
-    // 默认放在选区下方；若溢出底部则放到选区上方；都放不下则贴顶部
-    CGFloat belowY = rect.origin.y + rect.size.height + 12.0;
-    CGFloat aboveY = rect.origin.y - panelH - 12.0;
-    CGFloat y = belowY;
-    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) y = aboveY;
-    if (y < safe.top + 4.0) y = safe.top + 4.0;
+    // 默认放在选区下方；若溢出底部则放到选区上方；都放不下则贴顶部（v5.12 复用统一 helper）
+    CGFloat y = [self localPanelYForScreenRect:rect panelHeight:panelH];
 
     if (!_panelWin) {
         _panelWin = [[XZPassThroughWindow alloc] initWithFrame:scr];
         _panelWin.windowLevel = _win.windowLevel + 10;   // 永远盖在遮罩窗口之上
         _panelWin.backgroundColor = [UIColor clearColor];
         _panelWin.userInteractionEnabled = YES;
-        _panelWin.passthrough = NO;                       // 面板阶段吃下触摸（正常命中）
+        // v5.12：面板窗口只占「面板自身」一块，其余位置触摸穿透给遮罩窗口 → 可直接拖动选区框
+        _panelWin.passthrough = YES;
+        _panelWin.gateInteractive = YES;
         _panelVC = [[UIViewController alloc] init];
         _panelVC.view.backgroundColor = [UIColor clearColor];
         _panelVC.view.userInteractionEnabled = NO;
@@ -1230,31 +1244,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     _localPanel = [self makeLocalPanelViewWithFrame:CGRectMake(pad, y, panelW, panelH)
                                            iconSize:iconS labelH:labelH rowH:rowH rowGap:rowGap vPad:vPad];
     [_panelWin addSubview:_localPanel];
+    [_panelWin addInteractiveView:_localPanel];   // 面板本身作为交互白名单
     [_panelWin bringSubviewToFront:_localPanel];
-
-    // v5.11：功能面板可整块自由拖动（按按钮触点仍正常，拖空白处移动整块面板）
-    UIPanGestureRecognizer *panelPan = [[UIPanGestureRecognizer alloc] initWithTarget:self
-                                                                               action:@selector(handleLocalPanelPan:)];
-    [_localPanel addGestureRecognizer:panelPan];
-}
-
-- (void)handleLocalPanelPan:(UIPanGestureRecognizer *)pan {
-    if (!_localPanel || !_panelWin) return;
-    static CGPoint _lpStartOrigin;
-    if (pan.state == UIGestureRecognizerStateBegan) {
-        _lpStartOrigin = _localPanel.frame.origin;
-    } else if (pan.state == UIGestureRecognizerStateChanged) {
-        CGPoint t = [pan translationInView:_panelWin];
-        CGRect scr = [UIScreen mainScreen].bounds;
-        UIEdgeInsets safe = [Common screenSafeInsets];
-        CGFloat pad = 8.0;
-        CGSize ps = _localPanel.frame.size;
-        CGFloat x = MAX(pad, MIN(_lpStartOrigin.x + t.x, scr.size.width  - ps.width  - pad));
-        CGFloat y = MAX(safe.top + 4, MIN(_lpStartOrigin.y + t.y, scr.size.height - ps.height - pad));
-        CGRect f = _localPanel.frame;
-        f.origin = CGPointMake(x, y);
-        _localPanel.frame = f;
-    }
 }
 
 - (UIButton *)makeLocalButton:(NSDictionary *)spec iconSize:(CGFloat)iconS labelH:(CGFloat)labelH width:(CGFloat)bw {
@@ -1307,10 +1298,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [Common toast:@"正在识别二维码..."];
         [SuperTools codeScan:img completion:^(NSString *code) {
             [self presentLocalCode:code];
-        }];
-    } else if (tag == XZLocalMosaic) {
-        [SuperTools mosaic:img completion:^(UIImage *edited) {
-            if (edited) { self->_cropImage = edited; [Common toast:@"已打码，可继续操作"]; }
         }];
     } else if (tag == XZLocalCopy) {
         [SuperTools copy:img];

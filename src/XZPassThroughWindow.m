@@ -42,6 +42,13 @@
     // 非穿透模式：完全按系统默认行为（普通框选阶段需要吃下全屏拖拽）
     if (!_passthrough) return hit;
 
+    // v5.12：仅交互白名单子树可响应，其余全部穿透（功能面板用：面板外可拖选区框）
+    if (_gateInteractive) {
+        UIView *g = hit;
+        if (g && [self isDescendantOfInteractive:g]) return g;
+        return nil;
+    }
+
     // 命中白名单视图（顶部入口栏、生成长图/取消按钮、计数标签）→ 正常响应
     if (hit && [self isDescendantOfInteractive:hit]) return hit;
 

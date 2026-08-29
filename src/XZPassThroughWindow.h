@@ -24,6 +24,10 @@
 // 是否开启触摸穿透（长截图实时预览 = YES；普通框选 = NO）
 @property (nonatomic, assign) BOOL passthrough;
 
+// v5.12：仅「交互白名单及其子视图」可响应触摸，其余位置一律穿透给下层窗口。
+//        用于功能面板：面板只占它自己那一块，其余区域（选区框）可直接拖动。
+@property (nonatomic, assign) BOOL gateInteractive;
+
 // 穿透模式下仍然要接收触摸的视图集合（工具栏、按钮、HUD）
 @property (nonatomic, strong) NSMutableArray<UIView *> *interactiveViews;
 
