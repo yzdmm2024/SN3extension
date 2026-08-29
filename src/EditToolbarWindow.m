@@ -19,6 +19,7 @@
 #import "Common.h"
 #import "ImageUtils.h"
 #import "SuperTools.h"
+#import "AIChatWindow.h"
 
 typedef NS_ENUM(NSInteger, ETBTag) {
     // 第 1 排：识别 / 编辑
@@ -27,6 +28,7 @@ typedef NS_ENUM(NSInteger, ETBTag) {
     ETBTagDraw       = 3,
     ETBTagCodeScan   = 4,
     ETBTagMosaic     = 5,
+    ETBTagAI        = 17,   // 问 AI（大模型）
     // 第 2 排：输出操作
     ETBTagCopy       = 6,
     ETBTagFloating   = 7,
@@ -176,6 +178,7 @@ static EditToolbarWindow *_shared = nil;
         @{@"icon":@"pencil.tip",        @"label":@"画图", @"tag":@(ETBTagDraw)},
         @{@"icon":@"qrcode.viewfinder", @"label":@"识码", @"tag":@(ETBTagCodeScan)},
         @{@"icon":@"rectangle.dashed",  @"label":@"打码", @"tag":@(ETBTagMosaic)},
+        @{@"icon":@"sparkles",          @"label":@"AI",   @"tag":@(ETBTagAI)},
     ];
     NSArray *row2 = @[
         @{@"icon":@"doc.on.doc",             @"label":@"复制", @"tag":@(ETBTagCopy)},
@@ -193,9 +196,9 @@ static EditToolbarWindow *_shared = nil;
     ];
 
     CGFloat pad = 10.0, gap = 6.0;
-    CGFloat bw = (scr.size.width - pad * 2 - gap * 4) / 5.0;
 
     void (^placeRow)(NSArray *, CGFloat) = ^(NSArray *row, CGFloat yOff) {
+        CGFloat bw = (scr.size.width - pad * 2 - gap * (row.count - 1)) / (CGFloat)row.count;
         for (NSInteger i = 0; i < row.count; i++) {
             UIButton *b = [self makeToolButton:row[i] width:bw];
             b.frame = CGRectMake(pad + i * (bw + gap), kBarPad + yOff, bw, kRowH);
@@ -249,8 +252,8 @@ static EditToolbarWindow *_shared = nil;
         }];
     } else if (tag == ETBTagTranslate) {
         [Common toast:@"正在识别并翻译..."];
-        [SuperTools translate:img completion:^(NSString *src, NSString *dst) {
-            [self presentTranslate:src dst:dst];
+        [SuperTools translate:img completion:^(NSString *src, NSString *dst, NSString *err) {
+            [self presentTranslate:src dst:dst err:err];
         }];
     } else if (tag == ETBTagDraw) {
         [SuperTools draw:img completion:^(UIImage *edited) {
@@ -264,6 +267,25 @@ static EditToolbarWindow *_shared = nil;
     } else if (tag == ETBTagMosaic) {
         [SuperTools mosaic:img completion:^(UIImage *edited) {
             if (edited) [self replaceImage:edited];
+        }];
+    } else if (tag == ETBTagAI) {
+        NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
+        if (key.length == 0) {
+            // v5.8：未配置密钥时给出明确指引，不再静默无反应
+            UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"未配置 AI 接口"
+                                                                       message:@"请先在「设置 → 超级截图 → AI/大模型」填写：\n• 接口地址（如 https://api.deepseek.com/v1）\n• API Key\n• 模型名（如 deepseek-chat）"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+            [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
+            [Common present:ac fromWindow:_win];
+            return;
+        }
+        [Common toast:@"正在识别图中文字…"];
+        [SuperTools ocr:img completion:^(NSString *text) {
+            NSString *prompt = [Common stringPref:XZ_KEY_AI_PROMPT default:@""];
+            NSString *sys = prompt.length ? prompt : @"请总结图片中的文字内容，并回答我的追问：";
+            NSString *first = [NSString stringWithFormat:@"%@\n\n【图片中识别到的文字】\n%@",
+                               sys, text.length ? text : @"(未识别到文字，你可直接描述图片)"];
+            [AIChatWindow showWithTitle:@"AI 对话" firstText:first];
         }];
     } else if (tag == ETBTagCopy) {
         [SuperTools copy:img];
@@ -328,7 +350,16 @@ static EditToolbarWindow *_shared = nil;
     [Common present:ac fromWindow:_win];
 }
 
-- (void)presentTranslate:(NSString *)src dst:(NSString *)dst {
+- (void)presentTranslate:(NSString *)src dst:(NSString *)dst err:(NSString *)err {
+    if (err && err.length) {
+        // v5.8：翻译失败给出明确原因（多因密钥/网络），不再只弹「翻译失败」
+        UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"翻译失败"
+                                                                   message:err
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
+        [Common present:ac fromWindow:_win];
+        return;
+    }
     if (!dst || dst.length == 0) { [Common toast:@"翻译失败"]; return; }
     NSString *msg = [NSString stringWithFormat:@"原文：\n%@\n\n译文：\n%@",
                      src ?: @"", dst ?: @""];

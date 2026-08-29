@@ -42,9 +42,11 @@
 @interface SuperTools (Private)
 + (void)ocrObservations:(UIImage *)image
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
++ (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
+             completion:(void (^)(NSArray<NSDictionary *> *items))completion;
 + (void)detectSensitiveRects:(UIImage *)image
                   completion:(void (^)(NSArray<NSValue *> *rects))completion;
-+ (void)translateText:(NSString *)text completion:(void (^)(NSString *dst))completion;
++ (void)translateText:(NSString *)text completion:(void (^)(NSString *dst, NSString *err))completion;
 + (UIImage *)pixelatedImage:(UIImage *)src ratio:(CGFloat)ratio;
 + (UIImage *)applyMask:(CGImageRef)maskCG toPixelated:(UIImage *)pixelated onImage:(UIImage *)orig;
 + (CGImageRef)createMaskWithSize:(CGSize)pxSize
@@ -88,6 +90,13 @@ static CGRect XZRectFromValue(id v) {
 // 返回 items: @[ @{@"text":NSString, @"box":NSValue(CGRect 像素坐标)} ]
 + (void)ocrObservations:(UIImage *)image
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
+    [self ocrObservations:image languages:[Common ocrLanguages] completion:completion];
+}
+
+// v5.8：支持指定语言重试。多语言识别为空时，回退英文（系统内置模型，最稳，
+// 可救回「中文识别模型未下载」导致的静默空结果）。
++ (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
+             completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     if (!image.CGImage) { if (completion) completion(nil); return; }
     CGFloat pxW = (CGFloat)CGImageGetWidth(image.CGImage);
     CGFloat pxH = (CGFloat)CGImageGetHeight(image.CGImage);
@@ -111,7 +120,7 @@ static CGRect XZRectFromValue(id v) {
                 @try {
                     [req setValue:@(1) forKey:@"recognitionLevel"];                 // VNRequestTextRecognitionLevelAccurate
                     [req setValue:@(YES) forKey:@"usesLanguageCorrection"];
-                    [req setValue:[Common ocrLanguages] forKey:@"recognitionLanguages"];
+                    [req setValue:langs forKey:@"recognitionLanguages"];
                 } @catch (NSException *e) { /* 老系统不支持的键忽略 */ }
 
                 id handler = [[handlerCls alloc] init];
@@ -169,6 +178,13 @@ static CGRect XZRectFromValue(id v) {
         } @catch (NSException *e) {
             NSLog(@"[SN3] OCR exception: %@ %@", e.name, e.reason);
         }
+        // v5.8：多语言识别为空 → 回退英文（系统内置模型），尽量救回部分文字
+        if (items.count == 0 && langs.count > 1) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self ocrObservations:image languages:@[@"en-US"] completion:completion];
+            });
+            return;
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(items);
         });
@@ -202,24 +218,31 @@ static CGRect XZRectFromValue(id v) {
 
 #pragma mark - 2. 翻译（OCR 取文 → 网络翻译）
 
-+ (void)translate:(UIImage *)image completion:(void (^)(NSString *src, NSString *dst))completion {
++ (void)translate:(UIImage *)image completion:(void (^)(NSString *src, NSString *dst, NSString *err))completion {
     [self ocr:image completion:^(NSString *text) {
-        if (!text.length) { if (completion) completion(nil, nil); return; }
-        [self translateText:text completion:^(NSString *dst) {
-            if (completion) completion(text, dst);
+        if (!text.length) {
+            if (completion) completion(nil, nil, @"OCR 未识别到文字，无法翻译（请确认图片含清晰文字）");
+            return;
+        }
+        [self translateText:text completion:^(NSString *dst, NSString *err) {
+            if (completion) completion(text, dst, err);
         }];
     }];
 }
 
 // 网络翻译入口。优先用百度翻译 API（设置里填了 APP ID/KEY 即用，国内可用）；
 // 未配置密钥时回退免费 gtx 接口（国内常被墙，仅兜底）。
-+ (void)translateText:(NSString *)text completion:(void (^)(NSString *dst))completion {
++ (void)translateText:(NSString *)text completion:(void (^)(NSString *dst, NSString *err))completion {
     NSString *appid = [Common stringPref:XZ_KEY_TRANS_APPID default:@""];
     NSString *key   = [Common stringPref:XZ_KEY_TRANS_KEY default:@""];
     if (appid.length && key.length) {
         [self baiduTranslate:text appid:appid key:key completion:completion];
     } else {
-        [self gtxTranslate:text completion:completion];
+        // v5.8：未配置百度密钥时，明确告知并仍尝试 gtx，失败则给出诊断
+        [self gtxTranslate:text completion:^(NSString *dst, NSString *err) {
+            if (dst.length) { if (completion) completion(dst, nil); }
+            else { if (completion) completion(nil, @"未配置百度翻译密钥（APP ID/密钥），已回退 Google 接口但失败：国内通常不通。请在设置填写百度翻译密钥。"); }
+        }];
     }
 }
 
@@ -236,7 +259,7 @@ static CGRect XZRectFromValue(id v) {
 
 // 百度翻译开放平台「通用文本翻译」（需 APP ID + 密钥，见设置面板说明）。
 // 签名 sign = md5(appid + q + salt + key)；from=auto。
-+ (void)baiduTranslate:(NSString *)text appid:(NSString *)appid key:(NSString *)key completion:(void (^)(NSString *dst))completion {
++ (void)baiduTranslate:(NSString *)text appid:(NSString *)appid key:(NSString *)key completion:(void (^)(NSString *dst, NSString *err))completion {
     NSString *to = [Common stringPref:XZ_KEY_TRANS_TARGET default:@"zh"];
     if (!to.length) to = @"zh";
     NSString *salt = [NSString stringWithFormat:@"%ld", (long)([NSDate date].timeIntervalSince1970 * 1000.0)];
@@ -248,17 +271,20 @@ static CGRect XZRectFromValue(id v) {
         @"q=%@&from=auto&to=%@&appid=%@&salt=%@&sign=%@",
         enc(text), enc(to), enc(appid), enc(salt), enc(sign)];
     NSURL *url = [NSURL URLWithString:[@"https://fanyi-api.baidu.com/api/trans/vip/translate?" stringByAppendingString:query]];
-    if (!url) { if (completion) completion(nil); return; }
+    if (!url) { if (completion) completion(nil, @"翻译请求地址构造失败"); return; }
     [[[NSURLSession sharedSession] dataTaskWithURL:url
       completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSString *out = nil;
+        NSString *outErr = nil;
         @try {
             if (!err && data) {
                 id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
                 if ([json isKindOfClass:[NSDictionary class]]) {
                     id ec = json[@"error_code"];
                     if (ec) {
-                        NSLog(@"[SN3] baidu translate error_code=%@ msg=%@", ec, json[@"error_msg"]);
+                        NSString *ecStr = [NSString stringWithFormat:@"%@", ec];
+                        NSString *em = json[@"error_msg"] ? [NSString stringWithFormat:@"%@", json[@"error_msg"]] : @"";
+                        outErr = [NSString stringWithFormat:@"百度翻译错误 %@：%@%@", ecStr, em, [self baiduErrorHint:ecStr]];
                     } else {
                         id tr = json[@"trans_result"];
                         if ([tr isKindOfClass:[NSArray class]]) {
@@ -271,28 +297,51 @@ static CGRect XZRectFromValue(id v) {
                             }
                             out = m.length ? m : nil;
                         }
+                        if (!out) outErr = @"百度翻译返回为空（trans_result 缺失）";
                     }
+                } else {
+                    outErr = @"百度翻译返回非 JSON";
                 }
             } else {
-                NSLog(@"[SN3] baidu translate request failed: %@", err);
+                outErr = [NSString stringWithFormat:@"翻译网络请求失败：%@", err.localizedDescription];
             }
-        } @catch (NSException *e) { NSLog(@"[SN3] baidu translate parse: %@", e); }
-        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out); });
+        } @catch (NSException *e) { outErr = [NSString stringWithFormat:@"翻译解析异常：%@", e.reason]; }
+        NSString *finalErr = outErr;
+        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out, finalErr); });
     }] resume];
 }
 
+// 百度翻译错误码 → 通俗提示（重点提示密钥/配置问题）
++ (NSString *)baiduErrorHint:(NSString *)code {
+    NSDictionary *h = @{
+        @"52001": @"（请求超时，重试即可）",
+        @"52002": @"（系统错误，稍后重试）",
+        @"54000": @"（缺少必填参数，检查译文语言设置）",
+        @"54001": @"（签名错误：请核对 APP ID 与密钥是否填反/填错）",
+        @"54003": @"（访问频率受限，请稍后再试）",
+        @"54004": @"（账户余额不足，请到百度翻译控制台充值）",
+        @"54005": @"（长 query 频率受限）",
+        @"58000": @"（服务未开通，请到百度翻译开放平台开通服务）",
+        @"58001": @"（译文语言方向不支持）",
+        @"58002": @"（服务已关闭）",
+    };
+    NSString *t = h[code];
+    return t ? t : @"";
+}
+
 // 免费 gtx 兜底（国内常不通，仅当未配置百度密钥时启用）
-+ (void)gtxTranslate:(NSString *)text completion:(void (^)(NSString *dst))completion {
++ (void)gtxTranslate:(NSString *)text completion:(void (^)(NSString *dst, NSString *err))completion {
     NSString *tl = [Common stringPref:XZ_KEY_TRANS_TARGET default:@"zh-CN"];
     NSString *q = [text stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
     NSString *us = [NSString stringWithFormat:
                     @"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=%@&dt=t&q=%@",
                     tl, q ?: @""];
     NSURL *url = [NSURL URLWithString:us];
-    if (!url) { if (completion) completion(nil); return; }
+    if (!url) { if (completion) completion(nil, @"翻译请求地址构造失败"); return; }
     [[[NSURLSession sharedSession] dataTaskWithURL:url
       completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSString *out = nil;
+        NSString *outErr = nil;
         @try {
             if (!err && data) {
                 id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
@@ -309,9 +358,13 @@ static CGRect XZRectFromValue(id v) {
                         out = m.length ? m : nil;
                     }
                 }
-            } else { NSLog(@"[SN3] gtx translate failed: %@", err); }
-        } @catch (NSException *e) { NSLog(@"[SN3] gtx parse: %@", e); }
-        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out); });
+                if (!out) outErr = @"Google 翻译接口未返回译文";
+            } else {
+                outErr = [NSString stringWithFormat:@"Google 翻译请求失败：%@", err.localizedDescription];
+            }
+        } @catch (NSException *e) { outErr = [NSString stringWithFormat:@"翻译解析异常：%@", e.reason]; }
+        NSString *finalErr = outErr;
+        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(out, finalErr); });
     }] resume];
 }
 
@@ -410,6 +463,40 @@ static CGRect XZRectFromValue(id v) {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(pxW, pxH), NO, 1.0);
     CGContextRef bigCtx = UIGraphicsGetCurrentContext();
     CGContextSetInterpolationQuality(bigCtx, kCGInterpolationNone);
+    if (bigCtx) CGContextDrawImage(bigCtx, CGRectMake(0, 0, pxW, pxH), smallCG);
+    UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    CGImageRelease(smallCG);
+    return out;
+}
+
+// 模糊（不引 CoreImage）：先平滑降采样到 1/ratio，再平滑升采样回原尺寸 → 近似高斯模糊观感。
+// v5.8：打码新增「模糊」档位用。
++ (UIImage *)blurredImage:(UIImage *)src ratio:(CGFloat)ratio {
+    CGImageRef cg = src.CGImage;
+    if (!cg) return nil;
+    CGFloat pxW = (CGFloat)CGImageGetWidth(cg);
+    CGFloat pxH = (CGFloat)CGImageGetHeight(cg);
+    if (pxW < 4 || pxH < 4) return nil;
+
+    CGFloat smallW = MAX(2, round(pxW / ratio));
+    CGFloat smallH = MAX(2, round(pxH / ratio));
+
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    if (!cs) return nil;
+    CGContextRef smallCtx = CGBitmapContextCreate(NULL, (size_t)smallW, (size_t)smallH, 8, 0, cs,
+                                                  kCGImageAlphaPremultipliedLast | kCGImageByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!smallCtx) return nil;
+    CGContextSetInterpolationQuality(smallCtx, kCGInterpolationLow);
+    CGContextDrawImage(smallCtx, CGRectMake(0, 0, smallW, smallH), cg);
+    CGImageRef smallCG = CGBitmapContextCreateImage(smallCtx);
+    CGContextRelease(smallCtx);
+    if (!smallCG) return nil;
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(pxW, pxH), NO, 1.0);
+    CGContextRef bigCtx = UIGraphicsGetCurrentContext();
+    CGContextSetInterpolationQuality(bigCtx, kCGInterpolationDefault);  // 平滑升采样 → 模糊
     if (bigCtx) CGContextDrawImage(bigCtx, CGRectMake(0, 0, pxW, pxH), smallCG);
     UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
@@ -597,9 +684,16 @@ static UIWindow *_floatWin = nil;
 }
 + (void)panFloat:(UIPanGestureRecognizer *)pan {
     if (!_floatWin) return;
-    CGPoint t = [pan translationInView:_floatWin.superview];
-    _floatWin.center = CGPointMake(_floatWin.center.x + t.x, _floatWin.center.y + t.y);
-    [pan setTranslation:CGPointZero inView:_floatWin.superview];
+    // v5.8：UIWindow 没有 superview（superview 为 nil），原来用 superview 取平移量恒为 0，
+    //        导致贴图根本拖不动。改为直接移动 window.frame 原点并夹在屏幕内。
+    CGPoint t = [pan translationInView:nil];
+    CGRect f = _floatWin.frame;
+    CGFloat W = [UIScreen mainScreen].bounds.size.width;
+    CGFloat H = [UIScreen mainScreen].bounds.size.height;
+    f.origin.x = MAX(0, MIN(f.origin.x + t.x, W - f.size.width));
+    f.origin.y = MAX(0, MIN(f.origin.y + t.y, H - f.size.height));
+    _floatWin.frame = f;
+    [pan setTranslation:CGPointZero inView:nil];
 }
 
 #pragma mark - 8. 保存
@@ -1021,6 +1115,8 @@ static UIWindow *_shareWin = nil;
     NSMutableArray<NSValue *> *_smartRects;
     UILabel *_tipLabel;
     void (^_completion)(UIImage *);
+    CGFloat _mosaicRatio;     // v5.8：像素化档位（块大小）
+    BOOL   _mosaicBlur;       // v5.8：YES=模糊档（平滑缩放）
 }
 
 + (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion {
@@ -1040,7 +1136,7 @@ static UIWindow *_shareWin = nil;
     _completion = completion;
 
     CGRect fit = XZFitRect(image.size, CGRectMake(8, safe.top + 52, scr.size.width - 16,
-                                                  scr.size.height - safe.top - safe.bottom - 190));
+                                                  scr.size.height - safe.top - safe.bottom - 230));
 
     UIImageView *iv = [[UIImageView alloc] initWithFrame:fit];
     iv.image = image;
@@ -1056,27 +1152,39 @@ static UIWindow *_shareWin = nil;
     _smartRects = [NSMutableArray array];
 
     // ---- 按钮区 ----
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - 130,
-                                                           scr.size.width, 130)];
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - 170,
+                                                           scr.size.width, 170)];
     bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
     [_win addSubview:bar];
 
+    _mosaicRatio = 18.0; _mosaicBlur = NO;   // v5.8：默认「中」档（比旧版14更强）
+
+    // v5.8：马赛克档位：轻/中/重=像素化块大小；模糊=平滑缩放柔化
+    CGFloat sbw = (scr.size.width - 40 - 18) / 4.0;
+    NSArray *styles = @[@"轻", @"中", @"重", @"模糊"];
+    for (NSInteger i = 0; i < 4; i++) {
+        UIButton *sb = [self mkBtn:styles[i] frame:CGRectMake(10 + i * (sbw + 6), 8, sbw, 36)
+                               sel:@selector(onStyle:) color:[UIColor systemTealColor]];
+        sb.tag = 100 + i;
+        [bar addSubview:sb];
+    }
+
     CGFloat bw = (scr.size.width - 50) / 2.0;
 
-    UIButton *undo = [self mkBtn:@"撤销一笔" frame:CGRectMake(20, 10, bw, 40) sel:@selector(onUndo)
+    UIButton *undo = [self mkBtn:@"撤销一笔" frame:CGRectMake(20, 56, bw, 40) sel:@selector(onUndo)
                            color:[UIColor systemGrayColor]];
     [bar addSubview:undo];
 
-    UIButton *cancel = [self mkBtn:@"取消" frame:CGRectMake(20, 60, bw, 44) sel:@selector(onCancel)
+    UIButton *cancel = [self mkBtn:@"取消" frame:CGRectMake(20, 106, bw, 44) sel:@selector(onCancel)
                              color:[UIColor systemGrayColor]];
     [bar addSubview:cancel];
 
-    UIButton *done = [self mkBtn:@"完成打码" frame:CGRectMake(30 + bw, 60, bw, 44) sel:@selector(onDone)
+    UIButton *done = [self mkBtn:@"完成打码" frame:CGRectMake(30 + bw, 106, bw, 44) sel:@selector(onDone)
                            color:[UIColor systemBlueColor]];
     [bar addSubview:done];
 
     UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(20, safe.top + 12, scr.size.width - 40, 30)];
-    tip.text = @"用手指在要打码的位置涂抹即可（自动马赛克）";
+    tip.text = @"先选档位（轻/中/重=马赛克，模糊=柔化），再在要打码处涂抹";
     tip.textColor = [UIColor colorWithWhite:1 alpha:0.75];
     tip.font = [UIFont systemFontOfSize:12];
     tip.textAlignment = NSTextAlignmentCenter;
@@ -1098,6 +1206,14 @@ static UIWindow *_shareWin = nil;
     b.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
     return b;
+}
+
+- (void)onStyle:(UIButton *)sender {
+    NSInteger idx = sender.tag - 100;   // 0轻 1中 2重 3模糊
+    if (idx == 0)      { _mosaicRatio = 30.0; _mosaicBlur = NO;  _tipLabel.text = @"马赛克：轻（细块）"; }
+    else if (idx == 1) { _mosaicRatio = 18.0; _mosaicBlur = NO;  _tipLabel.text = @"马赛克：中（默认）"; }
+    else if (idx == 2) { _mosaicRatio = 10.0; _mosaicBlur = NO;  _tipLabel.text = @"马赛克：重（粗块）"; }
+    else               { _mosaicRatio = 6.0;  _mosaicBlur = YES; _tipLabel.text = @"马赛克：模糊（柔化）"; }
 }
 
 - (void)onUndo {
@@ -1139,8 +1255,13 @@ static UIWindow *_shareWin = nil;
                                          pathWidths:pixWidths];
     if (!mask) { [Common toast:@"打码失败"]; [self finishWithImage:nil]; return; }
 
-    UIImage *pixelated = [SuperTools pixelatedImage:_source ratio:14.0];
-    UIImage *out = [SuperTools applyMask:mask toPixelated:(pixelated ?: _source) onImage:_source];
+    UIImage *processed = nil;
+    if (_mosaicBlur) {
+        processed = [SuperTools blurredImage:_source ratio:_mosaicRatio];
+    } else {
+        processed = [SuperTools pixelatedImage:_source ratio:_mosaicRatio];
+    }
+    UIImage *out = [SuperTools applyMask:mask toPixelated:(processed ?: _source) onImage:_source];
     CGImageRelease(mask);
 
     [self finishWithImage:out ?: _source];

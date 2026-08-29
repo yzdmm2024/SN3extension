@@ -49,6 +49,10 @@
 // 是否已达最大高度上限（到顶即停止采集，防 OOM）
 - (BOOL)isOverHeightLimit;
 
+// v5.8：SAD 接缝探测（原私有，现公开供精确模式核对真实重叠）。
+//   返回 last 底部与 cur 顶部重合的「像素」高度；confident=NO 时不可信（上层应回退）。
+- (CGFloat)sadOverlapPxFromLast:(UIImage *)last cur:(UIImage *)cur confident:(BOOL *)confident;
+
 // Vision 配准 + 垂直拼接；result = nil 表示失败
 - (void)stitchWithCompletion:(void (^)(UIImage *result))completion;
 

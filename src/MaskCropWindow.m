@@ -105,6 +105,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     CGPoint _panStart;              // 画框起点
     CGPoint _panGrab;               // 拖动时手指在框内的相对偏移
     XZResizeMask _resizeMask;       // v5.6：当前缩放手柄位掩码
+    BOOL     _didDrawSelection;     // v5.8：本次手势从空白拖出新选区（松手即弹面板用）
 
     CGRect   _longFrameRect;        // 长截图截取框（屏幕坐标，全屏宽）
     NSTimer *_captureTimer;         // 自动抓帧定时器
@@ -113,6 +114,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     // ---- v4.8：长截图滑动检测 ----
     UIImage  *_entryTile;           // 进入长截图时的基准帧（未滑动前的画面）
     UIImage  *_lastAddedTile;       // 最近一次已采集的帧（用于检测是否真的滑动了）
+    UIImage  *_lastLsTile;          // v5.8：精确模式上一帧（SAD 核对真实重叠用）
 
     // ---- v4.8：局部截图原地面板 ----
     UIImage  *_cropImage;           // 局部截图裁剪结果
@@ -533,6 +535,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     if (!_win || _mode != XZMaskModeLong || _lsActive) return;
     _lsActive = YES;
     _lsPrevOffsetY = (CGFloat)NAN;
+    _lastLsTile = nil;                           // v5.8：新采集，清空上一帧
     [self stopCaptureTimer];
     [[LongShotCapture sharedInstance] reset];
     [self updateLongCounter];
@@ -592,6 +595,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         // 第 1 屏：无增量，作为基准
         [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:0];
         _lsPrevOffsetY = offset;
+        _lastLsTile = tile;
         [self stopLsWatchdog];
         _startBtn.hidden = YES;                 // 已开工，隐藏开始按钮
         [self updateLongCounter];
@@ -599,14 +603,37 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         return;
     }
 
-    CGFloat delta = offset - _lsPrevOffsetY;    // 真实滚动增量（点）
+    CGFloat delta = offset - _lsPrevOffsetY;    // 真实滚动增量（点，来自 App contentOffset）
     _lsPrevOffsetY = offset;
     if (delta <= 1.0f) return;                  // 基本没滑，仅更新基准
 
     CGFloat regionH = tile.size.height;         // 采集区域高（点）
-    CGFloat ov = regionH - delta;               // 精确重叠 = 区域高 − 滚动增量
-    BOOL accepted = [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:ov];
-    if (accepted) [self updateLongCounter];
+    CGFloat offsetOv = regionH - delta;         // 偏移派生重叠（点）
+
+    // v5.8：聊天类 App（QQ/微信）上滑预载旧消息会改动 contentOffset，
+    //        使 delta 被夸大 → offsetOv 偏小 → 实际重叠被低估 → 重复画面。
+    //        用像素级 SAD 接缝探测核对「真实可见重叠」，取较大者（更激进去重），
+    //        并夹在 [0.18,0.94]×区域高 安全区间，消除重复且不露缝。
+    CGFloat scale = (tile.scale > 0) ? tile.scale : ([UIScreen mainScreen].scale > 0 ? [UIScreen mainScreen].scale : 2.0);
+    CGFloat chosenOv = offsetOv;
+    if (_lastLsTile && _lastLsTile.CGImage) {
+        BOOL conf = NO;
+        CGFloat sadPx = [[LongShotCapture sharedInstance] sadOverlapPxFromLast:_lastLsTile cur:tile confident:&conf];
+        if (conf) {
+            CGFloat sadOv = sadPx / scale;      // 像素→点
+            chosenOv = MAX(chosenOv, sadOv);    // 取更可信的较大重叠，专治重复
+        }
+    }
+    CGFloat lo = regionH * 0.18f, hi = regionH * 0.94f;
+    if (chosenOv < lo) chosenOv = lo;
+    if (chosenOv > hi) chosenOv = hi;
+    NSLog(@"[SN3] 精确帧重叠核对：offsetOv=%.1fpt sadOv(若) chosen=%.1fpt", offsetOv, chosenOv);
+
+    BOOL accepted = [[LongShotCapture sharedInstance] addExactFrame:tile overlapPoints:chosenOv];
+    if (accepted) {
+        _lastLsTile = tile;                      // v5.8：接受帧后更新上一帧供下轮 SAD 核对
+        [self updateLongCounter];
+    }
 }
 
 // App 通知：已自动滚到底，采集结束。标记完成，等待用户点保存。
@@ -694,6 +721,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     CGFloat topLimit = [Common screenSafeInsets].top;
 
     if (pan.state == UIGestureRecognizerStateBegan) {
+        _didDrawSelection = NO;
         XZResizeMask m = [self hasSelection] ? [self resizeMaskAtPoint:loc inRect:_cropRect] : XZResizeNone;
         if (m) {
             _drag = XZDragResize;
@@ -706,6 +734,7 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             _panStart = loc;
             _cropRect = CGRectMake(loc.x, loc.y, 0, 0);
             _hasCrop = YES;
+            _didDrawSelection = YES;
         }
     } else if (pan.state == UIGestureRecognizerStateChanged) {
         if (_drag == XZDragDraw) {
@@ -747,7 +776,15 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
         if (_cropRect.size.width < kMinCrop || _cropRect.size.height < kMinCrop) {
             _hasCrop = NO;
             _cropRect = CGRectZero;
+        } else if (_didDrawSelection) {
+            // v5.8：从空白拖出新选区、松手即弹功能面板，省去「点✓完成」；微调仍可关面板后用✓完成重确认
+            _didDrawSelection = NO;
+            [self updateMask];
+            [self refreshChrome];
+            [self onConfirmCrop];
+            return;
         }
+        _didDrawSelection = NO;
         [self updateMask];
         [self refreshChrome];
     }
