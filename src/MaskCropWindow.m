@@ -1232,8 +1232,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         }];
     } else if (tag == XZLocalTranslate) {
         [Common toast:@"正在识别并翻译..."];
-        [SuperTools translate:img completion:^(NSString *src, NSString *dst) {
-            [self presentLocalTranslate:src dst:dst];
+        [SuperTools translate:img completion:^(NSString *src, NSString *dst, NSString *err) {
+            [self presentLocalTranslate:src dst:dst err:err];
         }];
     } else if (tag == XZLocalDraw) {
         // 画图需要画布，唤起编辑窗口（仅此动作需要画板，属于用户主动进入）
@@ -1294,7 +1294,15 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     [Common present:ac fromWindow:(_panelWin ?: _win)];
 }
 
-- (void)presentLocalTranslate:(NSString *)src dst:(NSString *)dst {
+- (void)presentLocalTranslate:(NSString *)src dst:(NSString *)dst err:(NSString *)err {
+    if (err && err.length) {
+        UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"翻译失败"
+                                                                   message:err
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
+        [Common present:ac fromWindow:(_panelWin ?: _win)];
+        return;
+    }
     if (!dst || dst.length == 0) { [Common toast:@"翻译失败"]; return; }
     NSString *msg = [NSString stringWithFormat:@"原文：\n%@\n\n译文：\n%@", src ?: @"", dst ?: @""];
     UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"翻译结果"
