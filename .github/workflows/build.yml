@@ -42,7 +42,7 @@ jobs:
       # 而该类只编进 tweak dylib，设置进程里 dlopen 直接报
       #   symbol not found in flat namespace '_OBJC_CLASS_$_AskAIEngine'
       # 导致「设置 → 超级截图」不显示。plist 检查发现不了，只能查二进制。
-      - name: Guard: prefs bundle must be self-contained
+      - name: "Guard: prefs bundle must be self-contained"
         run: |
           BIN=""
           for c in .theos/obj/debug/Snapper3ZhExtPrefs.bundle/Snapper3ZhExtPrefs \
