@@ -93,6 +93,14 @@
 			<string>百度智能云应用密钥</string>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>pasteClipboardKeys</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    从剪贴板一键粘贴密钥（微信输入法弹不出时用）</string>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>

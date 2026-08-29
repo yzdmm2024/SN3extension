@@ -212,6 +212,12 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     pan.delegate = self;
     [_contentView addGestureRecognizer:pan];
 
+    // v5.15：双指捏合等比缩放选区（围绕选区中心），面板阶段同样生效、同步跟随
+    UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self
+                                                                               action:@selector(pinchCrop:)];
+    pinch.delegate = self;
+    [_contentView addGestureRecognizer:pinch];
+
     [self installCropUI];
     [self installLongControls];
     [self registerLsCapture];
@@ -797,6 +803,34 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
             [self refreshChrome];
             if (_editingPanel) [self syncPanelAfterCropRectChange];
         }
+    }
+}
+
+// v5.15：双指捏合 —— 围绕选区中心等比缩放选区尺寸（最小 kMinCrop、夹在屏幕内）。
+//        框选/面板阶段均生效；面板阶段缩放后同步上移面板位置并重新预裁剪，选区实时跟随。
+- (void)pinchCrop:(UIPinchGestureRecognizer *)g {
+    if (_mode != XZMaskModeCrop || ![self hasSelection]) { return; }
+    static CGFloat _cropPinchLast = 1.0;
+    if (g.state == UIGestureRecognizerStateBegan) {
+        _cropPinchLast = 1.0;
+    } else if (g.state == UIGestureRecognizerStateChanged) {
+        CGFloat d = g.scale / MAX(0.01, _cropPinchLast);
+        _cropPinchLast = g.scale;
+        if (!isfinite(d) || d <= 0) return;
+
+        CGRect b = _contentView.bounds;
+        CGFloat topLimit = [Common screenSafeInsets].top;
+        CGRect r = _cropRect;
+        CGFloat cx = r.origin.x + r.size.width / 2.0;
+        CGFloat cy = r.origin.y + r.size.height / 2.0;
+        CGFloat nw = MIN(MAX(r.size.width  * d, kMinCrop), b.size.width);
+        CGFloat nh = MIN(MAX(r.size.height * d, kMinCrop), b.size.height);
+        CGFloat x = MAX(0, MIN(cx - nw / 2.0, b.size.width  - nw));
+        CGFloat y = MAX(topLimit, MIN(cy - nh / 2.0, b.size.height - nh));
+        _cropRect = CGRectMake(x, y, nw, nh);
+        [self updateMask];
+        if (_editingPanel) [self layoutLocalPanelForCropLive];
+        else if (_hasCrop) [self refreshChrome];
     }
 }
 

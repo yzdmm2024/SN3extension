@@ -320,11 +320,28 @@ static CGRect XZRectFromValue(id v) {
 
     [[[NSURLSession sharedSession] dataTaskWithURL:tu completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
         NSString *token = nil;
-        if (!e && d) {
+        NSString *tokErr = nil;
+        if (e) {
+            tokErr = e.localizedDescription;
+        } else if (d) {
             id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
-            if ([j isKindOfClass:[NSDictionary class]]) token = j[@"access_token"];
+            if ([j isKindOfClass:[NSDictionary class]]) {
+                token = j[@"access_token"];
+                if (!token) {
+                    tokErr = [NSString stringWithFormat:@"%@ %@", j[@"error"] ?: @"", j[@"error_description"] ?: @"apiKey/Secret配对无效"];
+                }
+            } else {
+                tokErr = @"OCR令牌响应无法解析";
+            }
         }
-        if (!token.length) { if (completion) completion(nil); return; }
+        if (!token.length) {
+            NSLog(@"[SN3] 百度OCR获取access_token失败: %@", tokErr ?: @"空返回");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [Common toast:[NSString stringWithFormat:@"百度OCR配置有误：%@", tokErr ?: @"token获取失败"]];
+            });
+            if (completion) completion(nil);
+            return;
+        }
 
         UIImage *tiny = [self bdShrink:image maxDim:4096];
         NSData *png = UIImagePNGRepresentation(tiny);
@@ -342,6 +359,7 @@ static CGRect XZRectFromValue(id v) {
 
         [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *d2, NSURLResponse *r2, NSError *e2) {
             NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+            NSString *apiErr = nil;
             if (!e2 && d2) {
                 @try {
                     id j2 = [NSJSONSerialization JSONObjectWithData:d2 options:0 error:nil];
@@ -356,12 +374,22 @@ static CGRect XZRectFromValue(id v) {
                                 }
                             }
                         }
+                        id ec = j2[@"error_code"], em = j2[@"error_msg"];
+                        if (ec) apiErr = [NSString stringWithFormat:@"%@ %@", ec, em ?: @""];
                     }
-                } @catch (NSException *ex) {}
+                } @catch (NSException *ex) { apiErr = ex.reason; }
+            } else if (e2) {
+                apiErr = e2.localizedDescription;
             }
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (items.count) { if (completion) completion(items); }
-                else if (completion) completion(nil);
+                else {
+                    if (apiErr.length) {
+                        NSLog(@"[SN3] 百度OCR识别失败: %@", apiErr);
+                        [Common toast:[NSString stringWithFormat:@"百度OCR失败：%@（如未开通服务/无额度，请到设置-API开通里检查）", apiErr]];
+                    }
+                    if (completion) completion(nil);
+                }
             });
         }] resume];
     }] resume];
@@ -786,7 +814,6 @@ static CGRect XZRectFromValue(id v) {
 #pragma mark - 7. 贴图（悬浮窗口）
 
 static UIWindow *_floatWin = nil;
-static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时随时可重绘更清晰
 
 // 贴图：浮窗尺寸默认匹配所选拖选框（rect，屏幕坐标）；rect 为空则用 120 默认
 + (void)floating:(UIImage *)image {
@@ -796,7 +823,6 @@ static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时�
 + (void)floating:(UIImage *)image withScreenRect:(CGRect)rect {
     if (!image) return;
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
-    _floatImage = image;
 
     CGRect scr = [UIScreen mainScreen].bounds;
     CGFloat fw, fh;
@@ -881,11 +907,9 @@ static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时�
 
 + (void)closeFloat {
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
-    _floatImage = nil;
 }
 + (void)closeFloatByGesture:(UITapGestureRecognizer *)g {
     if (_floatWin) { _floatWin.hidden = YES; _floatWin = nil; }
-    _floatImage = nil;
 }
 
 // v5.11：贴图显示图预缩放（按显示尺寸×屏scale，最多不超原图），大幅降低拖动逐帧合成开销
@@ -903,10 +927,8 @@ static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时�
     return out ?: img;
 }
 
-// v5.11：贴图拖动。注意不能配移动中的窗口用 translationInView（参考系也在动会漂移）。
-// v5.12：改用 locationInView:nil（窗口 base / 屏幕固定坐标）做位移，根除窗口移动导致的
-//         反馈漂移——旧实现用 locationInView:_floatWin，窗口每移动一次参考系就同步变化，
-//         前后两点的参考系不一致，位移被重复折算→抖动/闪烁。
+// v5.15：贴图拖动。改用窗口 center（屏幕固定坐标）移动，图片 iv 始终相对窗口原位不变——
+//        不重绘、不重排，根除画面抖动/闪烁。用 locationInView:nil 取屏幕固定坐标算增量。
 + (void)panFloat:(UIPanGestureRecognizer *)pan {
     if (!_floatWin) return;
     static CGPoint _floatLast;
@@ -919,16 +941,17 @@ static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时�
         _floatLast = loc;
         if (dx == 0 && dy == 0) return;
         CGRect scr = [UIScreen mainScreen].bounds;
-        CGRect f = _floatWin.frame;
-        f.origin.x = MAX(0, MIN(f.origin.x + dx, scr.size.width  - f.size.width));
-        f.origin.y = MAX(0, MIN(f.origin.y + dy, scr.size.height - f.size.height));
-        _floatWin.frame = f;
+        CGPoint c = _floatWin.center;
+        CGFloat halfW = _floatWin.frame.size.width / 2.0;
+        CGFloat halfH = _floatWin.frame.size.height / 2.0;
+        c.x = MAX(halfW, MIN(c.x + dx, scr.size.width  - halfW));
+        c.y = MAX(halfH, MIN(c.y + dy, scr.size.height - halfH));
+        _floatWin.center = c;
     }
 }
 
-// v5.14：贴图捏合缩放。以窗口中心为锚点等比缩放，限制在合理尺寸区间；
-//        缩放后按新尺寸重绘显示图（仅当放大超当前像素图时才重绘，避免糊且不浪费）：
-//        小于原显示尺寸时不重绘（直接拉伸缩小无损），放大到超像素图清晰度时才重算。
+// v5.15：贴图捏合缩放。直接改窗口尺寸（等比、中心不动、夹在屏幕内），图片 iv 由
+//        autoresizing 自动撑开、contentMode 拉伸——不逐帧重绘，手感顺滑且无抖动。
 + (void)pinchFloat:(UIPinchGestureRecognizer *)g {
     if (!_floatWin) return;
     static CGFloat _pinchLastScale = 1.0;
@@ -952,20 +975,7 @@ static UIImage *_floatImage = nil;   // v5.14：保存原图，捏合放大时�
         f.origin.x = MAX(0, MIN(f.origin.x, scr.size.width  - f.size.width));
         f.origin.y = MAX(0, MIN(f.origin.y, scr.size.height - f.size.height));
         _floatWin.frame = f;
-
-        // 放大超过当前像素清晰度时，用原图重绘保持清晰
-        [self refreshFloatImage];
     }
-}
-
-// v5.14：按当前窗口尺寸用 _floatImage 重新生成显示图（放大后防糊）
-+ (void)refreshFloatImage {
-    if (!_floatWin || !_floatImage) return;
-    UIImageView *iv = [_floatWin.subviews firstObject];
-    if (![iv isKindOfClass:[UIImageView class]]) return;
-    CGRect b = _floatWin.bounds;
-    iv.image = [self downscaledToDisplay:_floatImage forSize:b.size scale:[UIScreen mainScreen].scale];
-    iv.frame = b;
 }
 
 #pragma mark - 8. 保存
