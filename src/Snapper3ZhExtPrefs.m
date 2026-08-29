@@ -150,6 +150,8 @@
     }
 }
 
+@end
+
 #pragma mark - v5.18 工具栏按钮排序/启用页
 //
 // 用法：系统设置 → 超级截图 → 工具栏按钮(排序/启用)
@@ -242,8 +244,6 @@
         [s setProperty:tag forKey:@"tag"];
         [s setProperty:@"com.axs.snapper3zhext" forKey:@"defaults"];
         s.identifier = [NSString stringWithFormat:@"tb_%@", tag];
-        // 显式标记初始值（PSSwitchCell 不会自动读 default）
-        s.defaultValue = @(! [disabled containsObject:tag]);
         [specs addObject:s];
     }
     self.specifiers = specs;
