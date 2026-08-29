@@ -30,6 +30,7 @@
 				<key>cell</key>
 				<string>PSGroupCell</string>
 				<key>footerText</key>
+				<string>默认走本地 Apple Vision 识别(免费离线)。需要更高准确度可切到「百度 OCR(PaddleOCR, 需 API Key/Secret)」或「AI Studio/豆包/通义千问 等大模型(免费, 需自备 access token / API key)」。</string>
 				<key>label</key>
 				<string>识别引擎</string>
 			</dict>
