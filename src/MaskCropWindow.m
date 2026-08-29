@@ -1319,7 +1319,8 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @catch (__unused NSException *e) {}
         _panelScroll = nil;
     }
-    if (_panelWin) { [_panelWin removeAllInteractiveViews]; }
+    // 注: 不调用 removeAllInteractiveViews — 旧 sv/panel 已被 _localPanel removeFromSuperview 一并移除
+    if (_panelWin) { _panelWin.gateInteractive = YES; }
 
     // v5.21：创建承载面板的独立窗口（一次创建后保留；切换单/双排时复用）
     if (!_panelWin) {
@@ -1380,6 +1381,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
             x += bw + gap;
         }
         // 末尾再复制一份同样的按钮, 滚到第二份的对应位置时瞬移回第一份, 实现无缝循环
+        CGFloat loopStart = x;   // 第一份末尾 = 第二份开头
         for (NSDictionary *d in all) {
             UIButton *b = [self makeLocalButton:d iconSize:iconS labelH:labelH width:bw];
             b.frame = CGRectMake(x, 0, bw, rowH);
