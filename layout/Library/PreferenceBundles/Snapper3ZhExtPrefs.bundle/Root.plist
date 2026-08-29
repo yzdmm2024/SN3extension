@@ -416,6 +416,11 @@
 				<string>双排</string>
 				<string>单排滑动</string>
 			</array>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+			</array>
 			<key>default</key>
 			<integer>0</integer>
 		</dict>
