@@ -16,15 +16,31 @@
     self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
 }
 
-// v5.15：从其他 app 切回设置后偶发空白 —— 兜底重建（object 还在但 specifiers 被清空/未重载时）
+// v5.18：从其他 app 切回设置后偶发空白 —— 三层兜底：
+//   (a) 每次回到前台无脑重建（specifiers 存了但 table 不刷、或内部状态错位时也能自愈）；
+//   (b) 监听 UIApplicationDidBecomeActiveNotification，强行重新触发 reloadData；
+//   (c) 监听 prefsChanged 通知（剪贴板一键粘贴等动作改键后刷新）。
+// 各输入框的值存在 defaults，重建会自动回填，不会丢失已填的密钥。
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // v5.17：从其它 app 切回设置时 PSListController 常不自刷新/被清空导致整页白屏。
-    //        每次回到前台都从 Root.plist 重建 specifiers 并强刷表格，保证一定有内容；
-    //        各输入框的值存在 defaults，重建会自动回填，不会丢失已填的密钥。
-    if (!self.specifiers || self.specifiers.count == 0) {
-        self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    if ([self.view respondsToSelector:@selector(reloadData)]) {
+        [(UITableView *)self.view reloadData];
     }
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)handleBecomeActive {
+    self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    if ([self.view respondsToSelector:@selector(reloadData)]) {
+        [(UITableView *)self.view reloadData];
+    }
+}
+
+- (void)handlePrefsChanged {
     if ([self.view respondsToSelector:@selector(reloadData)]) {
         [(UITableView *)self.view reloadData];
     }
@@ -132,6 +148,148 @@
         NSURL *u = [NSURL URLWithString:url];
         if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
     }
+}
+
+#pragma mark - v5.18 工具栏按钮排序/启用页
+//
+// 用法：系统设置 → 超级截图 → 工具栏按钮(排序/启用)
+//   - 每行右侧开关控制是否在截图后工具栏显示该按钮
+//   - 拖动右侧 ≡ 手柄可调整按钮顺序
+//   - 数据落地：Toolbar_Disabled (逗号分隔的 tag) + Toolbar_Order (逗号分隔的 tag)
+
+@interface SN3ToolbarController : PSListController
+@end
+
+@implementation SN3ToolbarController
+
+// 按钮规格表（必须与 EditToolbarWindow.m 的 catalog 一致）
+- (NSArray<NSDictionary *> *)catalog {
+    return @[
+        @{@"tag": @1,  @"label": @"OCR"},
+        @{@"tag": @2,  @"label": @"翻译"},
+        @{@"tag": @3,  @"label": @"画图"},
+        @{@"tag": @4,  @"label": @"识码"},
+        @{@"tag": @17, @"label": @"AI"},
+        @{@"tag": @6,  @"label": @"复制"},
+        @{@"tag": @7,  @"label": @"贴图"},
+        @{@"tag": @8,  @"label": @"保存"},
+        @{@"tag": @9,  @"label": @"分享"},
+        @{@"tag": @11, @"label": @"加壳"},
+        @{@"tag": @12, @"label": @"PDF"},
+        @{@"tag": @13, @"label": @"压缩"},
+        @{@"tag": @14, @"label": @"去状态栏"},
+        @{@"tag": @15, @"label": @"取色"},
+        @{@"tag": @16, @"label": @"还原"},
+    ];
+}
+
+// 把 15 个 tag 按 Toolbar_Order 排序；缺项补末尾、多余丢
+- (NSArray<NSNumber *> *)orderedTags {
+    NSMutableArray<NSNumber *> *all = [NSMutableArray array];
+    for (NSDictionary *c in [self catalog]) [all addObject:c[@"tag"]];
+    NSString *saved = [Common stringPref:@"Toolbar_Order" default:@""];
+    NSMutableOrderedSet<NSNumber *> *res = [NSMutableOrderedSet orderedSet];
+    if (saved.length) {
+        for (NSString *t in [saved componentsSeparatedByString:@","]) {
+            NSNumber *n = @([t integerValue]);
+            if ([all containsObject:n]) [res addObject:n];
+        }
+    }
+    for (NSNumber *t in all) if (![res containsObject:t]) [res addObject:t];
+    return res.array;
+}
+
+- (void)persistOrder {
+    NSMutableArray *strs = [NSMutableArray array];
+    for (NSNumber *t in [self orderedTags]) [strs addObject:t.stringValue];
+    [Common setPref:@"Toolbar_Order" value:[strs componentsJoinedByString:@","]];
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.navigationItem.title = @"工具栏按钮";
+
+    UIBarButtonItem *edit = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemEdit
+                                                                          target:self action:@selector(toggleEdit)];
+    self.navigationItem.rightBarButtonItem = edit;
+
+    [self rebuildSpecs];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self rebuildSpecs];
+}
+
+- (void)rebuildSpecs {
+    NSMutableSet<NSNumber *> *disabled = [NSMutableSet setWithArray:[[Common stringPref:@"Toolbar_Disabled" default:@""] componentsSeparatedByString:@","]];
+
+    NSMutableArray *specs = [NSMutableArray array];
+    PSSpecifier *grp = [PSSpecifier groupSpecifierWithName:@"拖动右侧 ≡ 调整顺序，点开关控制是否在工具栏显示"];
+    [specs addObject:grp];
+
+    for (NSNumber *tag in [self orderedTags]) {
+        NSString *lbl = nil;
+        for (NSDictionary *c in [self catalog]) if ([c[@"tag"] isEqual:tag]) { lbl = c[@"label"]; break; }
+
+        PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:lbl
+                                                        target:self
+                                                           set:@selector(setEnabledValue:specifier:)
+                                                           get:@selector(getEnabledValue:specifier:)
+                                                        detail:nil
+                                                          cell:PSSwitchCell
+                                                          edit:nil];
+        [s setProperty:tag forKey:@"tag"];
+        [s setProperty:@"com.axs.snapper3zhext" forKey:@"defaults"];
+        s.identifier = [NSString stringWithFormat:@"tb_%@", tag];
+        // 显式标记初始值（PSSwitchCell 不会自动读 default）
+        s.defaultValue = @(! [disabled containsObject:tag]);
+        [specs addObject:s];
+    }
+    self.specifiers = specs;
+}
+
+- (id)getEnabledValue:(id)value specifier:(PSSpecifier *)spec {
+    NSNumber *tag = [spec propertyForKey:@"tag"];
+    NSString *raw = [Common stringPref:@"Toolbar_Disabled" default:@""];
+    BOOL inDisabled = [[raw componentsSeparatedByString:@","] containsObject:tag.stringValue];
+    return @(! inDisabled);
+}
+
+- (void)setEnabledValue:(id)value specifier:(PSSpecifier *)spec {
+    NSNumber *tag = [spec propertyForKey:@"tag"];
+    NSMutableSet *disabled = [NSMutableSet setWithArray:[[Common stringPref:@"Toolbar_Disabled" default:@""] componentsSeparatedByString:@","]];
+    if ([value boolValue]) [disabled removeObject:tag]; else [disabled addObject:tag];
+    NSMutableArray *arr = [NSMutableArray array];
+    for (id x in disabled) if (![x isEqual:@""]) [arr addObject:x];
+    [Common setPref:@"Toolbar_Disabled" value:[arr componentsJoinedByString:@","]];
+}
+
+- (void)toggleEdit { self.table.editing = !self.table.editing; }
+
+// 让所有行可拖动
+- (BOOL)tableView:(UITableView *)tableView canMoveRowAtIndexPath:(NSIndexPath *)indexPath { return YES; }
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath { return NO; }
+- (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath {
+    return UITableViewCellEditingStyleNone;
+}
+- (BOOL)tableView:(UITableView *)tableView shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)indexPath { return NO; }
+
+- (void)tableView:(UITableView *)tableView moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
+    // 第 0 行是 group header
+    NSInteger f = from.row - 1, t = to.row - 1;
+    if (f < 0 || t < 0) return;
+    NSMutableArray<NSNumber *> *tags = [[self orderedTags] mutableCopy];
+    if (f >= (NSInteger)tags.count || t >= (NSInteger)tags.count) return;
+    NSNumber *moved = tags[f];
+    [tags removeObjectAtIndex:f];
+    [tags insertObject:moved atIndex:MIN(t, (NSInteger)tags.count - 1)];
+
+    NSMutableArray *strs = [NSMutableArray array];
+    for (NSNumber *n in tags) [strs addObject:n.stringValue];
+    [Common setPref:@"Toolbar_Order" value:[strs componentsJoinedByString:@","]];
+
+    [self rebuildSpecs];
 }
 
 @end

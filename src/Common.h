@@ -17,6 +17,9 @@
 #define XZ_KEY_OCR_BD_APIKEY    @"OCR_Baidu_APIKey"       // v5.13：百度OCR(文字识别) 密钥（须与密钥成对填写才启用云端OCR）
 #define XZ_KEY_OCR_BD_SECRET    @"OCR_Baidu_SecretKey"
 #define XZ_KEY_LLM_OCR_ENABLED  @"LLM_OCR_Enabled"        // v5.17：用「AI 提问」里的多模态大模型(大模型OCR/豆包等)做免费OCR
+#define XZ_KEY_TB_ORDER         @"Toolbar_Order"         // v5.18：工具栏按钮顺序(逗号分隔的tag)
+#define XZ_KEY_TB_DISABLED      @"Toolbar_Disabled"      // v5.18：工具栏禁用的按钮(逗号分隔的tag)
+#define XZ_KEY_TB_LAYOUT        @"Toolbar_Layout"        // v5.18：工具栏布局 — 0=双排(默认), 1=单排滑动
 #define XZ_KEY_TRANS_ENABLED    @"Translate_Enabled"
 #define XZ_KEY_TRANS_APPID      @"Translate_APIAppID"
 #define XZ_KEY_TRANS_KEY        @"Translate_APIKey"
@@ -38,6 +41,7 @@
 @interface Common : NSObject
 + (BOOL)boolPref:(NSString *)key default:(BOOL)def;
 + (NSString *)stringPref:(NSString *)key default:(NSString *)def;
++ (int)intPref:(NSString *)key default:(int)def;       // v5.18
 + (void)setPref:(NSString *)key value:(id)value;
 + (NSArray<NSString *> *)ocrLanguages;      // 从偏好读取，默认 zh-Hans/zh-Hant/en-US
 + (UIImage *)systemIcon:(NSString *)name;   // SF Symbol 渲染成 UIImage（iOS>=13）

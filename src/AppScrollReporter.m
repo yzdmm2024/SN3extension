@@ -106,11 +106,13 @@ static int g_armTok = 0, g_disarmTok = 0, g_offsetTok = 0, g_regionTok = 0, g_do
     _armed = YES;
     _autoStarted = NO;
 
-    // v5.7：步进下调到 0.82（重叠 ~18%）——重叠大于常见导航条高度，拼接时后续帧顶部导航条被整段丢弃，
-    //        仅首帧保留导航条一次；底部输入条靠 MaskCropWindow 框 inset 排除。彻底解决长图重复。
+    // v5.18：步进比例改为偏好可调（默认 0.82，即 18% 重叠）。用户在设置 → 长截图 → 步进比例可调。
+    //        滑大 → 每帧新内容多、速度快，但重叠过小时画面会跳；滑小 → 更稳但帧数多。
     BOOL quick = [Common boolPref:@"LongShot_Quick" default:NO];
+    CGFloat stepPct = [Common intPref:@"LongShot_StepRatio" default:82] / 100.0f;
+    if (stepPct < 0.60f) stepPct = 0.60f; else if (stepPct > 0.95f) stepPct = 0.95f;
     _tickInterval = quick ? 0.28 : 0.42;
-    _stepRatio   = quick ? 0.82f : 0.82f;
+    _stepRatio    = stepPct;
 
     // 第 1 帧：当前滚动位置作为基准
     [self sendCaptureAt:_sv.contentOffset.y];

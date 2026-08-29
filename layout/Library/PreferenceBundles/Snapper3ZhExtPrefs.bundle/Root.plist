@@ -279,6 +279,24 @@
 			<string>0.05</string>
 		</dict>
 		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>LongShot_StepRatio</string>
+			<key>label</key>
+			<string>自动滚动步进比例(越大越快,重叠越少)</string>
+			<key>min</key>
+			<integer>60</integer>
+			<key>max</key>
+			<integer>95</integer>
+			<key>default</key>
+			<integer>82</integer>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+		</dict>
+		<dict>
 			<key>PostNotification</key>
 			<string>com.axs.snapper3zhext.prefsChanged</string>
 			<key>cell</key>
@@ -377,6 +395,36 @@
 			<string>需安装 CCSupport（Snapper3 的控制中心模块同样依赖它）。装好后下拉控制中心，在编辑模式里找到「SN3截图」添加，点按即可截屏并弹出浮动菜单。</string>
 			<key>label</key>
 			<string>控制中心</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>自定义截图后的工具栏：拖动 ≡ 调整按钮顺序、点开关禁用不需要的按钮，并切换「单排滑动 / 双排」显示模式。</string>
+			<key>label</key>
+			<string>工具栏</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>SN3ToolbarController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>工具栏按钮 (排序 / 启用)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Toolbar_Layout</string>
+			<key>label</key>
+			<string>单排滑动显示</string>
 		</dict>
 	</array>
 	<key>title</key>

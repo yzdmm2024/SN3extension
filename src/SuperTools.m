@@ -114,31 +114,16 @@ static CGRect XZRectFromValue(id v) {
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     if (!image.CGImage) { if (completion) completion(nil); return; }
 
-    // v5.17：免费大模型 OCR —— 开启且填好「AI 提问」的多模态模型(大模型OCR/Doubao豆包等)时，
-    //        优先用 OpenAI 兼容接口识别（无需百度付费）。失败/未配置才依次回退百度→本地 Vision。
-    if ([Common boolPref:XZ_KEY_LLM_OCR_ENABLED default:NO]) {
-        NSString *bu = [Common stringPref:XZ_KEY_AI_BASEURL default:@""];
-        NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
-        NSString *md  = [Common stringPref:XZ_KEY_AI_MODEL default:@""];
-        if (bu.length && key.length && md.length) {
-            [self ocrViaLLM:image completion:^(NSArray<NSDictionary *> *items) {
-                if (items.count) { if (completion) completion(items); }
-                else { [self ocrViaBaiduOrVision:image languages:langs completion:completion]; }
-            }];
-            return;
-        }
-    }
-    [self ocrViaBaiduOrVision:image languages:langs completion:completion];
-}
-
-// 百度(已填密钥)→本地 Vision 的回退链
-+ (void)ocrViaBaiduOrVision:(UIImage *)image languages:(NSArray *)langs
-                 completion:(void (^)(NSArray<NSDictionary *> *items))completion {
-    NSString *ak = [Common stringPref:XZ_KEY_OCR_BD_APIKEY default:@""];
-    NSString *sk = [Common stringPref:XZ_KEY_OCR_BD_SECRET default:@""];
-    if (ak.length && sk.length) {
-        [self ocrViaBaidu:image completion:^(NSArray<NSDictionary *> *bItems) {
-            if (bItems.count) { if (completion) completion(bItems); }
+    // v5.18：OCR 默认用 Apple 「照片」同款本地模型（VNRecognizeTextRequest/Live Text，免费离线、中文OK）。
+    //        不再默认走百度OCR（用户不用百度）。仅当用户自己开了「大模型OCR」且配好 AI 提问的多模态模型时，
+    //        才优先用大模型（OpenAI 兼容，如 AI Studio/豆包），失败或未配自动回退本地模型。
+    BOOL useLLM = [Common boolPref:XZ_KEY_LLM_OCR_ENABLED default:NO];
+    NSString *bu = [Common stringPref:XZ_KEY_AI_BASEURL default:@""];
+    NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
+    NSString *md  = [Common stringPref:XZ_KEY_AI_MODEL default:@""];
+    if (useLLM && bu.length && key.length && md.length) {
+        [self ocrViaLLM:image completion:^(NSArray<NSDictionary *> *items) {
+            if (items.count) { if (completion) completion(items); }
             else { [self ocrVisionChain:image languages:langs completion:completion]; }
         }];
     } else {

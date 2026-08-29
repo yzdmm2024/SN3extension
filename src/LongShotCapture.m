@@ -274,9 +274,15 @@ static LongShotCapture *_shared = nil;
     if (_frames.count == 0) { if (completion) completion(nil); return; }
     if (_frames.count == 1) { if (completion) completion(_frames.firstObject); return; }
 
+    NSLog(@"[SN3] 长截图开始拼接: 帧数=%lu, 估计高度=%.0fpt", (unsigned long)_frames.count, _estimatedHeight);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         UIImage *result = [self stitchSync];
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (result) {
+                NSLog(@"[SN3] 长截图拼接完成: 输出=%lux%lu", (unsigned long)result.size.width, (unsigned long)result.size.height);
+            } else {
+                NSLog(@"[SN3] 长截图拼接失败");
+            }
             if (completion) completion(result);
         });
     });

@@ -164,48 +164,97 @@ static EditToolbarWindow *_shared = nil;
 - (void)installToolbar {
     CGRect scr = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = [Common screenSafeInsets];
-    CGFloat barH = kBarPad * 2 + kRowH * 3 + kRowGap * 2;
 
+    // v5.18：从偏好读「按钮顺序 / 禁用集合 / 单/双排」。
+    // 默认按 3 排顺序: 1 2 3 4 17 6 7 8 9 11 12 13 14 15 16。
+    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
+                                       @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave), @(ETBTagShare), @(ETBTagPhone),
+                                       @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip), @(ETBTagColorPick), @(ETBTagReset) ];
+    NSArray<NSNumber *> *savedOrder = [[Common stringPref:XZ_KEY_TB_ORDER default:@""] length]
+        ? [[Common stringPref:XZ_KEY_TB_ORDER default:@""] componentsSeparatedByString:@","].mutableCopy
+        : [defOrder mutableCopy];
+    // 缺项补上 / 多余去掉，并按 tag 转成 NSNumber
+    NSMutableSet<NSNumber *> *orderSet = [NSMutableSet setWithArray:savedOrder];
+    for (NSNumber *t in defOrder) { if (![orderSet containsObject:t]) [savedOrder addObject:t]; }
+    for (NSNumber *t in [savedOrder copy]) {
+        if (![defOrder containsObject:t]) { NSMutableArray *m = [savedOrder mutableCopy]; [m removeObject:t]; savedOrder = m; }
+    }
+    NSSet<NSNumber *> *disabled = [NSSet setWithArray:[[Common stringPref:XZ_KEY_TB_DISABLED default:@""] componentsSeparatedByString:@","]];
+
+    // 按钮规格表（icon/label/tag）—— 整个工具栏统一从这里取，settings 排序也用这里
+    NSDictionary<NSNumber *, NSDictionary *> *catalog = @{
+        @(ETBTagOCR):       @{@"icon":@"text.viewfinder",       @"label":@"OCR"},
+        @(ETBTagTranslate): @{@"icon":@"translate",             @"label":@"翻译"},
+        @(ETBTagDraw):      @{@"icon":@"pencil.tip",            @"label":@"画图"},
+        @(ETBTagCodeScan):  @{@"icon":@"qrcode.viewfinder",     @"label":@"识码"},
+        @(ETBTagAI):        @{@"icon":@"sparkles",              @"label":@"AI"},
+        @(ETBTagCopy):      @{@"icon":@"doc.on.doc",            @"label":@"复制"},
+        @(ETBTagFloating):  @{@"icon":@"pin",                   @"label":@"贴图"},
+        @(ETBTagSave):      @{@"icon":@"square.and.arrow.down", @"label":@"保存"},
+        @(ETBTagShare):     @{@"icon":@"square.and.arrow.up",   @"label":@"分享"},
+        @(ETBTagPhone):     @{@"icon":@"iphone",                @"label":@"加壳"},
+        @(ETBTagPDF):       @{@"icon":@"doc.richtext",          @"label":@"PDF"},
+        @(ETBTagCompress):  @{@"icon":@"arrow.down.circle",     @"label":@"压缩"},
+        @(ETBTagStrip):     @{@"icon":@"menubar.rectangle",     @"label":@"去状态栏"},
+        @(ETBTagColorPick): @{@"icon":@"eyedropper",            @"label":@"取色"},
+        @(ETBTagReset):     @{@"icon":@"arrow.counterclockwise",@"label":@"还原"},
+    };
+
+    BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
+
+    // 过滤掉禁用的按钮（按用户保存的顺序遍历）
+    NSMutableArray<NSNumber *> *enabledTags = [NSMutableArray array];
+    for (NSNumber *t in savedOrder) {
+        if (![disabled containsObject:t]) [enabledTags addObject:t];
+    }
+
+    CGFloat barH = kBarPad * 2 + kRowH + (singleRow ? 0 : (kRowH + kRowGap) * 2);
     _toolbar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
                                                         scr.size.width, barH)];
     _toolbar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
     [_rootVC.view addSubview:_toolbar];
 
-    NSArray *row1 = @[
-        @{@"icon":@"text.viewfinder",   @"label":@"OCR",  @"tag":@(ETBTagOCR)},
-        @{@"icon":@"translate",         @"label":@"翻译", @"tag":@(ETBTagTranslate)},
-        @{@"icon":@"pencil.tip",        @"label":@"画图", @"tag":@(ETBTagDraw)},
-        @{@"icon":@"qrcode.viewfinder", @"label":@"识码", @"tag":@(ETBTagCodeScan)},
-        @{@"icon":@"sparkles",          @"label":@"AI",   @"tag":@(ETBTagAI)},
-    ];
-    NSArray *row2 = @[
-        @{@"icon":@"doc.on.doc",             @"label":@"复制", @"tag":@(ETBTagCopy)},
-        @{@"icon":@"pin",                    @"label":@"贴图", @"tag":@(ETBTagFloating)},
-        @{@"icon":@"square.and.arrow.down",  @"label":@"保存", @"tag":@(ETBTagSave)},
-        @{@"icon":@"square.and.arrow.up",    @"label":@"分享", @"tag":@(ETBTagShare)},
-        @{@"icon":@"iphone",                 @"label":@"加壳", @"tag":@(ETBTagPhone)},
-    ];
-    NSArray *row3 = @[
-        @{@"icon":@"doc.richtext",           @"label":@"PDF",  @"tag":@(ETBTagPDF)},
-        @{@"icon":@"arrow.down.circle",      @"label":@"压缩", @"tag":@(ETBTagCompress)},
-        @{@"icon":@"menubar.rectangle",      @"label":@"去状态栏", @"tag":@(ETBTagStrip)},
-        @{@"icon":@"eyedropper",             @"label":@"取色", @"tag":@(ETBTagColorPick)},
-        @{@"icon":@"arrow.counterclockwise", @"label":@"还原", @"tag":@(ETBTagReset)},
-    ];
-
-    CGFloat pad = 10.0, gap = 6.0;
-
-    void (^placeRow)(NSArray *, CGFloat) = ^(NSArray *row, CGFloat yOff) {
-        CGFloat bw = (scr.size.width - pad * 2 - gap * (row.count - 1)) / (CGFloat)row.count;
-        for (NSInteger i = 0; i < row.count; i++) {
-            UIButton *b = [self makeToolButton:row[i] width:bw];
-            b.frame = CGRectMake(pad + i * (bw + gap), kBarPad + yOff, bw, kRowH);
-            [_toolbar addSubview:b];
+    if (singleRow) {
+        // 单排 + 横向滑动：全部按钮放在 UIScrollView 内，避免单屏塞不下被压扁
+        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, kBarPad, scr.size.width, kRowH)];
+        sv.showsHorizontalScrollIndicator = NO;
+        sv.alwaysBounceHorizontal = YES;
+        [_toolbar addSubview:sv];
+        CGFloat bw = 64.0, gap = 8.0;
+        CGFloat x = 10.0;
+        for (NSNumber *t in enabledTags) {
+            NSDictionary *spec = catalog[t];
+            NSMutableDictionary *full = [spec mutableCopy];
+            full[@"tag"] = t;
+            UIButton *b = [self makeToolButton:full width:bw];
+            b.frame = CGRectMake(x, 0, bw, kRowH);
+            [sv addSubview:b];
+            x += bw + gap;
         }
-    };
-    placeRow(row1, 0);
-    placeRow(row2, kRowH + kRowGap);
-    placeRow(row3, (kRowH + kRowGap) * 2);
+        sv.contentSize = CGSizeMake(x, kRowH);
+    } else {
+        // 双排（5 + 余下 5）：保留 v5.10 行为，按 5 切片
+        NSArray<NSNumber *> *row1Tags = [enabledTags subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5, enabledTags.count))];
+        NSMutableArray<NSNumber *> *row2Tags = [NSMutableArray array];
+        for (NSUInteger i = 5; i < enabledTags.count; i++) [row2Tags addObject:enabledTags[i]];
+
+        CGFloat pad = 10.0, gap = 6.0;
+
+        void (^placeRow)(NSArray<NSNumber *> *, CGFloat) = ^(NSArray<NSNumber *> *tags, CGFloat yOff) {
+            if (!tags.count) return;
+            CGFloat bw = (scr.size.width - pad * 2 - gap * (tags.count - 1)) / (CGFloat)tags.count;
+            for (NSInteger i = 0; i < (NSInteger)tags.count; i++) {
+                NSDictionary *spec = catalog[tags[i]];
+                NSMutableDictionary *full = [spec mutableCopy];
+                full[@"tag"] = tags[i];
+                UIButton *b = [self makeToolButton:full width:bw];
+                b.frame = CGRectMake(pad + i * (bw + gap), kBarPad + yOff, bw, kRowH);
+                [_toolbar addSubview:b];
+            }
+        };
+        placeRow(row1Tags, 0);
+        placeRow(row2Tags, kRowH + kRowGap);
+    }
 }
 
 - (UIButton *)makeToolButton:(NSDictionary *)spec width:(CGFloat)bw {

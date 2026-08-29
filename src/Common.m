@@ -23,6 +23,10 @@
     NSString *v = [[self defaults] stringForKey:key];
     return v && v.length ? v : def;
 }
++ (int)intPref:(NSString *)key default:(int)def {
+    id v = [[self defaults] objectForKey:key];
+    return v ? [v intValue] : def;
+}
 + (void)setPref:(NSString *)key value:(id)value {
     [[self defaults] setObject:value forKey:key];
     [[self defaults] synchronize];
