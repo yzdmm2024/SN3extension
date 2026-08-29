@@ -63,19 +63,20 @@ static void SN3_DismissControlCenter(void) {
 // 图标加载：优先用用户提供的模板 PNG（"/var/jb/Library/Snapper3ZhExt.bundle/Resources/icon.png"），
 // 失败则用 SF Symbol 兜底，再失败则 Core Graphics 现场画一个蓝底相机。
 static UIImage *SN3GlyphImage(void) {
-    // 用户提供的模板图（黑前景 + 透明背景，可被 tintColor 染色）
-    NSString *bundlePath = @"/var/jb/Library/Snapper3ZhExt.bundle";
-    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
-    if (bundle) {
-        UIImage *custom = [UIImage imageNamed:@"icon" inBundle:bundle compatibleWithTraitCollection:nil];
-        if (custom) {
-            return [custom imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-        }
-    }
+    // v5.25.5：SF Symbol 优先，保证现代系统一定有图标（不再依赖可能缺失/损坏的自定义 PNG）
     UIImage *g = [UIImage systemImageNamed:@"camera.viewfinder"];
     if (g) return g;
     g = [UIImage systemImageNamed:@"camera.fill"];
     if (g) return g;
+    // 可选：用户自定义模板 PNG（仅当存在且有效才用，避免坏图导致图标空白）
+    NSString *bundlePath = @"/var/jb/Library/Snapper3ZhExt.bundle";
+    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+    if (bundle) {
+        UIImage *custom = [UIImage imageNamed:@"icon" inBundle:bundle compatibleWithTraitCollection:nil];
+        if (custom && custom.size.width > 1) {
+            return [custom imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        }
+    }
 
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(64.0, 64.0), NO, 0.0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();

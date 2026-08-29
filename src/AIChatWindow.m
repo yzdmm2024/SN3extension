@@ -29,6 +29,9 @@
 + (void)showWithTitle:(NSString *)title firstText:(NSString *)firstText {
     [[self shared] show:title firstText:firstText];
 }
++ (void)appendContext:(NSString *)text {
+    [[self shared] appendContext:text];
+}
 + (void)dismiss { [[self shared] hide]; }
 
 - (void)show:(NSString *)title firstText:(NSString *)firstText {
@@ -140,6 +143,22 @@
 - (void)performFirstRequest {
     self.textView.text = @"AI 思考中…";
     [self ask];
+}
+
+// v5.25.5：把截图 OCR 结果作为上下文追加到对话（仅当用户尚未开始追问时注入，避免打断）
+- (void)appendContext:(NSString *)text {
+    if (!text.length) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self.window || !self.messages) return;
+        NSString *ctx = [NSString stringWithFormat:@"（这是截图里识别到的文字，供参考）\n%@", text];
+        [self.messages addObject:@{ @"role" : @"system", @"content" : ctx }];
+        // 若首轮请求尚未发出（仍在“AI 思考中…”占位），不影响后续真实对话
+        NSMutableString *cur = [NSMutableString stringWithString:self.textView.text ?: @""];
+        if ([cur rangeOfString:@"AI 思考中"].location != NSNotFound) {
+            [cur appendString:[NSString stringWithFormat:@"\n\n【截图上下文】\n%@", text]];
+            self.textView.text = cur;
+        }
+    });
 }
 
 - (NSString *)renderedConversation {

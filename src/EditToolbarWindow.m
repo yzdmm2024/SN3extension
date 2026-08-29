@@ -21,6 +21,9 @@
 #import "SuperTools.h"
 #import "AIChatWindow.h"
 
+@interface EditToolbarWindow () <UIScrollViewDelegate>
+@end
+
 typedef NS_ENUM(NSInteger, ETBTag) {
     // 第 1 排：识别 / 编辑
     ETBTagOCR        = 1,
@@ -28,6 +31,8 @@ typedef NS_ENUM(NSInteger, ETBTag) {
     ETBTagDraw       = 3,
     ETBTagCodeScan   = 4,
     ETBTagAI        = 17,   // 问 AI（大模型）
+    ETBTagAIChat    = 18,   // AI 对话（小窗自由对话，可接豆包）
+    ETBTagRotate    = 19,   // 旋转当前图（90°步进）
     // 第 2 排：输出操作
     ETBTagCopy       = 6,
     ETBTagFloating   = 7,
@@ -66,6 +71,8 @@ static const CGFloat kBarPad  = 10.0;
     UIView *_toolbar;
     UILabel *_sizeLabel;
     UIImage *_originalImage;   // 还原用：保留最初传入的原图
+    UIScrollView *_singleRowScroll;   // v5.25.5：单排循环滑动用
+    CGFloat _singleRowBtnW;            // v5.25.5：单排按钮步距（宽+间距）
 }
 
 static EditToolbarWindow *_shared = nil;
@@ -103,6 +110,39 @@ static EditToolbarWindow *_shared = nil;
     NSLog(@"[SN3] edit window B destroyed");
 }
 
+#pragma mark - 工具栏布局计算（installToolbar / buildWindowWithImage 共用）
+
+// v5.25.5：统一计算「当前应显示的按钮顺序（去禁用、补缺失）」，单排/双排共用
+- (NSArray<NSNumber *> *)resolveEnabledTags {
+    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
+                                       @(ETBTagAIChat), @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
+                                       @(ETBTagShare), @(ETBTagPhone), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip),
+                                       @(ETBTagColorPick), @(ETBTagReset) ];
+    NSMutableArray<NSNumber *> *savedOrder = [NSMutableArray array];
+    NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
+    if (orderStr.length) [savedOrder addObjectsFromArray:[orderStr componentsSeparatedByString:@","]];
+    if (savedOrder.count == 0) [savedOrder addObjectsFromArray:defOrder];
+    NSMutableSet<NSNumber *> *orderSet = [NSMutableSet setWithArray:savedOrder];
+    for (NSNumber *t in defOrder) if (![orderSet containsObject:t]) [savedOrder addObject:t];
+    for (NSNumber *t in [savedOrder copy]) {
+        if (![defOrder containsObject:t]) [savedOrder removeObject:t];
+    }
+    NSSet<NSNumber *> *disabled = [NSSet setWithArray:[[Common stringPref:XZ_KEY_TB_DISABLED default:@""] componentsSeparatedByString:@","]];
+    NSMutableArray<NSNumber *> *enabled = [NSMutableArray array];
+    for (NSNumber *t in savedOrder) {
+        if (![disabled containsObject:t]) [enabled addObject:t];
+    }
+    return enabled;
+}
+
+- (CGFloat)toolbarBarHeight {
+    BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
+    if (singleRow) return kBarPad * 2 + kRowH;
+    NSArray *enabled = [self resolveEnabledTags];
+    NSInteger rows = (NSInteger)ceil((double)MAX(1, (NSInteger)enabled.count) / 5.0);
+    return kBarPad * 2 + kRowH * rows + kRowGap * MAX(0, rows - 1);
+}
+
 - (void)buildWindowWithImage:(UIImage *)image {
     CGRect scr = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = [Common screenSafeInsets];
@@ -120,8 +160,8 @@ static EditToolbarWindow *_shared = nil;
     _rootVC.view.frame = scr;
     _win.rootViewController = _rootVC;
 
-    // 图片显示区：上方留出关闭条，下方留出三排工具栏
-    CGFloat barH = kBarPad * 2 + kRowH * 3 + kRowGap * 2;
+    // 图片显示区：上方留出关闭条，下方留给工具栏（高度随按钮数量/单双排动态计算）
+    CGFloat barH = [self toolbarBarHeight];
     CGFloat topY = safe.top + 44;
     CGFloat botY = scr.size.height - safe.bottom - barH - 8;
     _imageView = [[UIImageView alloc] initWithFrame:CGRectMake(8, topY, scr.size.width - 16, MAX(60, botY - topY))];
@@ -165,61 +205,50 @@ static EditToolbarWindow *_shared = nil;
     CGRect scr = [UIScreen mainScreen].bounds;
     UIEdgeInsets safe = [Common screenSafeInsets];
 
-    // v5.18：从偏好读「按钮顺序 / 禁用集合 / 单/双排」。
-    // 默认按 3 排顺序: 1 2 3 4 17 6 7 8 9 11 12 13 14 15 16。
-    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
-                                       @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave), @(ETBTagShare), @(ETBTagPhone),
-                                       @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip), @(ETBTagColorPick), @(ETBTagReset) ];
-    NSMutableArray<NSNumber *> *savedOrder = [NSMutableArray array];
-    NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
-    if (orderStr.length) [savedOrder addObjectsFromArray:[orderStr componentsSeparatedByString:@","]];
-    if (savedOrder.count == 0) [savedOrder addObjectsFromArray:defOrder];
-    // 缺项补上 / 多余去掉
-    NSMutableSet<NSNumber *> *orderSet = [NSMutableSet setWithArray:savedOrder];
-    for (NSNumber *t in defOrder) if (![orderSet containsObject:t]) [savedOrder addObject:t];
-    for (NSNumber *t in [savedOrder copy]) {
-        if (![defOrder containsObject:t]) [savedOrder removeObject:t];
-    }
-    NSSet<NSNumber *> *disabled = [NSSet setWithArray:[[Common stringPref:XZ_KEY_TB_DISABLED default:@""] componentsSeparatedByString:@","]];
+    // v5.25.5：按钮顺序 / 禁用集合 / 单双排 由偏好决定（resolveEnabledTags 统一计算）。
+    // 默认顺序：OCR 翻译 画图 识码 AI 对话 旋转 复制 贴图 保存 分享 加壳 PDF 压缩 去状态栏 取色 还原。
+    NSArray<NSNumber *> *enabledTags = [self resolveEnabledTags];
 
     // 按钮规格表（icon/label/tag）—— 整个工具栏统一从这里取，settings 排序也用这里
     NSDictionary<NSNumber *, NSDictionary *> *catalog = @{
-        @(ETBTagOCR):       @{@"icon":@"text.viewfinder",       @"label":@"OCR"},
-        @(ETBTagTranslate): @{@"icon":@"translate",             @"label":@"翻译"},
-        @(ETBTagDraw):      @{@"icon":@"pencil.tip",            @"label":@"画图"},
-        @(ETBTagCodeScan):  @{@"icon":@"qrcode.viewfinder",     @"label":@"识码"},
-        @(ETBTagAI):        @{@"icon":@"sparkles",              @"label":@"AI"},
-        @(ETBTagCopy):      @{@"icon":@"doc.on.doc",            @"label":@"复制"},
-        @(ETBTagFloating):  @{@"icon":@"pin",                   @"label":@"贴图"},
-        @(ETBTagSave):      @{@"icon":@"square.and.arrow.down", @"label":@"保存"},
-        @(ETBTagShare):     @{@"icon":@"square.and.arrow.up",   @"label":@"分享"},
-        @(ETBTagPhone):     @{@"icon":@"iphone",                @"label":@"加壳"},
-        @(ETBTagPDF):       @{@"icon":@"doc.richtext",          @"label":@"PDF"},
-        @(ETBTagCompress):  @{@"icon":@"arrow.down.circle",     @"label":@"压缩"},
-        @(ETBTagStrip):     @{@"icon":@"menubar.rectangle",     @"label":@"去状态栏"},
-        @(ETBTagColorPick): @{@"icon":@"eyedropper",            @"label":@"取色"},
-        @(ETBTagReset):     @{@"icon":@"arrow.counterclockwise",@"label":@"还原"},
+        @(ETBTagOCR):       @{@"icon":@"text.viewfinder",             @"label":@"OCR"},
+        @(ETBTagTranslate): @{@"icon":@"translate",                   @"label":@"翻译"},
+        @(ETBTagDraw):      @{@"icon":@"pencil.tip",                  @"label":@"画图"},
+        @(ETBTagCodeScan):  @{@"icon":@"qrcode.viewfinder",           @"label":@"识码"},
+        @(ETBTagAI):        @{@"icon":@"sparkles",                    @"label":@"AI"},
+        @(ETBTagAIChat):    @{@"icon":@"bubble.left.and.bubble.right",@"label":@"对话"},
+        @(ETBTagRotate):    @{@"icon":@"rotate.right",                @"label":@"旋转"},
+        @(ETBTagCopy):      @{@"icon":@"doc.on.doc",                  @"label":@"复制"},
+        @(ETBTagFloating):  @{@"icon":@"pin",                         @"label":@"贴图"},
+        @(ETBTagSave):      @{@"icon":@"square.and.arrow.down",       @"label":@"保存"},
+        @(ETBTagShare):     @{@"icon":@"square.and.arrow.up",         @"label":@"分享"},
+        @(ETBTagPhone):     @{@"icon":@"iphone",                      @"label":@"加壳"},
+        @(ETBTagPDF):       @{@"icon":@"doc.richtext",                @"label":@"PDF"},
+        @(ETBTagCompress):  @{@"icon":@"arrow.down.circle",           @"label":@"压缩"},
+        @(ETBTagStrip):     @{@"icon":@"menubar.rectangle",           @"label":@"去状态栏"},
+        @(ETBTagColorPick): @{@"icon":@"eyedropper",                  @"label":@"取色"},
+        @(ETBTagReset):     @{@"icon":@"arrow.counterclockwise",      @"label":@"还原"},
     };
 
     BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
 
-    // 过滤掉禁用的按钮（按用户保存的顺序遍历）
-    NSMutableArray<NSNumber *> *enabledTags = [NSMutableArray array];
-    for (NSNumber *t in savedOrder) {
-        if (![disabled containsObject:t]) [enabledTags addObject:t];
-    }
+    // v5.25.5：单排=1 行横向滑动；双排=每行 5 个自动折行（2 排即 10，更多则续行）
+    const NSInteger kCols = 5;
+    NSInteger rows = singleRow ? 1 : (NSInteger)ceil((double)MAX(1, (NSInteger)enabledTags.count) / (double)kCols);
 
-    CGFloat barH = kBarPad * 2 + kRowH + (singleRow ? 0 : (kRowH + kRowGap) * 2);
+    CGFloat barH = kBarPad * 2 + kRowH * rows + kRowGap * MAX(0, rows - 1);
     _toolbar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
                                                         scr.size.width, barH)];
     _toolbar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
     [_rootVC.view addSubview:_toolbar];
 
     if (singleRow) {
-        // 单排 + 横向滑动：全部按钮放在 UIScrollView 内，避免单屏塞不下被压扁
+        // 单排 + 横向循环滑动：全部按钮放在 UIScrollView 内，首尾相接循环
         UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, kBarPad, scr.size.width, kRowH)];
         sv.showsHorizontalScrollIndicator = NO;
         sv.alwaysBounceHorizontal = YES;
+        sv.delegate = self;
+        sv.tag = 9901;   // 标记，用于循环滑动时识别
         [_toolbar addSubview:sv];
         CGFloat bw = 64.0, gap = 8.0;
         CGFloat x = 10.0;
@@ -233,28 +262,38 @@ static EditToolbarWindow *_shared = nil;
             x += bw + gap;
         }
         sv.contentSize = CGSizeMake(x, kRowH);
+        _singleRowScroll = sv;
+        _singleRowBtnW = bw + gap;
     } else {
-        // 双排（5 + 余下 5）：保留 v5.10 行为，按 5 切片
-        NSArray<NSNumber *> *row1Tags = [enabledTags subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5, enabledTags.count))];
-        NSMutableArray<NSNumber *> *row2Tags = [NSMutableArray array];
-        for (NSUInteger i = 5; i < enabledTags.count; i++) [row2Tags addObject:enabledTags[i]];
-
+        // 双排：每行固定 5 个，自动折行（不再 5 + 余下，避免第二排被压成 10 个）
         CGFloat pad = 10.0, gap = 6.0;
+        CGFloat bw = (scr.size.width - pad * 2 - gap * (kCols - 1)) / (CGFloat)kCols;
+        for (NSInteger i = 0; i < (NSInteger)enabledTags.count; i++) {
+            NSInteger r = i / kCols;
+            NSInteger c = i % kCols;
+            NSDictionary *spec = catalog[enabledTags[i]];
+            NSMutableDictionary *full = [spec mutableCopy];
+            full[@"tag"] = enabledTags[i];
+            UIButton *b = [self makeToolButton:full width:bw];
+            b.frame = CGRectMake(pad + c * (bw + gap), kBarPad + r * (kRowH + kRowGap), bw, kRowH);
+            [_toolbar addSubview:b];
+        }
+    }
+}
 
-        void (^placeRow)(NSArray<NSNumber *> *, CGFloat) = ^(NSArray<NSNumber *> *tags, CGFloat yOff) {
-            if (!tags.count) return;
-            CGFloat bw = (scr.size.width - pad * 2 - gap * (tags.count - 1)) / (CGFloat)tags.count;
-            for (NSInteger i = 0; i < (NSInteger)tags.count; i++) {
-                NSDictionary *spec = catalog[tags[i]];
-                NSMutableDictionary *full = [spec mutableCopy];
-                full[@"tag"] = tags[i];
-                UIButton *b = [self makeToolButton:full width:bw];
-                b.frame = CGRectMake(pad + i * (bw + gap), kBarPad + yOff, bw, kRowH);
-                [_toolbar addSubview:b];
-            }
-        };
-        placeRow(row1Tags, 0);
-        placeRow(row2Tags, kRowH + kRowGap);
+#pragma mark - 单排循环滑动
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    if (scrollView.tag != 9901) return;
+    CGFloat w = scrollView.bounds.size.width;
+    CGFloat maxX = scrollView.contentSize.width - w;
+    if (maxX <= 0) return;
+    CGFloat off = scrollView.contentOffset.x;
+    // 滚到最右 → 回到最左；滚到最左（往回拉）→ 跳到最右，形成循环
+    if (off >= maxX - 1) {
+        [scrollView setContentOffset:CGPointMake(0, 0) animated:NO];
+    } else if (off <= 1) {
+        [scrollView setContentOffset:CGPointMake(maxX, 0) animated:NO];
     }
 }
 
@@ -331,6 +370,17 @@ static EditToolbarWindow *_shared = nil;
                                sys, text.length ? text : @"(未识别到文字，你可直接描述图片)"];
             [AIChatWindow showWithTitle:@"AI 对话" firstText:first];
         }];
+    } else if (tag == ETBTagAIChat) {
+        // v5.25.5：AI 对话 —— 直接弹小窗自由对话，无需先写问题；
+        // 后台把当前截图 OCR 成文字作为对话上下文。后端走 AskAI_*（OpenAI 兼容，
+        // 把 AskAI_BaseURL 设为豆包 Ark 端点即可接豆包）。
+        [AIChatWindow showWithTitle:@"AI 对话" firstText:@"这是关于你当前截图的对话，直接提问即可。"];
+        [SuperTools ocr:img completion:^(NSString *text) {
+            if (text.length) [AIChatWindow appendContext:text];
+        }];
+    } else if (tag == ETBTagRotate) {
+        // v5.25.5：旋转当前编辑图 90°（顺时针）
+        [self rotateCurrentImage];
     } else if (tag == ETBTagCopy) {
         [SuperTools copy:img];
     } else if (tag == ETBTagFloating) {
@@ -446,6 +496,23 @@ static EditToolbarWindow *_shared = nil;
     if (!img) return;
     _imageView.image = img;
     _sizeLabel.text = [NSString stringWithFormat:@"%.0f × %.0f px", img.size.width, img.size.height];
+}
+
+// v5.25.5：把当前编辑图顺时针旋转 90°（每次点一下转 90°）
+- (void)rotateCurrentImage {
+    UIImage *img = _imageView.image;
+    if (!img) return;
+    CGFloat w = img.size.width, h = img.size.height;
+    CGSize outSize = CGSizeMake(h, w);
+    UIGraphicsBeginImageContextWithOptions(outSize, NO, img.scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGContextTranslateCTM(ctx, h / 2.0, w / 2.0);
+    CGContextRotateCTM(ctx, M_PI_2);
+    CGContextTranslateCTM(ctx, -w / 2.0, -h / 2.0);
+    [img drawInRect:CGRectMake(0, 0, w, h)];
+    UIImage *rot = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (rot) [self replaceImage:rot];
 }
 
 @end

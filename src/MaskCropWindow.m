@@ -371,6 +371,36 @@ static int SN3_LoopKVOContext = 0;
 
 #pragma mark - 框选模式 UI（顶部提示 + 底部三按钮）
 
+// v5.25.5：图标 + 文字 紧凑按钮（用于底部操作条：缩小、图标化、居中）
+- (UIButton *)makeIconButton:(NSString *)title icon:(NSString *)iconName bg:(UIColor *)bg action:(SEL)sel {
+    static const CGFloat bw = 84.0, bh = 58.0;
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.backgroundColor = bg;
+    b.layer.cornerRadius = 14;
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((bw - 26) / 2, 7, 26, 26)];
+    UIImage *ic = [Common systemIcon:iconName];
+    if (!ic) ic = [Common systemIcon:@"circle"];
+    iv.image = ic;
+    iv.tintColor = [UIColor whiteColor];
+    iv.contentMode = UIViewContentModeScaleAspectFit;
+    iv.userInteractionEnabled = NO;
+    [b addSubview:iv];
+
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 37, bw, 16)];
+    lb.text = title;
+    lb.textColor = [UIColor whiteColor];
+    lb.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    lb.textAlignment = NSTextAlignmentCenter;
+    lb.userInteractionEnabled = NO;
+    [b addSubview:lb];
+
+    [_win addSubview:b];
+    [_win addInteractiveView:b];
+    return b;
+}
+
 - (UIButton *)makeBarButton:(NSString *)title bg:(UIColor *)bg action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.backgroundColor = bg;
@@ -399,16 +429,17 @@ static int SN3_LoopKVOContext = 0;
     [_win addSubview:_hintLabel];
     [_win addInteractiveView:_hintLabel];
 
-    CGFloat pad = 12.0, gap = 8.0;
-    CGFloat by = scr.size.height - safe.bottom - 60;
-    CGFloat bw = (scr.size.width - pad * 2 - gap * 2) / 3.0;
-    CGFloat x = pad;
-    _btnNormal = [self makeBarButton:@"正常截图" bg:[UIColor systemBlueColor]   action:@selector(onNormalShot)];
-    _btnNormal.frame = CGRectMake(x, by, bw, kButtonH); x += bw + gap;
-    _btnLong   = [self makeBarButton:@"长截图"   bg:[UIColor systemYellowColor] action:@selector(onLongShot)];
-    _btnLong.frame = CGRectMake(x, by, bw, kButtonH); x += bw + gap;
-    _btnCancel = [self makeBarButton:@"取消"     bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
-    _btnCancel.frame = CGRectMake(x, by, bw, kButtonH);
+    // v5.25.5：底部三按钮改为紧凑图标按钮，居中排列（不再全宽拉满、不再超大字）
+    CGFloat bw = 84.0, gap = 14.0, bh = 58.0;
+    CGFloat by = scr.size.height - safe.bottom - bh - 10;
+    CGFloat totalW = bw * 3 + gap * 2;
+    CGFloat x = (scr.size.width - totalW) / 2.0;   // 居中
+    _btnNormal = [self makeIconButton:@"正常截图" icon:@"camera.viewfinder" bg:[UIColor systemBlueColor]   action:@selector(onNormalShot)];
+    _btnNormal.frame = CGRectMake(x, by, bw, bh); x += bw + gap;
+    _btnLong   = [self makeIconButton:@"长截图"   icon:@"doc.richtext"      bg:[UIColor systemYellowColor] action:@selector(onLongShot)];
+    _btnLong.frame = CGRectMake(x, by, bw, bh); x += bw + gap;
+    _btnCancel = [self makeIconButton:@"取消"     icon:@"xmark.circle.fill" bg:[UIColor systemGrayColor]   action:@selector(onCancel)];
+    _btnCancel.frame = CGRectMake(x, by, bw, bh);
 
     // v5.6：✓完成 —— 确认当前选区并弹出功能面板（之前是松手即弹，无法调整选框）
     _confirmBtn = [self makeBarButton:@"✓ 完成" bg:[UIColor systemGreenColor] action:@selector(onConfirmCrop)];
