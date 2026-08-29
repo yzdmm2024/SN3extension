@@ -715,7 +715,8 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
 
 - (void)handleCropPan:(UIPanGestureRecognizer *)pan {
     if (_mode != XZMaskModeCrop) return;
-    if (_editingPanel) return;   // v4.8：原地面板弹出后禁用框选手势，避免误触清空选区
+    // v5.10：面板弹出后【不禁用】框选手势——允许用户拖动选框进行整体移动/缩放，
+    //        移动后同步面板位置并重新裁剪。只有拖画新框时才重建面板。
 
     CGPoint loc = [pan locationInView:_contentView];
     CGRect b = _contentView.bounds;
@@ -774,16 +775,21 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     } else if (pan.state == UIGestureRecognizerStateEnded ||
                pan.state == UIGestureRecognizerStateCancelled) {
         _drag = XZDragNone;
-        // v5.9：松手【不】立即弹面板——保留选区 + 缩放手柄 + ✓完成，
-        //       让用户可继续整体拖动 / 拖角缩放调整，点「✓完成」才进入编辑
-        //       （解决 v5.8「选完就固定、非得事前确定」的体验问题）。
-        if (_cropRect.size.width < kMinCrop || _cropRect.size.height < kMinCrop) {
-            _hasCrop = NO;
-            _cropRect = CGRectZero;
+        // v5.10：拖选完成【直接】弹出功能面板（无需再点「✓完成」）；
+        //        若是在面板模式下重新画新框也一并重建面板；只是移动/缩放选框则同步面板并重裁。
+        if (_didDrawSelection && [self hasSelection]) {
+            _didDrawSelection = NO;
+            [self presentLocalPanelForRect:_cropRect];
+        } else {
+            if (_cropRect.size.width < kMinCrop || _cropRect.size.height < kMinCrop) {
+                _hasCrop = NO;
+                _cropRect = CGRectZero;
+            }
+            _didDrawSelection = NO;
+            [self updateMask];
+            [self refreshChrome];
+            if (_editingPanel) [self syncPanelAfterCropRectChange];
         }
-        _didDrawSelection = NO;
-        [self updateMask];
-        [self refreshChrome];
     }
 }
 
@@ -1082,6 +1088,48 @@ static const CGFloat kHandleHit = 22.0;   // 手柄命中半边长（pt）
     UIImage *r = screen ? [ImageUtils cropImage:screen screenRect:_cropScreenRect] : nil;
     if (r) _cropImage = r;
     return r;
+}
+
+// v5.10：面板弹出后用户拖动/缩放选框 —— 选区变了要把功能面板跟着挪到新选框下方，
+//        并异步重新裁剪选区图片，确保后续 OCR/打码等用的是新位置内容。
+- (void)syncPanelAfterCropRectChange {
+    if (!_editingPanel || !_panelWin || !_localPanel || !_contentView) return;
+    CGRect screenRect = [_contentView convertRect:_cropRect toView:nil];
+    _cropScreenRect = screenRect;
+
+    CGRect scr = [UIScreen mainScreen].bounds;
+    UIEdgeInsets safe = [Common screenSafeInsets];
+    CGRect pf = _localPanel.frame;
+    CGFloat panelH = pf.size.height;
+    CGFloat belowY = screenRect.origin.y + screenRect.size.height + 12.0;
+    CGFloat aboveY = screenRect.origin.y - panelH - 12.0;
+    CGFloat y = belowY;
+    if (belowY + panelH > scr.size.height - safe.bottom - 8.0) y = aboveY;
+    if (y < safe.top + 4.0) y = safe.top + 4.0;
+    [UIView animateWithDuration:0.15 animations:^{
+        CGRect f = pf;
+        f.origin.y = y;
+        self->_localPanel.frame = f;
+    }];
+
+    [self recropOnPanelMove];
+}
+
+// 异步重新裁剪（隐藏窗口A，面板在独立窗口不受影响）
+- (void)recropOnPanelMove {
+    __weak typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.06 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        __strong typeof(ws) ss = ws;
+        if (!ss || !ss->_win || !ss->_editingPanel) return;
+        ss->_win.hidden = YES;
+        UIImage *screen = [ImageUtils captureScreen];
+        ss->_win.hidden = NO;
+        if (screen) {
+            UIImage *r = [ImageUtils cropImage:screen screenRect:ss->_cropScreenRect];
+            if (r) ss->_cropImage = r;
+        }
+    });
 }
 
 #pragma mark - v4.8：局部截图原地面板

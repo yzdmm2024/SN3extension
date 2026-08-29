@@ -22,7 +22,7 @@ Snapper3ZhExt_FILES = Tweak.xm \
     src/AppScrollReporter.m \
     src/AIChatWindow.m \
     src/AskAIEngine.m
-Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision PDFKit
+Snapper3ZhExt_FRAMEWORKS = UIKit Foundation Vision PDFKit CoreImage
 Snapper3ZhExt_WEAK_FRAMEWORKS = Photos
 Snapper3ZhExt_CFLAGS = -fobjc-arc -fobjc-exceptions -Wno-deprecated-declarations -Wno-error -Isrc
 

@@ -22,6 +22,7 @@
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
 #import <Photos/Photos.h>
+#import <CoreImage/CoreImage.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <objc/message.h>
 #import <ImageIO/ImageIO.h>
@@ -53,6 +54,9 @@
                            rects:(NSArray<NSValue *> *)rects
                            paths:(NSArray<UIBezierPath *> *)paths
                       pathWidths:(NSArray<NSNumber *> *)widths;
++ (void)runOcrOnce:(UIImage *)image languages:(NSArray *)langs
+        completion:(void (^)(NSArray<NSDictionary *> *items))completion;
++ (UIImage *)gaussianBlurImage:(UIImage *)src radius:(CGFloat)radius;
 @end
 
 @interface XZMosaicEditor : NSObject
@@ -93,11 +97,37 @@ static CGRect XZRectFromValue(id v) {
     [self ocrObservations:image languages:[Common ocrLanguages] completion:completion];
 }
 
-// v5.8：支持指定语言重试。多语言识别为空时，回退英文（系统内置模型，最稳，
-// 可救回「中文识别模型未下载」导致的静默空结果）。
+// v5.10：识别文字总是「静默空结果」的修复。根因多为——语言代码无效 / 中文识别模型
+// 未就绪导致 VNRecognizeTextRequest 一次出 0 条。对策＝候选语言集依次重试：
+//   ① 用户配置的语言（含默认 zh-Hans/zh-Hant/en-US）
+//   ② 中英组合 zh-Hans+en-US（覆盖绝大多数中文/英文截图）
+//   ③ 只 en-US（iOS 内置英文模型最稳，至少能救回英文部分）
+// 直到某套语言出文字为止；每套都空才返回空（此时才提示「未识别到文字」）。
 + (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
              completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     if (!image.CGImage) { if (completion) completion(nil); return; }
+
+    NSArray *userLangs = (langs.count ? langs : @[@"zh-Hans", @"zh-Hant", @"en-US"]);
+    NSArray *sets = @[ userLangs,
+                       @[@"zh-Hans", @"en-US"],
+                       @[@"en-US"] ];
+
+    __block void (^trySet)(NSArray *, NSInteger);
+    trySet = ^(NSArray *set, NSInteger i) {
+        [self runOcrOnce:image languages:set completion:^(NSArray<NSDictionary *> *items) {
+            if (items.count || i >= (NSInteger)sets.count - 1) {
+                if (completion) completion(items);
+            } else {
+                trySet(sets[i + 1], i + 1);
+            }
+        }];
+    };
+    trySet(sets[0], 0);
+}
+
+// 运行单次 Vision OCR（languages 传空数组 → 不手动设置，交给 SDK 默认语言，最稳）
++ (void)runOcrOnce:(UIImage *)image languages:(NSArray *)langs
+        completion:(void (^)(NSArray<NSDictionary *> *items))completion {
     CGFloat pxW = (CGFloat)CGImageGetWidth(image.CGImage);
     CGFloat pxH = (CGFloat)CGImageGetHeight(image.CGImage);
 
@@ -109,7 +139,7 @@ static CGRect XZRectFromValue(id v) {
             UIImage *img = image;
             CGImageRef cg = img.CGImage;
             if (!cg) {
-                dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(nil); });
+                dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(items); });
                 return;
             }
 
@@ -120,7 +150,7 @@ static CGRect XZRectFromValue(id v) {
                 @try {
                     [req setValue:@(1) forKey:@"recognitionLevel"];                 // VNRequestTextRecognitionLevelAccurate
                     [req setValue:@(YES) forKey:@"usesLanguageCorrection"];
-                    [req setValue:langs forKey:@"recognitionLanguages"];
+                    if (langs.count) [req setValue:langs forKey:@"recognitionLanguages"];
                 } @catch (NSException *e) { /* 老系统不支持的键忽略 */ }
 
                 id handler = [[handlerCls alloc] init];
@@ -177,13 +207,6 @@ static CGRect XZRectFromValue(id v) {
             }
         } @catch (NSException *e) {
             NSLog(@"[SN3] OCR exception: %@ %@", e.name, e.reason);
-        }
-        // v5.8：多语言识别为空 → 回退英文（系统内置模型），尽量救回部分文字
-        if (items.count == 0 && langs.count > 1) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self ocrObservations:image languages:@[@"en-US"] completion:completion];
-            });
-            return;
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(items);
@@ -383,47 +406,73 @@ static CGRect XZRectFromValue(id v) {
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSMutableString *txt = [NSMutableString string];
-        @try {
-            Class reqCls = NSClassFromString(@"VNDetectBarcodesRequest");
-            Class handlerCls = NSClassFromString(@"VNImageRequestHandler");
-            if (reqCls && handlerCls) {
-                id req = [[reqCls alloc] init];
-                // v5.7：Vision 默认 symbologies 可能为空 → 显式指定二维码/常用条码，否则扫不到任何码
-                Class symCls = NSClassFromString(@"VNSymbology");
-                if (symCls) {
-                    NSMutableArray *syms = [NSMutableArray array];
-                    for (NSString *nm in @[@"QR", @"EAN13", @"EAN8", @"Code128", @"Code39",
-                                          @"Code93", @"PDF417", @"Aztec", @"DataMatrix", @"UPCE",
-                                          @"Code39FullASCII", @"ITF14", @"Interleaved2of5"]) {
-                        id s = [symCls valueForKey:nm];
-                        if (s) [syms addObject:s];
-                    }
-                    if (syms.count) { @try { [req setValue:syms forKey:@"symbologies"]; } @catch (NSException *e) {} }
-                }
-                id handler = [[handlerCls alloc] init];
-                SEL hSel = NSSelectorFromString(@"initWithCGImage:options:");
-                if ([handler respondsToSelector:hSel]) {
-                    handler = ((id (*)(id, SEL, CGImageRef, NSDictionary *))objc_msgSend)(handler, hSel, cg, @{});
-                    NSError *err = nil;
-                    SEL pSel = NSSelectorFromString(@"performRequests:error:");
-                    ((BOOL (*)(id, SEL, NSArray *, NSError **))objc_msgSend)(
-                        handler, pSel, [NSArray arrayWithObject:req], &err);
 
-                    NSArray *results = nil;
-                    @try { results = [req valueForKey:@"results"]; } @catch (NSException *e) { results = nil; }
-                    for (id obs in results) {
-                        NSString *s = nil;
-                        @try {
-                            id v = [obs valueForKey:@"payloadStringValue"];
-                            if ([v isKindOfClass:[NSString class]]) s = (NSString *)v;
-                        } @catch (NSException *e) { s = nil; }
-                        if (s.length) [txt appendFormat:@"%@\n", s];
-                    }
+        // ① 先用 CoreImage CIDetector 扫二维码（最常见、最稳，一次到位）
+        @try {
+            CIImage *ci = [CIImage imageWithCGImage:cg];
+            CIDetector *detector = [CIDetector detectorOfType:CIDetectorTypeQRCode
+                                                       context:nil
+                                                       options:@{CIDetectorAccuracy: CIDetectorAccuracyHigh}];
+            if (detector && ci) {
+                NSArray *features = [detector featuresInImage:ci];
+                for (CIFeature *f in features) {
+                    NSString *msg = nil;
+                    @try {
+                        id v = [f valueForKey:@"messageString"];
+                        if ([v isKindOfClass:[NSString class]]) msg = (NSString *)v;
+                    } @catch (NSException *e) { msg = nil; }
+                    if (msg.length) [txt appendFormat:@"%@\n", msg];
                 }
             }
         } @catch (NSException *e) {
-            NSLog(@"[SN3] barcode exception: %@", e);
+            NSLog(@"[SN3] QR CIDetector exception: %@", e);
         }
+
+        // ② 没扫到二维码 → 用 Vision 扫其他条码（EAN / Code128 / PDF417 等）
+        if (txt.length == 0) {
+            @try {
+                Class reqCls = NSClassFromString(@"VNDetectBarcodesRequest");
+                Class handlerCls = NSClassFromString(@"VNImageRequestHandler");
+                if (reqCls && handlerCls) {
+                    id req = [[reqCls alloc] init];
+                    // v5.7：Vision 默认 symbologies 可能为空 → 显式指定常用条码，否则扫不到
+                    Class symCls = NSClassFromString(@"VNSymbology");
+                    if (symCls) {
+                        NSMutableArray *syms = [NSMutableArray array];
+                        for (NSString *nm in @[@"EAN13", @"EAN8", @"Code128", @"Code39",
+                                              @"Code93", @"PDF417", @"Aztec", @"DataMatrix", @"UPCE",
+                                              @"QR", @"Code39FullASCII", @"ITF14", @"Interleaved2of5"]) {
+                            id s = [symCls valueForKey:nm];
+                            if (s) [syms addObject:s];
+                        }
+                        if (syms.count) { @try { [req setValue:syms forKey:@"symbologies"]; } @catch (NSException *e) {} }
+                    }
+                    id handler = [[handlerCls alloc] init];
+                    SEL hSel = NSSelectorFromString(@"initWithCGImage:options:");
+                    if ([handler respondsToSelector:hSel]) {
+                        handler = ((id (*)(id, SEL, CGImageRef, NSDictionary *))objc_msgSend)(handler, hSel, cg, @{});
+                        NSError *err = nil;
+                        SEL pSel = NSSelectorFromString(@"performRequests:error:");
+                        ((BOOL (*)(id, SEL, NSArray *, NSError **))objc_msgSend)(
+                            handler, pSel, [NSArray arrayWithObject:req], &err);
+
+                        NSArray *results = nil;
+                        @try { results = [req valueForKey:@"results"]; } @catch (NSException *e) { results = nil; }
+                        for (id obs in results) {
+                            NSString *s = nil;
+                            @try {
+                                id v = [obs valueForKey:@"payloadStringValue"];
+                                if ([v isKindOfClass:[NSString class]]) s = (NSString *)v;
+                            } @catch (NSException *e) { s = nil; }
+                            if (s.length) [txt appendFormat:@"%@\n", s];
+                        }
+                    }
+                }
+            } @catch (NSException *e) {
+                NSLog(@"[SN3] barcode exception: %@", e);
+            }
+        }
+
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(txt.length ? txt : nil);
         });
@@ -504,7 +553,28 @@ static CGRect XZRectFromValue(id v) {
     return out;
 }
 
-// 把 orig 与 pixelated 按 mask（DeviceGray，白=打码区）合成
+// 真正的平滑高斯模糊（CoreImage CIGaussianBlur）——和「方块像素」马赛克明显区分，
+// v5.10「模糊」档用。radius 单位为像素（相对图片自身尺寸，各处观感一致）。
++ (UIImage *)gaussianBlurImage:(UIImage *)src radius:(CGFloat)radius {
+    CGImageRef cg = src.CGImage;
+    if (!cg) return nil;
+    CIImage *input = [CIImage imageWithCGImage:cg];
+    if (!input) return nil;
+    CIFilter *blur = [CIFilter filterWithName:@"CIGaussianBlur"];
+    if (!blur) return nil;
+    [blur setValue:input forKey:kCIInputImageKey];
+    [blur setValue:@(MAX(1.0, radius)) forKey:kCIInputRadiusKey];
+    CIImage *output = blur.outputImage;
+    if (!output) return nil;
+    CIContext *ctx = [CIContext contextWithOptions:nil];
+    CGImageRef outCG = [ctx createCGImage:output fromRect:input.extent];
+    if (!outCG) return nil;
+    UIImage *out = [UIImage imageWithCGImage:outCG
+                                       scale:(src.scale > 0 ? src.scale : 1.0)
+                                 orientation:src.imageOrientation];
+    CGImageRelease(outCG);
+    return out;
+}
 + (UIImage *)applyMask:(CGImageRef)maskCG
           toPixelated:(UIImage *)pixelated
               onImage:(UIImage *)orig {
@@ -665,15 +735,35 @@ static UIWindow *_floatWin = nil;
     [close addTarget:self action:@selector(closeFloat) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:close];
 
+    // v5.10：贴图拖动 —— 手势挂到图片 iv 上（不是 win），图片任意处都可拖动；
+    //        左上角再加一个「大头针」，拖大头针也能拖动整张贴图（更直观可靠）。
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panFloat:)];
-    [win addGestureRecognizer:pan];
+    [iv addGestureRecognizer:pan];
+
+    UIView *pin = [[UIView alloc] initWithFrame:CGRectMake(4, 4, 30, 30)];
+    pin.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    pin.layer.cornerRadius = 15;
+    pin.layer.borderWidth = 1;
+    pin.layer.borderColor = [UIColor whiteColor].CGColor;
+    UIImageView *pinIc = [[UIImageView alloc] initWithFrame:CGRectInset(pin.bounds, 6, 6)];
+    pinIc.image = [Common systemIcon:@"pin.fill"];
+    pinIc.contentMode = UIViewContentModeScaleAspectFit;
+    pinIc.tintColor = [UIColor systemYellowColor];
+    pinIc.userInteractionEnabled = NO;
+    [pin addSubview:pinIc];
+    UIPanGestureRecognizer *pinPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panFloat:)];
+    [pin addGestureRecognizer:pinPan];
+    [win addSubview:pin];
+    [win bringSubviewToFront:pin];
+    [win bringSubviewToFront:close];
+
     UITapGestureRecognizer *dt = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(closeFloatByGesture:)];
     dt.numberOfTapsRequired = 2;
     [win addGestureRecognizer:dt];
 
     _floatWin = win;
     win.hidden = NO;
-    [Common toast:@"已贴图：可拖动，双击或点 X 关闭"];
+    [Common toast:@"已贴图：拖动图片或左上角大头针可移动，双击或点 X 关闭"];
 }
 
 + (void)closeFloat {
@@ -684,16 +774,24 @@ static UIWindow *_floatWin = nil;
 }
 + (void)panFloat:(UIPanGestureRecognizer *)pan {
     if (!_floatWin) return;
-    // v5.8：UIWindow 没有 superview（superview 为 nil），原来用 superview 取平移量恒为 0，
-    //        导致贴图根本拖不动。改为直接移动 window.frame 原点并夹在屏幕内。
-    CGPoint t = [pan translationInView:nil];
-    CGRect f = _floatWin.frame;
-    CGFloat W = [UIScreen mainScreen].bounds.size.width;
-    CGFloat H = [UIScreen mainScreen].bounds.size.height;
-    f.origin.x = MAX(0, MIN(f.origin.x + t.x, W - f.size.width));
-    f.origin.y = MAX(0, MIN(f.origin.y + t.y, H - f.size.height));
-    _floatWin.frame = f;
-    [pan setTranslation:CGPointZero inView:nil];
+    // v5.10：UIWindow 没有 superview，用 translationInView:nil 偶发不生效（拖不动）。
+    //        改为记录连续两点坐标差来做位移，稳；并夹在屏幕内防止拖出屏。
+    static CGPoint _floatLast = (CGPoint){0, 0};
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        _floatLast = [pan locationInView:_floatWin];
+    } else if (pan.state == UIGestureRecognizerStateChanged) {
+        CGPoint loc = [pan locationInView:_floatWin];
+        CGFloat dx = loc.x - _floatLast.x;
+        CGFloat dy = loc.y - _floatLast.y;
+        _floatLast = loc;
+        if (dx == 0 && dy == 0) return;
+        CGRect f = _floatWin.frame;
+        CGFloat W = [UIScreen mainScreen].bounds.size.width;
+        CGFloat H = [UIScreen mainScreen].bounds.size.height;
+        f.origin.x = MAX(0, MIN(f.origin.x + dx, W - f.size.width));
+        f.origin.y = MAX(0, MIN(f.origin.y + dy, H - f.size.height));
+        _floatWin.frame = f;
+    }
 }
 
 #pragma mark - 8. 保存
@@ -847,6 +945,7 @@ static UIWindow *_shareWin = nil;
 @property (nonatomic, strong) NSMutableArray<XZDrawStroke *> *strokes;
 @property (nonatomic, strong) UIColor *inkColor;
 @property (nonatomic, assign) CGFloat inkWidth;
+@property (nonatomic, assign) CGFloat inkAlpha;   // v5.10：马克笔透明度（0~1，半透明~不透明）
 @property (nonatomic, assign) BOOL eraser;
 @property (nonatomic, assign) BOOL marker;
 - (void)undoLast;
@@ -858,6 +957,7 @@ static UIWindow *_shareWin = nil;
         _strokes = [NSMutableArray array];
         _inkColor = [UIColor redColor];
         _inkWidth = 4.0;
+        _inkAlpha = 0.45;
         self.backgroundColor = [UIColor clearColor];
         self.opaque = NO;
         self.multipleTouchEnabled = NO;
@@ -877,7 +977,7 @@ static UIWindow *_shareWin = nil;
     s.path.lineJoinStyle = kCGLineJoinRound;
     [s.path moveToPoint:p];
     if (_eraser) { s.color = [UIColor clearColor]; s.eraser = YES; }
-    else { s.color = _marker ? [_inkColor colorWithAlphaComponent:0.45] : _inkColor; s.eraser = NO; }
+    else { s.color = _marker ? [_inkColor colorWithAlphaComponent:MAX(0.15, MIN(1.0, _inkAlpha))] : _inkColor; s.eraser = NO; }
     [_strokes addObject:s];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
@@ -914,6 +1014,10 @@ static UIWindow *_shareWin = nil;
     BOOL _marker;
     UILabel *_tip;
     void (^_completion)(UIImage *);
+    UISlider *_opacity;      // v5.10：透明度滑杆（马克笔半透明~不透明）
+    UILabel *_opacityVal;    // v5.10：滑杆当前百分比
+    UIView *_curView;        // v5.10：当前颜色预览圆
+    UIButton *_lastDot;      // v5.10：最近选中的色块（高亮）
 }
 
 + (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion {
@@ -936,17 +1040,16 @@ static UIWindow *_shareWin = nil;
     _eraser = NO;
     _completion = completion;
 
-    // v5.9 修复：工具按钮必须加到『工具条 bar』并使用 bar 相对坐标，
-    // 绝不能加到 _win（原实现 mkBtn 加在 _win 上、坐标 y=10/60/100 按窗口顶
-    // 算 → 工具面板永远出现在屏幕最上方、还被图片遮住/展示不全）。
-    CGFloat barH = 150.0;
+    // v5.10：工具条整体重排为 4 排，全部加在 bar 上（相对坐标）：
+//   排1 画笔/马克笔/橡皮 ｜ 排2 颜色选择 ｜ 排3 透明度(马克笔) ｜ 排4 撤销/取消/完成
+    CGFloat barH = 200.0;
     UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
                                                            scr.size.width, barH)];
-    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.7];
+    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.72];
     [_win addSubview:bar];
 
     CGRect fit = XZFitRect(image.size, CGRectMake(8, safe.top + 52, scr.size.width - 16,
-                                                  scr.size.height - safe.top - safe.bottom - 210));
+                                                  scr.size.height - safe.top - safe.bottom - 252));
     _iv = [[UIImageView alloc] initWithFrame:fit];
     _iv.image = image;
     _iv.contentMode = UIViewContentModeScaleToFill;
@@ -957,22 +1060,75 @@ static UIWindow *_shareWin = nil;
     _canvas.userInteractionEnabled = YES;
     [_win addSubview:_canvas];
 
-    CGFloat bw = (scr.size.width - 50) / 2.0;
-    [self mkBtn:@"画笔"   frame:CGRectMake(20,      10,  bw, 40) sel:@selector(onPen)    color:[UIColor systemRedColor]    host:bar];
-    [self mkBtn:@"马克笔" frame:CGRectMake(30 + bw, 10,  bw, 40) sel:@selector(onMarker) color:[UIColor systemOrangeColor] host:bar];
-    [self mkBtn:@"橡皮"   frame:CGRectMake(20,      60,  bw, 40) sel:@selector(onEraser) color:[UIColor systemGrayColor]   host:bar];
-    [self mkBtn:@"换色"   frame:CGRectMake(30 + bw, 60,  bw, 40) sel:@selector(onColor)  color:[UIColor systemBlueColor]   host:bar];
-    [self mkBtn:@"撤销"   frame:CGRectMake(20,      110, bw, 40) sel:@selector(onUndo)   color:[UIColor systemGrayColor]   host:bar];
-    [self mkBtn:@"完成"   frame:CGRectMake(30 + bw, 110, bw, 40) sel:@selector(onDone)   color:[UIColor systemGreenColor]  host:bar];
+    // 排1：画笔 / 马克笔 / 橡皮
+    CGFloat rowW = (scr.size.width - 40 - 12) / 3.0;
+    [self mkBtn:@"画笔"   frame:CGRectMake(20,          8, rowW, 42) sel:@selector(onPen)    color:[UIColor systemRedColor]    host:bar];
+    [self mkBtn:@"马克笔" frame:CGRectMake(20 + rowW + 6, 8, rowW, 42) sel:@selector(onMarker) color:[UIColor systemOrangeColor] host:bar];
+    [self mkBtn:@"橡皮"   frame:CGRectMake(20 + (rowW + 6) * 2, 8, rowW, 42) sel:@selector(onEraser) color:[UIColor systemGrayColor] host:bar];
 
-    [self mkBtn:@"取消" frame:CGRectMake(20, safe.top + 12, 80, 34)
-          sel:@selector(onCancel) color:[UIColor systemGrayColor] host:_win];
+    // 排2：颜色选择（8 色，替代原「换色」循环按钮）
+    NSArray *palette = @[[UIColor redColor], [UIColor orangeColor], [UIColor yellowColor],
+                         [UIColor greenColor], [UIColor systemBlueColor], [UIColor purpleColor],
+                         [UIColor blackColor], [UIColor whiteColor]];
+    CGFloat dotS = 26.0;
+    CGFloat palW = scr.size.width - 40 - 64;      // 左侧色块区
+    CGFloat gapP = (palW - dotS * palette.count) / (CGFloat)(palette.count - 1);
+    for (NSInteger i = 0; i < palette.count; i++) {
+        UIButton *dot = [UIButton buttonWithType:UIButtonTypeCustom];
+        dot.frame = CGRectMake(20 + i * (dotS + gapP), 58, dotS, dotS);
+        dot.backgroundColor = palette[i];
+        dot.layer.cornerRadius = dotS / 2.0;
+        dot.layer.borderWidth = 1;
+        dot.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.6].CGColor;
+        dot.tag = 500 + i;
+        [dot addTarget:self action:@selector(onColorTap:) forControlEvents:UIControlEventTouchUpInside];
+        [bar addSubview:dot];
+        if (i == 0) { dot.layer.borderColor = [UIColor whiteColor].CGColor; dot.layer.borderWidth = 3; }
+    }
+    // 右侧当前色预览
+    UIView *cur = [[UIView alloc] initWithFrame:CGRectMake(scr.size.width - 20 - 36, 58, 36, 36)];
+    cur.backgroundColor = _canvas.inkColor;
+    cur.layer.cornerRadius = 18;
+    cur.layer.borderWidth = 1;
+    cur.layer.borderColor = [UIColor whiteColor].CGColor;
+    [bar addSubview:cur];
+    _curView = cur;
+    _lastDot = (UIButton *)[bar viewWithTag:500];
 
-    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(110, safe.top + 12, scr.size.width - 130, 34)];
-    tip.text = @"手指在图上涂抹；画笔/马克笔/橡皮，点完成合成回原图";
-    tip.textColor = [UIColor colorWithWhite:1 alpha:0.8];
+    // 排3：透明度（马克笔半透明~不透明）
+    UILabel *al = [[UILabel alloc] initWithFrame:CGRectMake(20, 104, 58, 34)];
+    al.text = @"透明度";
+    al.textColor = [UIColor whiteColor];
+    al.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    [bar addSubview:al];
+
+    UISlider *sl = [[UISlider alloc] initWithFrame:CGRectMake(82, 106, scr.size.width - 160, 30)];
+    sl.minimumValue = 0.10;
+    sl.maximumValue = 1.0;
+    sl.value = 0.45;
+    [sl addTarget:self action:@selector(onOpacity:) forControlEvents:UIControlEventValueChanged];
+    [bar addSubview:sl];
+    _opacity = sl;
+
+    UILabel *pval = [[UILabel alloc] initWithFrame:CGRectMake(scr.size.width - 70, 104, 50, 34)];
+    pval.text = @"45%";
+    pval.textColor = [UIColor whiteColor];
+    pval.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    pval.textAlignment = NSTextAlignmentRight;
+    [bar addSubview:pval];
+    _opacityVal = pval;
+
+    // 排4：撤销 / 取消 / 完成
+    [self mkBtn:@"撤销" frame:CGRectMake(20, 148, rowW, 46) sel:@selector(onUndo)   color:[UIColor systemGrayColor]  host:bar];
+    [self mkBtn:@"取消" frame:CGRectMake(20 + rowW + 6, 148, rowW, 46) sel:@selector(onCancel) color:[UIColor systemGrayColor] host:bar];
+    [self mkBtn:@"完成" frame:CGRectMake(20 + (rowW + 6) * 2, 148, rowW, 46) sel:@selector(onDone)   color:[UIColor systemGreenColor] host:bar];
+
+    UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(12, safe.top + 12, scr.size.width - 24, 30)];
+    tip.text = @"画笔实线 / 马克笔半透明粗线，下方选色与调透明度，点「完成」合成";
+    tip.textColor = [UIColor colorWithWhite:1 alpha:0.85];
     tip.font = [UIFont systemFontOfSize:12];
     tip.adjustsFontSizeToFitWidth = YES;
+    tip.textAlignment = NSTextAlignmentCenter;
     [_win addSubview:tip];
     _tip = tip;
 
@@ -995,20 +1151,31 @@ static UIWindow *_shareWin = nil;
 
 #pragma mark - 工具（按钮仅切换画布状态；触摸由 XZDrawCanvas 自己捕获）
 
-- (void)onPen    { _canvas.eraser = NO; _canvas.marker = NO; _tip.text = @"画笔：细线"; }
-- (void)onMarker { _canvas.eraser = NO; _canvas.marker = YES; _tip.text = @"马克笔：半透明粗线"; }
+- (void)onPen    { _canvas.eraser = NO; _canvas.marker = NO; _tip.text = @"画笔：实线"; }
+- (void)onMarker { _canvas.eraser = NO; _canvas.marker = YES; _tip.text = @"马克笔：半透明粗线（用下方透明度调）"; }
 - (void)onEraser { _canvas.eraser = YES; _canvas.marker = NO; _tip.text = @"橡皮：擦除涂抹处"; }
-- (void)onColor  {
-    static NSArray *palette;
-    static NSInteger cIdx = 0;
-    static dispatch_once_t once; dispatch_once(&once, ^{
-        palette = @[[UIColor redColor], [UIColor yellowColor], [UIColor greenColor],
-                    [UIColor blueColor], [UIColor blackColor], [UIColor whiteColor]];
-    });
-    cIdx = (cIdx + 1) % (NSInteger)palette.count;
-    _canvas.inkColor = palette[cIdx];
-    _canvas.eraser = NO; _canvas.marker = NO;
-    _tip.text = [NSString stringWithFormat:@"已换色 #%ld", (long)cIdx];
+
+// v5.10：色盘点选颜色（替代原「换色」循环）
+- (void)onColorTap:(UIButton *)dot {
+    NSInteger i = dot.tag - 500;
+    NSArray *palette = @[[UIColor redColor], [UIColor orangeColor], [UIColor yellowColor],
+                         [UIColor greenColor], [UIColor systemBlueColor], [UIColor purpleColor],
+                         [UIColor blackColor], [UIColor whiteColor]];
+    if (i < 0 || i >= (NSInteger)palette.count) return;
+    _canvas.inkColor = palette[i];
+    _canvas.eraser = NO; _canvas.marker = NO;   // 选色默认回到画笔
+    _curView.backgroundColor = _canvas.inkColor;
+    _lastDot.layer.borderWidth = 1; _lastDot.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.6].CGColor;
+    _lastDot = dot;
+    dot.layer.borderWidth = 3; dot.layer.borderColor = [UIColor whiteColor].CGColor;
+    _tip.text = @"已选画笔颜色";
+}
+
+// v5.10：透明度滑杆（马克笔半透明~不透明）
+- (void)onOpacity:(UISlider *)sl {
+    _canvas.inkAlpha = sl.value;
+    _opacityVal.text = [NSString stringWithFormat:@"%d%%", (int)lround(sl.value * 100)];
+    _canvas.marker = YES; _canvas.eraser = NO;   // 调透明度即切到马克笔
 }
 - (void)onUndo { [_canvas undoLast]; }
 
@@ -1122,6 +1289,8 @@ static UIWindow *_shareWin = nil;
     void (^_completion)(UIImage *);
     CGFloat _mosaicRatio;     // v5.8：像素化档位（块大小）
     BOOL   _mosaicBlur;       // v5.8：YES=模糊档（平滑缩放）
+    CGFloat _blurRadius;      // v5.10：模糊档高斯半径（像素）
+    UIButton *_activeStyle;   // v5.10：当前选中的档位按钮（高亮用）
 }
 
 + (void)edit:(UIImage *)image completion:(void (^)(UIImage *edited))completion {
@@ -1156,40 +1325,49 @@ static UIWindow *_shareWin = nil;
     // 智能脱敏命中的区域（像素坐标）
     _smartRects = [NSMutableArray array];
 
-    // ---- 按钮区 ----
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - 170,
-                                                           scr.size.width, 170)];
-    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    // ---- 按钮区（三排，v5.10 重排，不再挤成一团）----
+    // 排1：档位（轻/中/重=像素化，模糊=高斯柔化）｜ 排2：撤销/清除 ｜ 排3：取消/完成
+    CGFloat barH = 156.0;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(0, scr.size.height - safe.bottom - barH,
+                                                           scr.size.width, barH)];
+    bar.backgroundColor = [UIColor colorWithWhite:0 alpha:0.62];
     [_win addSubview:bar];
 
-    _mosaicRatio = 18.0; _mosaicBlur = NO;   // v5.8：默认「中」档（比旧版14更强）
+    _mosaicRatio = 22.0; _mosaicBlur = NO; _blurRadius = 0;   // 默认「中」档
 
-    // v5.8：马赛克档位：轻/中/重=像素化块大小；模糊=平滑缩放柔化
+    // 排1：档位（差异放大，观感明显不同）
     CGFloat sbw = (scr.size.width - 40 - 18) / 4.0;
     NSArray *styles = @[@"轻", @"中", @"重", @"模糊"];
     for (NSInteger i = 0; i < 4; i++) {
-        UIButton *sb = [self mkBtn:styles[i] frame:CGRectMake(10 + i * (sbw + 6), 8, sbw, 36)
+        UIButton *sb = [self mkBtn:styles[i] frame:CGRectMake(10 + i * (sbw + 6), 10, sbw, 38)
                                sel:@selector(onStyle:) color:[UIColor systemTealColor]];
         sb.tag = 100 + i;
         [bar addSubview:sb];
+        if (i == 1) _activeStyle = sb;   // 默认「中」高亮
     }
 
-    CGFloat bw = (scr.size.width - 50) / 2.0;
+    CGFloat rowW = (scr.size.width - 40 - 12) / 2.0;
 
-    UIButton *undo = [self mkBtn:@"撤销一笔" frame:CGRectMake(20, 56, bw, 40) sel:@selector(onUndo)
+    UIButton *undo = [self mkBtn:@"撤销一笔" frame:CGRectMake(20, 58, rowW, 42) sel:@selector(onUndo)
                            color:[UIColor systemGrayColor]];
     [bar addSubview:undo];
 
-    UIButton *cancel = [self mkBtn:@"取消" frame:CGRectMake(20, 106, bw, 44) sel:@selector(onCancel)
+    UIButton *clear = [self mkBtn:@"清除涂抹" frame:CGRectMake(32 + rowW, 58, rowW, 42) sel:@selector(onClear)
+                             color:[UIColor systemGrayColor]];
+    [bar addSubview:clear];
+
+    UIButton *cancel = [self mkBtn:@"取消" frame:CGRectMake(20, 108, rowW, 44) sel:@selector(onCancel)
                              color:[UIColor systemGrayColor]];
     [bar addSubview:cancel];
 
-    UIButton *done = [self mkBtn:@"完成打码" frame:CGRectMake(30 + bw, 106, bw, 44) sel:@selector(onDone)
+    UIButton *done = [self mkBtn:@"完成打码" frame:CGRectMake(32 + rowW, 108, rowW, 44) sel:@selector(onDone)
                            color:[UIColor systemBlueColor]];
     [bar addSubview:done];
 
+    [self refreshActiveStyle];
+
     UILabel *tip = [[UILabel alloc] initWithFrame:CGRectMake(20, safe.top + 12, scr.size.width - 40, 30)];
-    tip.text = @"先选档位（轻/中/重=马赛克，模糊=柔化），再在要打码处涂抹";
+    tip.text = @"选档位后，在要打码的地方涂抹；轻细粒 / 重磅块 / 模糊柔化";
     tip.textColor = [UIColor colorWithWhite:1 alpha:0.75];
     tip.font = [UIFont systemFontOfSize:12];
     tip.textAlignment = NSTextAlignmentCenter;
@@ -1215,10 +1393,35 @@ static UIWindow *_shareWin = nil;
 
 - (void)onStyle:(UIButton *)sender {
     NSInteger idx = sender.tag - 100;   // 0轻 1中 2重 3模糊
-    if (idx == 0)      { _mosaicRatio = 30.0; _mosaicBlur = NO;  _tipLabel.text = @"马赛克：轻（细块）"; }
-    else if (idx == 1) { _mosaicRatio = 18.0; _mosaicBlur = NO;  _tipLabel.text = @"马赛克：中（默认）"; }
-    else if (idx == 2) { _mosaicRatio = 10.0; _mosaicBlur = NO;  _tipLabel.text = @"马赛克：重（粗块）"; }
-    else               { _mosaicRatio = 6.0;  _mosaicBlur = YES; _tipLabel.text = @"马赛克：模糊（柔化）"; }
+    _activeStyle = sender;
+    [self refreshActiveStyle];
+    // v5.10：档位差异放大——块太大/太细才看得出来区别（QQ/微信风格）
+    if (idx == 0)      { _mosaicRatio = 50.0; _mosaicBlur = NO; _blurRadius = 0;  _tipLabel.text = @"马赛克：轻（细颗粒）"; }
+    else if (idx == 1) { _mosaicRatio = 22.0; _mosaicBlur = NO; _blurRadius = 0;  _tipLabel.text = @"马赛克：中（默认）"; }
+    else if (idx == 2) { _mosaicRatio = 9.0;  _mosaicBlur = NO; _blurRadius = 0;  _tipLabel.text = @"马赛克：重（大粗块）"; }
+    else               { _mosaicRatio = 0;    _mosaicBlur = YES; _blurRadius = 26; _tipLabel.text = @"马赛克：模糊（平滑柔化）"; }
+}
+
+// v5.10：高亮当前选中的档位（白框 + 略亮），一眼能看出选的是哪个
+- (void)refreshActiveStyle {
+    for (NSInteger i = 0; i < 4; i++) {
+        UIButton *b = [_win viewWithTag:100 + i];
+        if (!b) continue;
+        if (b == _activeStyle) {
+            b.layer.borderWidth = 2;
+            b.layer.borderColor = [UIColor whiteColor].CGColor;
+        } else {
+            b.layer.borderWidth = 0;
+        }
+    }
+}
+
+- (void)onClear {
+    if (_paintView.paths.count) {
+        [_paintView.paths removeAllObjects];
+        [_paintView setNeedsDisplay];
+        [Common toast:@"已清除全部涂抹"];
+    }
 }
 
 - (void)onUndo {
@@ -1262,7 +1465,7 @@ static UIWindow *_shareWin = nil;
 
     UIImage *processed = nil;
     if (_mosaicBlur) {
-        processed = [SuperTools blurredImage:_source ratio:_mosaicRatio];
+        processed = [SuperTools gaussianBlurImage:_source radius:(_blurRadius > 0 ? _blurRadius : 26)];
     } else {
         processed = [SuperTools pixelatedImage:_source ratio:_mosaicRatio];
     }
