@@ -193,7 +193,7 @@
     if (!key.length) {
         self.busy = NO;
         self.sendBtn.enabled = YES;
-        self.textView.text = [NSString stringWithFormat:@"%@\n\n【提示】所选模型未填 API Key：请到「设置 → 大模型库」编辑该模型填入 Key。", [self renderedConversation];
+        self.textView.text = [NSString stringWithFormat:@"%@\n\n【提示】所选模型未填 API Key：请到「设置 → 大模型库」编辑该模型填入 Key。", [self renderedConversation]];
         return;
     }
     NSArray *snapshotM = [self.messages copy];

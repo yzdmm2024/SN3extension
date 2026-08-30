@@ -4,6 +4,14 @@
 #import <CommonCrypto/CommonDigest.h>
 #import "Common.h"
 
+// v6.07: alert 关闭回调持有者（被 presentationController.delegate retain，防止提前释放）
+@interface SN3AlertDismisser : NSObject <UIAdaptivePresentationControllerDelegate>
+@property (nonatomic, copy) void (^onDismiss)(void);
+@end
+@implementation SN3AlertDismisser
+- (void)presentationControllerDidDismiss:(UIPresentationController *)pc { if (_onDismiss) _onDismiss(); }
+@end
+
 @implementation Common
 
 + (NSUserDefaults *)defaults {
@@ -102,13 +110,6 @@
 }
 
 // v6.07: 在独立 UIWindow(Alert+750) 上弹出 alert，保证位于所有截图 UI 之上、可点。
-@interface SN3AlertDismisser : NSObject <UIAdaptivePresentationControllerDelegate>
-@property (nonatomic, copy) void (^onDismiss)(void);
-@end
-@implementation SN3AlertDismisser
-- (void)presentationControllerDidDismiss:(UIPresentationController *)pc { if (_onDismiss) _onDismiss(); }
-@end
-
 static __strong UIWindow *gSN3AlertWin = nil;
 + (void)presentAlertOnTop:(UIAlertController *)alert {
     if (!alert) return;
