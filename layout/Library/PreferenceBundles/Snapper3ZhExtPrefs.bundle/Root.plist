@@ -91,7 +91,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>百度 PaddleOCR（AI Studio 免费版，独立于「大模型库」）。开启后识别引擎 / 翻译都改走它。需填 API_URL + Token（均从 aistudio.baidu.com/paddleocr/task 页面的「API 调用示例」复制）。免费额度以 AI Studio 页面为准。</string>
+			<string>百度 PaddleOCR（AI Studio 免费版，独立于「大模型库」）。开启后识别引擎 / 翻译都改走它。需填 API_URL + Token，二者都点任务页（aistudio.baidu.com/paddleocr/task）右侧「API」按钮，从示例代码里复制：API_URL 是带 /ocr 结尾的接口地址（形如 https://xxxx.aistudio-app.com/ocr），Token 是访问令牌。注意：接口地址不是任务页网址本身。免费额度以 AI Studio 页面为准。</string>
 			<key>label</key>
 			<string>百度 PaddleOCR（AI Studio 免费）</string>
 		</dict>
@@ -121,7 +121,7 @@
 			<key>label</key>
 			<string>PaddleOCR API_URL</string>
 			<key>placeholder</key>
-			<string>从 paddleocr/task 复制的完整接口地址</string>
+			<string>点「API」按钮复制的接口地址（形如 https://xxxx.aistudio-app.com/ocr，带 /ocr 结尾）</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
