@@ -1178,39 +1178,28 @@ static int SN3_LoopKVOContext = 0;
     _win.hidden = hidden;
 }
 
-// v4.9：局部截图 —— 选区下方【同步立刻】弹出功能面板（独立窗口，零延迟、无闪现），
-//        抓屏裁剪放到后台做（隐藏窗口A时面板在独立窗口不受影响，故无闪现/延迟）。
-//        不再像 v4.8 那样先藏起窗口再 dispatch_after 0.2s 才弹面板（那会导致裸屏闪一下）。
+// v6.03：框选确认后，把选区裁剪出来、销毁窗口A，跳到完整编辑工具栏（EditToolbarWindow）。
+//        之前这段代码只弹了一个写死的 8 按钮原地面板（OCR/翻译/画图/识码/复制/贴图/保存/分享），
+//        而那套 17 按钮的 EditToolbarWindow 虽已编译却从没被调用 —— 导致用户一直看不到
+//        AI/对话/旋转/加壳/PDF/压缩/去状态栏/取色/还原，且「工具栏排序」设置对它毫无作用。
+//        现在直接路由到 EditToolbarWindow，用户框选后看到的就是那套完整工具栏（含排序）。
 - (void)presentLocalPanelForRect:(CGRect)rect {
     if (!_win) return;
-    _cropScreenRect = rect;                     // 记录选区屏幕坐标，后台抓屏用
-    _editingPanel = YES;                        // 先锁手势，避免面板出现前误触发框选
-    [self refreshChrome];                        // 立即隐藏三按钮、保留选区边框（同步生效）
-
+    _cropScreenRect = rect;                     // 记录选区屏幕坐标，同步抓屏裁剪用
     CGRect screenRect = rect;
     if (_contentView) screenRect = [_contentView convertRect:rect toView:nil];
     NSLog(@"[SN3] free crop requested screenRect=(%.0f,%.0f,%.0f,%.0f)",
           screenRect.origin.x, screenRect.origin.y, screenRect.size.width, screenRect.size.height);
 
-    // ① 立即（同步）在选区下方弹出面板：挂到独立窗口，渲染零延迟、不闪现
-    [self buildLocalPanelOnOwnWindowWithRect:screenRect];
-    [Common toast:@"已截取选区，点击下方功能面板处理"];
+    // 同步抓屏裁剪：隐藏窗口A 避免暗色/边框被截入；裁剪完恢复，再销毁窗口A
+    _win.hidden = YES;
+    UIImage *screen = [ImageUtils captureScreen];
+    UIImage *crop = (screen ? [ImageUtils cropImage:screen screenRect:screenRect] : nil);
+    _win.hidden = NO;
+    if (!crop) { [Common toast:@"裁剪失败，请重选区域"]; return; }
 
-    // ② 后台抓屏裁剪（隐藏窗口A，面板在独立窗口不受影响 → 无闪现）
-    __weak typeof(self) ws = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        __strong typeof(ws) ss = ws;
-        if (!ss || !ss->_win) return;
-        ss->_win.hidden = YES;                  // 隐藏遮罩，避免暗色被截入裁剪图
-        UIImage *screen = [ImageUtils captureScreen];
-        ss->_win.hidden = NO;                   // 立即恢复（面板在独立窗口，始终可见）
-        if (screen) {
-            UIImage *result = [ImageUtils cropImage:screen screenRect:screenRect];
-            if (result) ss->_cropImage = result;
-            else NSLog(@"[SN3] local crop failed, will recapture on demand");
-        }
-    });
+    [self dismiss];                            // 销毁窗口A（MaskCropWindow）
+    [EditToolbarWindow showWithImage:crop];    // 跳到完整编辑工具栏
 }
 
 // 面板动作需要 _cropImage 但后台抓屏尚未完成时，立即同步补抓一次

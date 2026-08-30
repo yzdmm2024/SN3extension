@@ -130,21 +130,7 @@
         [self _sn3Alert:@"未配置 API Key" msg:@"请先在「API Key」项填写（也可点「从剪贴板粘贴」按钮一键填入）。"];
         return;
     }
-    [self _sn3Alert:@"测试中" msg:@"正在用当前配置打一发请求，请稍候 3-5 秒…"];
-
-    NSDictionary *txt = @{ @"type": @"text", @"text": @"ping, reply with one word: pong" };
-    NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt ] } ];
-
-    [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
-                  completion:^(NSString *answer, NSString *err) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (err.length) {
-                [self _sn3Alert:@"✗ 连接失败" msg:err];
-            } else {
-                [self _sn3Alert:@"✓ 连接成功" msg:[NSString stringWithFormat:@"模型 %@ 返回:\n\n%@", md, answer ?: @"(空)"]];
-            }
-        });
-    }];
+    [self _runTestWithTitle:@"测试中（智谱 BigModel）" baseURL:bu apiKey:key model:md];
 }
 
 // v5.25.7: 用「问 AI」当前配置打一发最小 chat 请求，验证 OpenAI 兼容接口（含豆包 Ark）是否可用
@@ -158,20 +144,43 @@
                      msg:@"请先在「问 AI」段填写 API Key。\n接豆包：Base URL 填 https://ark.cn-beijing.volces.com/api/v3，模型名填接入点 ID（ep-xxxx，不是 doubao-xxx）。"];
         return;
     }
-    [self _sn3Alert:@"测试中" msg:@"正在用「问 AI」当前配置打一发请求，请稍候 3-10 秒…"];
+    [self _runTestWithTitle:@"测试中（问 AI）" baseURL:bu apiKey:key model:md];
+}
+
+// v6.03：测试连接统一实现 —— 单个 alert 原地更新结果，避免「测试中」弹窗一直卡着：
+//   旧实现先 present「测试中」、完成后再 present 第二个 alert，但 PSListController 上同时 present
+//   两个 alert 会被 UIKit 静默忽略（"Attempt to present ... on ... which is already presenting"），
+//   导致「测试中」永远停在屏幕上、看不到结果。改为同一个 alert，完成/超时只更新 title/message
+//   + 追加「知道了」按钮；并加 30s 超时兜底，即使接口彻底不响应也能看到明确反馈。
+- (void)_runTestWithTitle:(NSString *)title baseURL:(NSString *)bu apiKey:(NSString *)key model:(NSString *)md {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:title
+                                                                message:@"正在打一发最小请求，请稍候 3-10 秒…"
+                                                         preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:ac animated:YES completion:nil];
+
+    __block BOOL resolved = NO;
+    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:30.0 repeats:NO block:^(NSTimer *t) {
+        if (resolved) return;
+        resolved = YES;
+        ac.title = @"✗ 连接失败";
+        ac.message = @"请求超时（30 秒未响应）。请检查：① 设备网络是否可用；② Base URL 是否正确（末尾不要多 /）；③ 模型名填的是接入点 ID（ep-xxxx，不是 doubao-xxx）；④ API Key 是否有效。";
+        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+            [ac dismissViewControllerAnimated:YES completion:nil];
+        }]];
+    }];
 
     NSDictionary *txt = @{ @"type": @"text", @"text": @"ping, reply with one word: pong" };
     NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt ] } ];
-
     [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
                   completion:^(NSString *answer, NSString *err) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (err.length) {
-                [self _sn3Alert:@"✗ 连接失败" msg:err];
-            } else {
-                [self _sn3Alert:@"✓ 连接成功" msg:[NSString stringWithFormat:@"模型 %@ 返回:\n\n%@", md, answer ?: @"(空)"]];
-            }
-        });
+        if (resolved) return;
+        resolved = YES;
+        [timer invalidate];
+        ac.title = err.length ? @"✗ 连接失败" : @"✓ 连接成功";
+        ac.message = err.length ? err : [NSString stringWithFormat:@"模型 %@ 返回:\n\n%@", md, answer ?: @"(空)"];
+        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+            [ac dismissViewControllerAnimated:YES completion:nil];
+        }]];
     }];
 }
 

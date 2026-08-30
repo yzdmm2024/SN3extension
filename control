@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.02
+Version: 6.03
 Architecture: iphoneos-arm64
-Description: [v6.02] 修「设置面板蓝色按钮全部点击无反应」的真正根因: plist 的 action 写成 testAskAIConnection(无冒号), 但方法签名是 testAskAIConnection:(PSSpecifier*)吃一个参数, NSSelectorFromString 得到 0 参数选择器导致整组按钮(含 v5.23 旧 测试连接/申请页)静默失效; 现已补全冒号并让 _applyButtonActions 在方法不存在无冒号版本时自动改用带冒号选择器, 同时 setButtonAction:+setAction: 兼容框架两种写法. 测试连接/打开Ark页/粘贴Key/工具栏排序 全部可点. (沿用 v6.01 工具栏排序页 + v5.25.6 弹窗修复 + v5.25.5/5.25.7 UI 优化)
+Description: [v6.03] ①修「测试连接」卡死: 旧实现先弹「测试中」再弹第二个 alert, PSListController 上同时 present 两个 alert 被 UIKit 静默丢弃导致「测试中」永久卡屏; 改为单个 alert 原地更新结果+追加「知道了」, 并加 30s 超时兜底, 接口不响应也能看到明确反馈. ②修「局部截图工具栏跟设置对不上」: 框选确认后原代码只弹写死的 8 按钮原地面板, 那套 17 按钮的 EditToolbarWindow 虽已编译却从没被调用, 导致看不到 AI/对话/旋转/加壳/PDF/压缩/去状态栏/取色/还原, 且「工具栏排序」设置形同虚设; 现框选确认直接跳到 EditToolbarWindow(完整工具栏), 排序/单双排/无限循环滑动全部生效. (沿用 v6.02 蓝色按钮修复 + v6.01 排序页 + v5.25 UI 优化)
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
