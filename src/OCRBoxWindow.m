@@ -254,8 +254,9 @@ static CGRect aspectFitRect(CGSize src, CGRect dst) {
 }
 
 - (void)copyAll {
+    NSArray<OCRBlock *> *sorted = [self _sortedBlocksByReadingOrder];
     NSMutableString *all = [NSMutableString string];
-    for (OCRBlock *b in self.blocks) {
+    for (OCRBlock *b in sorted) {
         if (b.text.length) {
             if (all.length) [all appendString:@"\n"];
             [all appendString:b.text];
@@ -263,6 +264,61 @@ static CGRect aspectFitRect(CGSize src, CGRect dst) {
     }
     if (all.length) { [UIPasteboard generalPasteboard].string = all; [Common toast:@"已复制全部"]; }
     else [Common toast:@"没有可复制的文字"];
+}
+
+// v6.20.3：按阅读顺序重排（基于 normalizedBox 中心：行聚类 + 行内左→右）
+- (NSArray<OCRBlock *> *)_sortedBlocksByReadingOrder {
+    if (!self.blocks || self.blocks.count < 2) return self.blocks ?: @[];
+    NSMutableArray<NSValue *> *centers = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *heights = [NSMutableArray array];
+    for (OCRBlock *b in self.blocks) {
+        CGRect nb = b.normalizedBox;
+        CGFloat cx = nb.origin.x + nb.size.width/2;
+        CGFloat cy = 1.0 - (nb.origin.y + nb.size.height/2); // 转左上原点
+        [centers addObject:[NSValue valueWithCGPoint:CGPointMake(cx, cy)]];
+        [heights addObject:@(nb.size.height)];
+    }
+    NSArray *sh = [heights sortedArrayUsingSelector:@selector(compare:)];
+    CGFloat medH = [sh[sh.count/2] floatValue];
+    CGFloat rowTol = MAX(medH * 0.7, 0.005);
+    NSMutableArray<NSNumber *> *idx = [NSMutableArray array];
+    for (NSInteger i = 0; i < self.blocks.count; i++) [idx addObject:@(i)];
+    [idx sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b){
+        CGPoint pa = [centers[a.integerValue] CGPointValue];
+        CGPoint pb = [centers[b.integerValue] CGPointValue];
+        if (pa.y < pb.y) return NSOrderedAscending;
+        if (pa.y > pb.y) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    NSMutableArray<OCRBlock *> *out = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *cur = [NSMutableArray array];
+    CGFloat rowBaseY = -1;
+    void (^flush)(void) = ^{
+        if (cur.count) {
+            [cur sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b){
+                CGPoint pa = [centers[a.integerValue] CGPointValue];
+                CGPoint pb = [centers[b.integerValue] CGPointValue];
+                if (pa.x < pb.x) return NSOrderedAscending;
+                if (pa.x > pb.x) return NSOrderedDescending;
+                return NSOrderedSame;
+            }];
+            for (NSNumber *n in cur) [out addObject:self.blocks[n.integerValue]];
+            [cur removeAllObjects];
+        }
+    };
+    for (NSNumber *n in idx) {
+        CGPoint p = [centers[n.integerValue] CGPointValue];
+        if (rowBaseY < 0 || (p.y - rowBaseY <= rowTol && rowBaseY - p.y <= rowTol)) {
+            [cur addObject:n];
+            if (rowBaseY < 0) rowBaseY = p.y;
+        } else {
+            flush();
+            [cur addObject:n];
+            rowBaseY = p.y;
+        }
+    }
+    flush();
+    return out;
 }
 
 - (void)closeTapped { [self hide]; }

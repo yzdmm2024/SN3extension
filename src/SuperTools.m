@@ -23,10 +23,11 @@
 
 // 私有方法声明（PaddleOCR 异步任务协议辅助）
 @interface SuperTools ()
-+ (void)_ppocrJobsSubmitURL:(NSURL *)u token:(NSString *)token model:(NSString *)model jpeg:(NSData *)jpeg attempt:(NSInteger)attempt completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
-+ (void)_ppocrJobsPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token attempt:(NSInteger)attempt completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
-+ (void)_ppocrFetchResult:(NSString *)jsonl completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
-+ (void)_ppocrSyncWithURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrJobsSubmitURL:(NSURL *)u token:(NSString *)token model:(NSString *)model jpeg:(NSData *)jpeg scaleX:(CGFloat)sx scaleY:(CGFloat)sy attempt:(NSInteger)attempt completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrJobsPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token scaleX:(CGFloat)sx scaleY:(CGFloat)sy attempt:(NSInteger)attempt completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrFetchResult:(NSString *)jsonl scaleX:(CGFloat)sx scaleY:(CGFloat)sy completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrSyncWithURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg scaleX:(CGFloat)sx scaleY:(CGFloat)sy completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (CGRect)_sn3RectFromPaddlePoly:(id)poly;
 @end
 
 #import <Vision/Vision.h>
@@ -55,6 +56,7 @@
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
 + (void)ocrObservations:(UIImage *)image languages:(NSArray *)langs
              completion:(void (^)(NSArray<NSDictionary *> *items))completion;
++ (NSArray<NSDictionary *> *)_sn3SortItemsByReadingOrder:(NSArray<NSDictionary *> *)items; // v6.20.3
 + (UIImage *)bdShrink:(UIImage *)src maxDim:(CGFloat)maxDim;                     // v5.13
 + (void)detectSensitiveRects:(UIImage *)image
                   completion:(void (^)(NSArray<NSValue *> *rects))completion;
@@ -98,6 +100,98 @@ static CGRect XZRectFromValue(id v) {
 
 @implementation SuperTools
 
+#pragma mark - 0. OCR 阅读顺序重排（v6.20.3）
+// 按人类阅读顺序重排：有效 box 的块按「中心 y 聚类成行 + 行内按中心 x 升序」排序；
+// 无坐标(全 Zero)的块保持原相对顺序并置于末尾。对单列竖向截图几乎完美。
++ (NSArray<NSDictionary *> *)_sn3SortItemsByReadingOrder:(NSArray<NSDictionary *> *)items {
+    if (!items || items.count < 2) return items ?: @[];
+    NSMutableArray<NSDictionary *> *valid = [NSMutableArray array];
+    NSMutableArray<NSDictionary *> *invalid = [NSMutableArray array];
+    for (NSDictionary *it in items) {
+        CGRect r = XZRectFromValue(it[@"box"]);
+        if (r.size.width > 1 && r.size.height > 1) [valid addObject:it];
+        else [invalid addObject:it];
+    }
+    if (valid.count < 2) return items; // 有效块不足，原序（含全 Zero 情况）
+    NSMutableArray<NSValue *> *centers = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *heights = [NSMutableArray array];
+    for (NSDictionary *it in valid) {
+        CGRect r = XZRectFromValue(it[@"box"]);
+        [centers addObject:[NSValue valueWithCGPoint:CGPointMake(r.origin.x + r.size.width/2,
+                                                                r.origin.y + r.size.height/2)]];
+        [heights addObject:@(r.size.height)];
+    }
+    NSArray *sh = [heights sortedArrayUsingSelector:@selector(compare:)];
+    CGFloat medH = [sh[sh.count/2] floatValue];
+    CGFloat rowTol = MAX(medH * 0.7, 2.0);
+    NSMutableArray<NSNumber *> *idx = [NSMutableArray array];
+    for (NSInteger i = 0; i < valid.count; i++) [idx addObject:@(i)];
+    [idx sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b){
+        CGPoint pa = [centers[a.integerValue] CGPointValue];
+        CGPoint pb = [centers[b.integerValue] CGPointValue];
+        if (pa.y < pb.y) return NSOrderedAscending;
+        if (pa.y > pb.y) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *cur = [NSMutableArray array];
+    CGFloat rowBaseY = -1;
+    void (^flush)(void) = ^{
+        if (cur.count) {
+            [cur sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b){
+                CGPoint pa = [centers[a.integerValue] CGPointValue];
+                CGPoint pb = [centers[b.integerValue] CGPointValue];
+                if (pa.x < pb.x) return NSOrderedAscending;
+                if (pa.x > pb.x) return NSOrderedDescending;
+                return NSOrderedSame;
+            }];
+            for (NSNumber *n in cur) [out addObject:valid[n.integerValue]];
+            [cur removeAllObjects];
+        }
+    };
+    for (NSNumber *n in idx) {
+        CGPoint p = [centers[n.integerValue] CGPointValue];
+        if (rowBaseY < 0 || (p.y - rowBaseY <= rowTol && rowBaseY - p.y <= rowTol)) {
+            [cur addObject:n];
+            if (rowBaseY < 0) rowBaseY = p.y;
+        } else {
+            flush();
+            [cur addObject:n];
+            rowBaseY = p.y;
+        }
+    }
+    flush();
+    [out addObjectsFromArray:invalid];
+    return out;
+}
+
+// v6.20.3：PaddleOCR 结果里的坐标可能是 4 点多边形 [[x,y]×4] 或 [x,y,w,h]，统一转成 CGRect
++ (CGRect)_sn3RectFromPaddlePoly:(id)poly {
+    if (![poly isKindOfClass:[NSArray class]]) return CGRectZero;
+    NSArray *a = (NSArray *)poly;
+    if (a.count == 4) {
+        id p0 = a[0];
+        if ([p0 isKindOfClass:[NSArray class]] && [(NSArray *)p0 count] == 2) {
+            CGFloat xs[4], ys[4];
+            for (int i = 0; i < 4; i++) {
+                NSArray *pt = a[i];
+                if (![pt isKindOfClass:[NSArray class]] || pt.count < 2) return CGRectZero;
+                xs[i] = [pt[0] floatValue];
+                ys[i] = [pt[1] floatValue];
+            }
+            CGFloat minX = MIN(MIN(xs[0],xs[1]), MIN(xs[2],xs[3]));
+            CGFloat minY = MIN(MIN(ys[0],ys[1]), MIN(ys[2],ys[3]));
+            CGFloat maxX = MAX(MAX(xs[0],xs[1]), MAX(xs[2],xs[3]));
+            CGFloat maxY = MAX(MAX(ys[0],ys[1]), MAX(ys[2],ys[3]));
+            return CGRectMake(minX, minY, maxX-minX, maxY-minY);
+        }
+        if ([a[0] isKindOfClass:[NSNumber class]]) {
+            return CGRectMake([a[0] floatValue], [a[1] floatValue], [a[2] floatValue], [a[3] floatValue]);
+        }
+    }
+    return CGRectZero;
+}
+
 #pragma mark - 1. OCR（v5.23.0 整块重做: 只走智谱 BigModel glm-4v-flash, OpenAI 兼容协议）
 
 // 入口: ocrObservations: → ocrViaBigModel → 失败弹 alert (不静默, 不 fallback)
@@ -123,7 +217,8 @@ static CGRect XZRectFromValue(id v) {
                 [Common sn3AlertError:@"OCR 失败" message:err];
             });
         }
-        if (completion) completion(items);
+        // v6.20.3：交付前按阅读顺序重排（智能脱敏等下游按 box+text 绑定关系使用，重排不影响其正确性）
+        if (completion) completion([self _sn3SortItemsByReadingOrder:items]);
     }];
 }
 
@@ -187,7 +282,7 @@ static CGRect XZRectFromValue(id v) {
     NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
     NSString *dataURL = [@"data:image/jpeg;base64," stringByAppendingString:b64];
 
-    NSString *prompt = pr.length ? pr : @"识别这张图片中的全部文字，按原文从上到下逐行输出。只输出识别到的文字，不要任何解释、不要代码块、不要编号、不要翻译。";
+    NSString *prompt = pr.length ? pr : @"识别这张图片中的全部文字，严格按人类阅读顺序输出：从上到下、同一行从左到右；若图片分多栏，请逐栏完整读完一栏再读下一栏；图文混排时按视觉位置顺序。按原文逐行输出，不要任何解释、不要代码块、不要编号、不要翻译。";
     NSDictionary *pic = @{ @"type": @"image_url",
                            @"image_url": @{ @"url": dataURL } };
     NSDictionary *txt = @{ @"type": @"text", @"text": prompt };
@@ -257,6 +352,15 @@ static CGRect XZRectFromValue(id v) {
     }
     UIImage *tiny = [self bdShrink:image maxDim:2048];
     NSData *jpeg = UIImageJPEGRepresentation(tiny, 0.8);
+    // v6.20.3：计算原图/缩图比例，供坐标缩放回原图（脱敏需原图坐标）
+    CGFloat sX = 1.0, sY = 1.0;
+    CGImageRef oig = image.CGImage, tig = tiny.CGImage;
+    if (oig && tig) {
+        CGFloat ow = CGImageGetWidth(oig), oh = CGImageGetHeight(oig);
+        CGFloat tw = CGImageGetWidth(tig), th = CGImageGetHeight(tig);
+        if (tw > 0) sX = ow / tw;
+        if (th > 0) sY = oh / th;
+    }
     if (!jpeg.length) {
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, @"图像编码失败"); });
@@ -266,15 +370,15 @@ static CGRect XZRectFromValue(id v) {
     // v6.15：优先走 v2 异步任务接口；其它地址走同步兜底
     BOOL isJobs = [[u.path lowercaseString] containsString:@"/api/v2/ocr/jobs"];
     if (isJobs) {
-        [self _ppocrJobsSubmitURL:u token:token model:model jpeg:jpeg attempt:0 completion:completion];
+        [self _ppocrJobsSubmitURL:u token:token model:model jpeg:jpeg scaleX:sX scaleY:sY attempt:0 completion:completion];
     } else {
-        [self _ppocrSyncWithURL:u token:token jpeg:jpeg completion:completion];
+        [self _ppocrSyncWithURL:u token:token jpeg:jpeg scaleX:sX scaleY:sY completion:completion];
     }
 }
 
 // —— v2 异步任务：提交（multipart），队列满则重试 ——
 + (void)_ppocrJobsSubmitURL:(NSURL *)u token:(NSString *)token model:(NSString *)model
-                        jpeg:(NSData *)jpeg attempt:(NSInteger)attempt
+                        jpeg:(NSData *)jpeg scaleX:(CGFloat)sx scaleY:(CGFloat)sy attempt:(NSInteger)attempt
                    completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
     NSString *boundary = @"----SN3PaddleOCRBoundary7Q2k9X";
     NSMutableData *body = [NSMutableData data];
@@ -322,7 +426,7 @@ static CGRect XZRectFromValue(id v) {
             if (code.integerValue == 10010 && attempt < 4) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
                                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                    [self _ppocrJobsSubmitURL:u token:token model:model jpeg:jpeg attempt:attempt+1 completion:completion];
+                    [self _ppocrJobsSubmitURL:u token:token model:model jpeg:jpeg scaleX:sx scaleY:sy attempt:attempt+1 completion:completion];
                 });
                 return;
             }
@@ -338,13 +442,13 @@ static CGRect XZRectFromValue(id v) {
             });
             return;
         }
-        [self _ppocrJobsPollJob:jobId baseURL:u token:token attempt:0 completion:completion];
+        [self _ppocrJobsPollJob:jobId baseURL:u token:token scaleX:sx scaleY:sy attempt:0 completion:completion];
     }] resume];
 }
 
 // —— v2 异步任务：轮询直到 done / failed / 超时 ——
 + (void)_ppocrJobsPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token
-                  attempt:(NSInteger)attempt
+                  scaleX:(CGFloat)sx scaleY:(CGFloat)sy attempt:(NSInteger)attempt
                completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
     if (attempt > 40) { // 40*2s = 80s 超时
         if (completion) dispatch_async(dispatch_get_main_queue(), ^{
@@ -377,7 +481,7 @@ static CGRect XZRectFromValue(id v) {
         if ([state isEqualToString:@"done"]) {
             NSString *jsonl = data[@"resultUrl"][@"jsonUrl"];
             if ([jsonl isKindOfClass:[NSString class]] && jsonl.length) {
-                [self _ppocrFetchResult:jsonl completion:completion];
+                [self _ppocrFetchResult:jsonl scaleX:sx scaleY:sy completion:completion];
             } else {
                 if (completion) dispatch_async(dispatch_get_main_queue(), ^{
                     completion(nil, @"百度 PaddleOCR 任务完成但未返回结果地址");
@@ -398,7 +502,7 @@ static CGRect XZRectFromValue(id v) {
 }
 
 // —— v2 异步任务：取 JSONL 结果并解析文字 ——
-+ (void)_ppocrFetchResult:(NSString *)jsonl
++ (void)_ppocrFetchResult:(NSString *)jsonl scaleX:(CGFloat)sx scaleY:(CGFloat)sy
                completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
     NSURL *url = [NSURL URLWithString:jsonl];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
@@ -430,10 +534,23 @@ static CGRect XZRectFromValue(id v) {
                 if (![pr isKindOfClass:[NSDictionary class]]) continue;
                 NSArray *texts = pr[@"rec_texts"];
                 if (![texts isKindOfClass:[NSArray class]]) continue;
-                for (id x in texts) {
-                    if ([x isKindOfClass:[NSString class]] && [x length]) {
-                        [items addObject:@{ @"text": x, @"box": [NSValue valueWithCGRect:CGRectZero] }];
+                // v6.20.3：尽量保留 PaddleOCR 坐标（rec_polys/rec_boxes/boxes），用于阅读顺序排序与脱敏定位
+                NSArray *polys = pr[@"rec_polys"];
+                if (![polys isKindOfClass:[NSArray class]]) polys = pr[@"rec_boxes"];
+                if (![polys isKindOfClass:[NSArray class]]) polys = pr[@"boxes"];
+                for (NSInteger ti = 0; ti < texts.count; ti++) {
+                    id x = texts[ti];
+                    if (![x isKindOfClass:[NSString class]] || ![x length]) continue;
+                    CGRect box = CGRectZero;
+                    if ((NSUInteger)ti < polys.count) box = [self _sn3RectFromPaddlePoly:polys[ti]];
+                    if (box.size.width > 0 && box.size.height > 0) {
+                        // 缩图坐标 → 原图坐标（脱敏需原图坐标，排序只关心相对位置）
+                        box = CGRectMake(box.origin.x * sx, box.origin.y * sy,
+                                         box.size.width * sx, box.size.height * sy);
+                    } else {
+                        box = CGRectZero; // 无坐标则降级，排序函数会将其置后
                     }
+                    [items addObject:@{ @"text": x, @"box": [NSValue valueWithCGRect:box] }];
                 }
             }
         }
@@ -449,6 +566,7 @@ static CGRect XZRectFromValue(id v) {
 
 // —— 同步接口兜底（非 /api/v2/ocr/jobs 的其它地址）——
 + (void)_ppocrSyncWithURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg
+               scaleX:(CGFloat)sx scaleY:(CGFloat)sy
                completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
     NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
     BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
@@ -484,24 +602,52 @@ static CGRect XZRectFromValue(id v) {
             return;
         }
         NSDictionary *res = oj[@"result"];
-        NSMutableArray<NSString *> *raw = [NSMutableArray array];
+        // v6.20.3：同步接口也保留坐标（逐条收 text+poly），避免丢坐标导致排序/脱敏失效
+        NSMutableArray<NSDictionary *> *raw = [NSMutableArray array]; // @[ @{@"text":NSString, @"poly":id} ]
         if ([res isKindOfClass:[NSDictionary class]]) {
             NSArray *ocrResults = res[@"ocrResults"];
             if ([ocrResults isKindOfClass:[NSArray class]]) {
                 for (NSDictionary *r in ocrResults) {
                     if (![r isKindOfClass:[NSDictionary class]]) continue;
-                    NSArray *texts = nil;
                     NSDictionary *pr = r[@"prunedResult"];
-                    if ([pr isKindOfClass:[NSDictionary class]]) texts = pr[@"rec_texts"];
+                    NSArray *texts = nil, *polys = nil;
+                    if ([pr isKindOfClass:[NSDictionary class]]) {
+                        texts = pr[@"rec_texts"];
+                        polys = pr[@"rec_polys"];
+                        if (![polys isKindOfClass:[NSArray class]]) polys = pr[@"rec_boxes"];
+                        if (![polys isKindOfClass:[NSArray class]]) polys = pr[@"boxes"];
+                    }
                     if (![texts isKindOfClass:[NSArray class]]) texts = r[@"rec_texts"];
-                    if ([texts isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:texts];
+                    if (![texts isKindOfClass:[NSArray class]]) continue;
+                    for (NSInteger ti = 0; ti < texts.count; ti++) {
+                        id x = texts[ti];
+                        if (![x isKindOfClass:[NSString class]] || ![x length]) continue;
+                        id poly = ((NSUInteger)ti < polys.count) ? polys[ti] : nil;
+                        [raw addObject:@{ @"text": x, @"poly": (poly ?: [NSNull null]) }];
+                    }
                 }
             }
-            if (!raw.count && [res[@"texts"] isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:res[@"texts"]];
+            if (!raw.count && [res[@"texts"] isKindOfClass:[NSArray class]]) {
+                for (id x in res[@"texts"]) {
+                    if ([x isKindOfClass:[NSString class]] && [x length])
+                        [raw addObject:@{ @"text": x, @"poly": [NSNull null] }];
+                }
+            }
         }
         NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-        for (NSString *t in raw) {
-            if ([t isKindOfClass:[NSString class]] && t.length) [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:CGRectZero] }];
+        for (NSDictionary *kv in raw) {
+            NSString *t = kv[@"text"];
+            if (![t isKindOfClass:[NSString class]] || !t.length) continue;
+            CGRect box = CGRectZero;
+            id poly = kv[@"poly"];
+            if (poly && poly != [NSNull null]) box = [self _sn3RectFromPaddlePoly:poly];
+            if (box.size.width > 0 && box.size.height > 0) {
+                box = CGRectMake(box.origin.x * sx, box.origin.y * sy,
+                                 box.size.width * sx, box.size.height * sy);
+            } else {
+                box = CGRectZero;
+            }
+            [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:box] }];
         }
         if (!items.count) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{
