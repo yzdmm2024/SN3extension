@@ -1531,7 +1531,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 #pragma mark - v6.06：截图统计 + 历史记录
 
 + (BOOL)isShowing {
-    return ((MaskCropWindow *)[self sharedInstance])._showing;
+    return ((MaskCropWindow *)[self sharedInstance])->_showing;
 }
 
 - (void)openHistory {
