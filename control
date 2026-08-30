@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.13
+Version: 6.14
 Architecture: iphoneos-arm64
-Description: [v6.13] 修复「连接成功但识别为空」真 bug：AI Studio 两种接口格式自动适配（aistudio-app.com 用 {"file",fileType:1}；aistudio-hub.baidu.com 用 {"image":...}），返回解析兼容 ocrResults[].prunedResult.rec_texts / texts / rec_texts 多结构兜底。并把「百度 PaddleOCR (免费)」加入大模型库预设，可在「大模型库→识别引擎」一键导入并选中即生效（API_URL+Token 仍在本页填）。(沿用 v6.12 主线程修复 + v6.11 AI Studio 免费 PaddleOCR + v6.10 内置 PP-OCR + v6.09 安全模式根治 + v6.07 大模型库)
+Description: [v6.14] 让「百度 PaddleOCR (免费)」直接在「识别引擎·使用模型」选择器里可选（无需先导入预设）：OCR 选择器末尾内置一行，选中即走免费通道（API_URL+Token 仍在本页 PPOCR 组填）。保留 v6.13 的两种接口格式适配+多结构解析兜底；保留独立 PPOCR 开关作为备选。(沿用 v6.13 识别空修复 + v6.12 主线程修复 + v6.11 AI Studio 免费 PaddleOCR + v6.07 大模型库)
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

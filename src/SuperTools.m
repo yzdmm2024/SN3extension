@@ -131,6 +131,12 @@ static CGRect XZRectFromValue(id v) {
         [self ocrViaPPOCR:image completion:completion];
         return;
     }
+    // v6.14：识别引擎选择器里直接选了「内置 PaddleOCR」（哨兵 id），走免费通道
+    NSString *selOCR = [Common stringPref:XZ_KEY_MODEL_OCR default:@""];
+    if ([selOCR isEqualToString:XZ_PPOCR_SENTINEL]) {
+        [self ocrViaPPOCR:image completion:completion];
+        return;
+    }
     // v6.07：识别引擎改走「大模型库」——从 ModelOCR_ID 取选中的模型配置
     NSDictionary *cfg = [Common sn3OCRConfig];
     // v6.13：大模型库里选中的识别模型若是「百度 PaddleOCR」，直接走独立免费通道

@@ -2,12 +2,16 @@
 //  SN3ModelPickerController.m — 为某个功能(问AI/识别引擎/翻译)选择「使用模型」(radio)
 //
 #import "SN3ModelStore.h"
+#import "Common.h"
 
 @interface SN3ModelPickerController () <UITableViewDelegate, UITableViewDataSource>
 @property (nonatomic, strong) NSString *featureKey;
 @property (nonatomic, strong) NSString *selId;
-@property (nonatomic, strong) NSArray<NSDictionary *> *models;
+@property (nonatomic, strong) NSArray<NSDictionary *> *models;     // 库里的模型
+@property (nonatomic, strong) NSArray<NSDictionary *> *dispModels; // 实际展示（OCR 时末尾追加内置 PaddleOCR）
 @property (nonatomic, strong) UITableView *tv;
+@property (nonatomic, assign) BOOL isOCR;
+@property (nonatomic, assign) BOOL hasBuiltin; // 是否追加了内置 PaddleOCR 行
 @end
 
 @implementation SN3ModelPickerController
@@ -20,12 +24,33 @@
     return self;
 }
 
+- (BOOL)_libraryHasPaddleOCR {
+    for (NSDictionary *m in self.models) {
+        if ([[SN3ModelField(m, @"vendor", @"") lowercaseString] isEqualToString:@"paddleocr"]) return YES;
+    }
+    return NO;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemBackgroundColor];
     SN3MigrateIfNeeded();
     self.models = SN3LoadModels();
-    self.selId = [SN3Defs() stringForKey:self.featureKey] ?: @"";
+    self.selId  = [SN3Defs() stringForKey:self.featureKey] ?: @"";
+    self.isOCR  = [self.featureKey isEqualToString:SN3_K_OCR];
+
+    // OCR 选择器：若库里还没 PaddleOCR，则在末尾追加一个「内置 PaddleOCR」选项，选中即走免费通道
+    NSMutableArray *disp = [self.models mutableCopy];
+    self.hasBuiltin = NO;
+    if (self.isOCR && ![self _libraryHasPaddleOCR]) {
+        self.hasBuiltin = YES;
+        [disp addObject:@{ @"id": XZ_PPOCR_SENTINEL,
+                           @"name": @"百度 PaddleOCR (免费)",
+                           @"model": @"AI Studio 免费 OCR",
+                           @"vendor": @"paddleocr",
+                           @"__builtin": @YES }];
+    }
+    self.dispModels = disp;
 
     self.tv = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -35,7 +60,7 @@
 }
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
-    return self.models.count + 1; // +1 = 不使用(关闭)
+    return self.dispModels.count + 1; // +1 = 不使用(关闭)
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
@@ -47,7 +72,7 @@
         c.detailTextLabel.text = @"选这个等于关闭 AI / 识别 / 翻译";
         if (self.selId.length == 0) c.accessoryType = UITableViewCellAccessoryCheckmark;
     } else {
-        NSDictionary *m = self.models[ip.row-1];
+        NSDictionary *m = self.dispModels[ip.row-1];
         c.textLabel.text = SN3ModelField(m, @"name", @"(未命名)");
         c.detailTextLabel.text = SN3ModelField(m, @"model", @"未设模型");
         if ([self.selId isEqualToString:m[@"id"]]) c.accessoryType = UITableViewCellAccessoryCheckmark;
@@ -57,7 +82,13 @@
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    NSString *pick = (ip.row == 0) ? @"" : self.models[ip.row-1][@"id"];
+    NSString *pick;
+    if (ip.row == 0) {
+        pick = @"";
+    } else {
+        NSDictionary *m = self.dispModels[ip.row-1];
+        pick = m[@"id"];
+    }
     self.selId = pick;
     [SN3Defs() setObject:pick forKey:self.featureKey];
     [SN3Defs() synchronize];
