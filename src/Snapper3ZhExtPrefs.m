@@ -92,9 +92,6 @@
         }
         if ([self respondsToSelector:sel]) {
             [s setButtonAction:sel];
-            if ([s respondsToSelector:@selector(setAction:)]) {
-                [s setAction:sel];
-            }
         }
     }
 }
