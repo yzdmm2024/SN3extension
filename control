@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.15
+Version: 6.16
 Architecture: iphoneos-arm64
-Description: [v6.15] 重写 PaddleOCR 通道以适配 AI Studio v2 异步任务接口（用户实际用的就是它）：multipart 提交任务→轮询 jobId 到 done→取 JSONL 结果，文字解析 result.ocrResults[].prunedResult.rec_texts；鉴权 Bearer；测试连接也改为真实异步流程（旧版只验 errorCode 对 v2 是假成功）。新增「PaddleOCR 模型名」设置项(默认 PP-OCRv6)。保留独立开关与选择器内置项。(沿用 v6.14 选择器内置 + v6.13 识别空修复 + v6.12 主线程修复)
+Description: [v6.16] 修控制中心图标缺失(bundle 内 icon.png/icon@2x/icon@3x 旧版只占位 97/155/309 字节,iOS 16 控制中心读不到正常图标;现替换为 60/120/180 三档相机主题 PNG,蓝色机身 + 白色镜头 + 顶部 viewfinder 凸起,transparent 背景由控制中心自动染色)。需要 killall SpringBoard 或冷重启 iPhone 让 CCSupport 重新扫描 bundle。PP-OCR v2 异步协议沿用 v6.15。
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
