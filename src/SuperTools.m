@@ -126,15 +126,25 @@ static CGRect XZRectFromValue(id v) {
 // 失败: 弹 alert 显示原始 error message, 调用方收到 nil items
 + (void)ocrViaBigModel:(UIImage *)image
             completion:(void (^)(NSArray<NSDictionary *> *items, NSString *err))completion {
-    NSString *bu   = [Common stringPref:XZ_KEY_BM_BASEURL default:@"https://open.bigmodel.cn/api/paas/v4"];
-    NSString *key  = [Common stringPref:XZ_KEY_BM_KEY     default:@""];
-    NSString *md   = [Common stringPref:XZ_KEY_BM_MODEL   default:@"glm-4v-flash"];
-    NSString *pr   = [Common stringPref:XZ_KEY_BM_PROMPT  default:@""];
+    // v6.07：识别引擎改走「大模型库」——从 ModelOCR_ID 取选中的模型配置
+    NSDictionary *cfg = [Common sn3OCRConfig];
+    if (!cfg) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"识别引擎未选择模型：请到「设置 → 大模型库 → 识别引擎·使用模型」选一个模型（也可一键导入预设）。");
+            });
+        }
+        return;
+    }
+    NSString *bu   = [Common sn3ModelField:cfg key:@"baseURL" def:@"https://open.bigmodel.cn/api/paas/v4"];
+    NSString *key  = [Common sn3ModelField:cfg key:@"apiKey"  def:@""];
+    NSString *md   = [Common sn3ModelField:cfg key:@"model"   def:@"glm-4v-flash"];
+    NSString *pr   = [Common stringPref:XZ_KEY_BM_PROMPT default:@""];
 
     if (!key.length) {
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, @"未配置智谱 API Key，请到「设置→超级截图」填写");
+                completion(nil, @"所选识别模型未填 API Key：请到「设置 → 大模型库」编辑该模型填入 Key。");
             });
         }
         return;
@@ -245,9 +255,34 @@ static CGRect XZRectFromValue(id v) {
     }];
 }
 
-// 网络翻译入口。优先用百度翻译 API（设置里填了 APP ID/KEY 即用，国内可用）；
-// 未配置密钥时回退免费 gtx 接口（国内常被墙，仅兜底）。
+// 网络翻译入口。v6.07：若「大模型库」里翻译功能选了模型，则走该模型（chat 补全，提示词翻译）；
+// 否则回退旧的百度翻译 API（设置里填了 APP ID/KEY 即用），再不行回退 gtx（国内常被墙）。
 + (void)translateText:(NSString *)text completion:(void (^)(NSString *dst, NSString *err))completion {
+    NSDictionary *cfg = [Common sn3TransConfig];
+    if (cfg) {
+        NSString *bu  = [Common sn3ModelField:cfg key:@"baseURL" def:@"https://api.openai.com/v1"];
+        NSString *key = [Common sn3ModelField:cfg key:@"apiKey"  def:@""];
+        NSString *md  = [Common sn3ModelField:cfg key:@"model"   def:@"gpt-4o-mini"];
+        if (!key.length) {
+            if (completion) completion(nil, @"翻译所选模型未填 API Key：请到「设置 → 大模型库」编辑该模型填入 Key。");
+            return;
+        }
+        NSString *to = [Common stringPref:XZ_KEY_TRANS_TARGET default:@"zh"];
+        if (!to.length) to = @"zh";
+        NSString *langName = [self _langName:to];
+        NSString *prompt = [NSString stringWithFormat:@"You are a translator. Translate the following text into %@ (%@). Output ONLY the translation, no explanations, no quotes, no markdown.\n\n%@", to, langName, text];
+        NSArray *messages = @[ @{ @"role": @"user", @"content": prompt } ];
+        [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
+                      completion:^(NSString *answer, NSString *err) {
+            if (err.length) { if (completion) completion(nil, err); return; }
+            NSString *a = [answer stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            a = [self _stripMarkdownCodeBlocks:a];
+            if (!a.length) { if (completion) completion(nil, @"模型返回为空，翻译失败"); return; }
+            if (completion) completion(a, nil);
+        }];
+        return;
+    }
+    // 回退：旧百度翻译 API
     NSString *appid = [Common stringPref:XZ_KEY_TRANS_APPID default:@""];
     NSString *key   = [Common stringPref:XZ_KEY_TRANS_KEY default:@""];
     if (appid.length && key.length) {
@@ -256,9 +291,15 @@ static CGRect XZRectFromValue(id v) {
         // v5.8：未配置百度密钥时，明确告知并仍尝试 gtx，失败则给出诊断
         [self gtxTranslate:text completion:^(NSString *dst, NSString *err) {
             if (dst.length) { if (completion) completion(dst, nil); }
-            else { if (completion) completion(nil, @"未配置百度翻译密钥（APP ID/密钥），已回退 Google 接口但失败：国内通常不通。请在设置填写百度翻译密钥。"); }
+            else { if (completion) completion(nil, @"未配置翻译模型（也未配置百度翻译密钥），已回退 Google 接口但失败：国内通常不通。请到「设置 → 大模型库」给翻译选一个模型。"); }
         }];
     }
+}
+
++ (NSString *)_langName:(NSString *)code {
+    NSDictionary *m = @{@"zh":@"Chinese", @"en":@"English", @"ja":@"Japanese", @"ko":@"Korean",
+                        @"fr":@"French", @"de":@"German", @"ru":@"Russian", @"es":@"Spanish"};
+    return m[code] ?: code;
 }
 
 + (NSString *)md5:(NSString *)str {

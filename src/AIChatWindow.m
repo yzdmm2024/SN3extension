@@ -179,9 +179,23 @@
 - (void)ask {
     self.busy = YES;
     self.sendBtn.enabled = NO;
-    NSString *base = [Common stringPref:XZ_KEY_AI_BASEURL default:@"https://api.deepseek.com/v1"];
-    NSString *key  = [Common stringPref:XZ_KEY_AI_KEY default:@""];
-    NSString *model = [Common stringPref:XZ_KEY_AI_MODEL default:@"deepseek-chat"];
+    // v6.07：问 AI 改走「大模型库」——从 ModelAI_ID 取选中的模型配置
+    NSDictionary *cfg = [Common sn3AIConfig];
+    if (!cfg) {
+        self.busy = NO;
+        self.sendBtn.enabled = YES;
+        self.textView.text = [NSString stringWithFormat:@"%@\n\n【提示】尚未选择 AI 模型：请到「设置 → 大模型库 → 问AI·使用模型」选一个模型（也可一键导入 DeepSeek / OpenAI / 智谱 等预设）。", [self renderedConversation]];
+        return;
+    }
+    NSString *base  = [Common sn3ModelField:cfg key:@"baseURL" def:@"https://api.deepseek.com/v1"];
+    NSString *key   = [Common sn3ModelField:cfg key:@"apiKey"  def:@""];
+    NSString *model = [Common sn3ModelField:cfg key:@"model"   def:@"deepseek-chat"];
+    if (!key.length) {
+        self.busy = NO;
+        self.sendBtn.enabled = YES;
+        self.textView.text = [NSString stringWithFormat:@"%@\n\n【提示】所选模型未填 API Key：请到「设置 → 大模型库」编辑该模型填入 Key。", [self renderedConversation];
+        return;
+    }
     NSArray *snapshotM = [self.messages copy];
 
     [AskAIEngine askMessages:snapshotM baseURL:base apiKey:key model:model completion:^(NSString *answer, NSString *err) {

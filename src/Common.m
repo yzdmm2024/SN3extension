@@ -89,20 +89,42 @@
 }
 
 // v5.23.0: OCR/网络等失败时弹的 alert (不静默, 用户必须看到)
+// v6.07: 改为挂到独立顶层窗口(Alert+750)，稳盖过工具栏面板(≈2000)与选区窗(≈1990)，
+//        彻底解决「OCR 失败提示框在选区/工具栏下面、点不了」的问题。
 + (void)sn3AlertError:(NSString *)title message:(NSString *)msg {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *w = [self topWindow];
-        if (!w) return;
-        UIViewController *root = w.rootViewController;
-        while (root.presentedViewController) root = root.presentedViewController;
-        if (!root) return;
         UIAlertController *a = [UIAlertController alertControllerWithTitle:title
                                                                     message:msg
                                                              preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        // v5.25.6: 删除抬层 hack (工具栏已降到 Alert-10, 系统 alert 自然浮在其上)
-        [root presentViewController:a animated:YES completion:nil];
+        [self presentAlertOnTop:a];
     });
+}
+
+// v6.07: 在独立 UIWindow(Alert+750) 上弹出 alert，保证位于所有截图 UI 之上、可点。
+@interface SN3AlertDismisser : NSObject <UIAdaptivePresentationControllerDelegate>
+@property (nonatomic, copy) void (^onDismiss)(void);
+@end
+@implementation SN3AlertDismisser
+- (void)presentationControllerDidDismiss:(UIPresentationController *)pc { if (_onDismiss) _onDismiss(); }
+@end
+
+static __strong UIWindow *gSN3AlertWin = nil;
++ (void)presentAlertOnTop:(UIAlertController *)alert {
+    if (!alert) return;
+    UIWindowScene *scene = [self activeWindowScene];
+    if (!scene) return;
+    UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
+    w.windowLevel = UIWindowLevelAlert + 750;
+    w.hidden = NO;
+    UIViewController *root = [UIViewController new];
+    root.view.backgroundColor = [UIColor clearColor];
+    w.rootViewController = root;
+    gSN3AlertWin = w;
+    SN3AlertDismisser *d = [SN3AlertDismisser new];
+    d.onDismiss = ^{ gSN3AlertWin = nil; };
+    alert.presentationController.delegate = d; // presentationController 会 retain delegate
+    [root presentViewController:alert animated:YES completion:nil];
 }
 
 + (UIWindow *)topWindow {
@@ -190,6 +212,85 @@
     } else {
         dispatch_async(dispatch_get_main_queue(), block);
     }
+}
+
+#pragma mark - v6.07 大模型库解析
+
++ (NSArray<NSDictionary *> *)sn3ModelLibrary {
+    NSString *json = [self stringPref:XZ_KEY_MODEL_LIB default:@""];
+    if (!json.length) return @[];
+    NSData *d = [json dataUsingEncoding:NSUTF8StringEncoding];
+    if (!d) return @[];
+    NSError *e = nil;
+    id obj = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:&e];
+    if (![obj isKindOfClass:[NSArray class]]) return @[];
+    return obj;
+}
+
++ (void)sn3SetModelLibrary:(NSArray *)arr {
+    NSError *e = nil;
+    NSData *d = [NSJSONSerialization dataWithJSONObject:arr ?: @[] options:0 error:&e];
+    NSString *json = d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : @"";
+    [self setPref:XZ_KEY_MODEL_LIB value:json];
+}
+
++ (NSDictionary *)sn3ModelById:(NSString *)mid {
+    if (!mid.length) return nil;
+    for (NSDictionary *m in [self sn3ModelLibrary]) {
+        if ([[m objectForKey:@"id"] isEqualToString:mid]) return m;
+    }
+    return nil;
+}
+
++ (NSDictionary *)sn3AIConfig    { [self sn3MigrateModelsIfNeeded]; return [self sn3ModelById:[self stringPref:XZ_KEY_MODEL_AI    default:@""]]; }
++ (NSDictionary *)sn3OCRConfig   { [self sn3MigrateModelsIfNeeded]; return [self sn3ModelById:[self stringPref:XZ_KEY_MODEL_OCR   default:@""]]; }
++ (NSDictionary *)sn3TransConfig { [self sn3MigrateModelsIfNeeded]; return [self sn3ModelById:[self stringPref:XZ_KEY_MODEL_TRANS default:@""]]; }
+
++ (NSString *)sn3ModelField:(NSDictionary *)m key:(NSString *)k def:(NSString *)def {
+    NSString *v = [m objectForKey:k];
+    return (v && [v isKindOfClass:[NSString class]] && v.length) ? v : def;
+}
+
+// 一次性迁移：把旧的 AskAI_* / BigModel_* 配置并入模型库，老用户配置不丢，
+// 也避免「三个功能各填一套、误点某项 BaseURL 就把 OCR/AI 一起带崩」。
++ (void)sn3MigrateModelsIfNeeded {
+    if ([self boolPref:XZ_KEY_MODEL_MIGRATED default:NO]) return;
+    [self setPref:XZ_KEY_MODEL_MIGRATED value:@YES];
+
+    NSMutableArray *lib = [[self sn3ModelLibrary] mutableCopy];
+    BOOL changed = NO;
+
+    // 问 AI（OpenAI 兼容）
+    NSString *aiKey  = [self stringPref:XZ_KEY_AI_KEY     default:@""];
+    NSString *aiURL  = [self stringPref:XZ_KEY_AI_BASEURL default:@""];
+    NSString *aiModel= [self stringPref:XZ_KEY_AI_MODEL   default:@""];
+    if (aiKey.length || aiURL.length || aiModel.length) {
+        if (![self sn3ModelById:@"mig_ai"]) {
+            [lib addObject:@{@"id":@"mig_ai", @"name":@"我的对话模型",
+                             @"baseURL":aiURL.length?aiURL:@"https://api.deepseek.com/v1",
+                             @"apiKey":aiKey, @"model":aiModel.length?aiModel:@"deepseek-chat",
+                             @"vendor":@"openai"}];
+            [self setPref:XZ_KEY_MODEL_AI value:@"mig_ai"];
+            changed = YES;
+        }
+    }
+
+    // 识别引擎（智谱 BigModel）
+    NSString *bmKey  = [self stringPref:XZ_KEY_BM_KEY     default:@""];
+    NSString *bmURL  = [self stringPref:XZ_KEY_BM_BASEURL default:@""];
+    NSString *bmModel= [self stringPref:XZ_KEY_BM_MODEL   default:@""];
+    if (bmKey.length || bmURL.length || bmModel.length) {
+        if (![self sn3ModelById:@"mig_ocr"]) {
+            [lib addObject:@{@"id":@"mig_ocr", @"name":@"智谱 BigModel (识别)",
+                             @"baseURL":bmURL.length?bmURL:@"https://open.bigmodel.cn/api/paas/v4",
+                             @"apiKey":bmKey, @"model":bmModel.length?bmModel:@"glm-4v-flash",
+                             @"vendor":@"zhipu"}];
+            [self setPref:XZ_KEY_MODEL_OCR value:@"mig_ocr"];
+            changed = YES;
+        }
+    }
+
+    if (changed) [self sn3SetModelLibrary:lib];
 }
 
 @end

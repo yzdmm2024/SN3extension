@@ -1359,7 +1359,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     CGFloat pad   = 8.0;
     CGFloat closeW = 36.0;                    // 最右侧红色关闭（明显、一指可点）
     CGFloat prevW  = 52.0;                    // 左侧预览缩略图宽
-    CGFloat headerH = 16.0;                   // 顶部统计条（已截 N 张 + 历史入口）
+    CGFloat headerH = 30.0;                   // 顶部统计条（已截 N 张 + 历史入口 + 关闭✕）
     CGFloat panelW = scr.size.width - pad * 2;
     CGFloat areaW  = panelW - closeW - prevW - 16.0;  // 按钮区可用宽（左预览、右关闭、顶统计）
 
@@ -1432,22 +1432,32 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     panel.userInteractionEnabled = YES;
     _localPanel = panel;
 
-    // v6.06：顶部统计条 —— 已截 N 张 + 历史入口（点「历史」看截图记录）
-    UILabel *hdr = [[UILabel alloc] initWithFrame:CGRectMake(10, 1, panelW - 80, headerH - 2)];
+    // v6.07：顶部统计条 —— 已截 N 张（左） + 历史入口（右） + 关闭✕（最右，常驻可见）
+    UILabel *hdr = [[UILabel alloc] initWithFrame:CGRectMake(10, 0, panelW - 150, headerH)];
     hdr.text = [NSString stringWithFormat:@"已截 %ld 张", (long)[Common intPref:XZ_KEY_SNAP_COUNT default:0]];
     hdr.textColor = [UIColor colorWithWhite:1 alpha:0.88];
-    hdr.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    hdr.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     hdr.userInteractionEnabled = NO;
+    [hdr setCenter:CGPointMake(hdr.center.x, headerH/2.0)];
     _snapCountLabel = hdr;
     [panel addSubview:hdr];
 
     UIButton *histBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    histBtn.frame = CGRectMake(panelW - 72, 0, 64, headerH);
+    histBtn.frame = CGRectMake(panelW - 104, 0, 56, headerH);
     [histBtn setTitle:@"历史" forState:UIControlStateNormal];
-    histBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    histBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     [histBtn setTitleColor:[UIColor systemYellowColor] forState:UIControlStateNormal];
     [histBtn addTarget:self action:@selector(openHistory) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:histBtn];
+
+    // 关闭✕（最右上角，跟随顶栏，永远可见，不用移动选取框）
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(panelW - 40, 0, 40, headerH);
+    [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    close.tintColor = [UIColor systemRedColor];
+    close.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:close];
 
     // 左侧预览缩略图：显示当前裁剪图，旋转/还原/压缩后实时更新（让操作看得见）
     if (!_previewIV) {
@@ -1500,20 +1510,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
             [panel addSubview:b];
         }
     }
-
-    // 最右侧固定红色关闭（明显可点：淡红圆底 + 红色 X，跟随工具栏右沿）
-    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    CGFloat ch = 34;
-    close.frame = CGRectMake(panelW - closeW, y + (panelH - ch) / 2.0, closeW, ch);
-    [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
-    close.tintColor = [UIColor systemRedColor];
-    close.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    close.backgroundColor = [UIColor colorWithRed:1.0 green:0.25 blue:0.25 alpha:0.20];
-    close.layer.cornerRadius = ch / 2.0;
-    [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
-    [_panelWin addSubview:close];
-    [_panelWin addInteractiveView:close];
-    [_panelWin bringSubviewToFront:close];
 
     [_panelWin addSubview:_localPanel];
     [_panelWin addInteractiveView:_localPanel];   // 面板本身作为交互白名单

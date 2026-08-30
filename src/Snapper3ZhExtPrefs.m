@@ -4,6 +4,7 @@
 #import "Common.h"
 #import "AskAIEngine.h"
 #import "ToolbarOrderController.h"
+#import "SN3ModelStore.h"
 
 // 设置面板主控制器：iOS 设置 → 超级截图
 @interface SN3PrefsController : PSListController
@@ -120,30 +121,29 @@
     [self _sn3Alert:@"粘贴完成" msg:[NSString stringWithFormat:@"已填入 API Key（前 8 位: %@…）。\n返回主面板即可看到。", [pb substringToIndex:MIN(8u, pb.length)]]];
 }
 
-// v5.23.0: 用当前配置打一发最小的 chat 请求验证 Key 是否有效
+// v6.07: 用「识别引擎」所选模型打一发最小请求验证 Key 是否有效
 - (void)testBigModelConnection:(PSSpecifier *)spec {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
-    NSString *bu   = [d stringForKey:XZ_KEY_BM_BASEURL] ?: @"https://open.bigmodel.cn/api/paas/v4";
-    NSString *key  = [d stringForKey:XZ_KEY_BM_KEY]     ?: @"";
-    NSString *md   = [d stringForKey:XZ_KEY_BM_MODEL]   ?: @"glm-4v-flash";
-    if (!key.length) {
-        [self _sn3Alert:@"未配置 API Key" msg:@"请先在「API Key」项填写（也可点「从剪贴板粘贴」按钮一键填入）。"];
-        return;
-    }
-    [self _runTestWithTitle:@"测试中（智谱 BigModel）" baseURL:bu apiKey:key model:md];
+    NSArray *models = SN3LoadModels();
+    NSDictionary *m = SN3ModelById(models, [d stringForKey:SN3_K_OCR] ?: @"");
+    if (!m) { [self _sn3Alert:@"未选择模型" msg:@"请先在「大模型库」给识别引擎选一个模型（或一键导入预设）。"]; return; }
+    NSString *bu  = SN3ModelField(m, @"baseURL", @"https://open.bigmodel.cn/api/paas/v4");
+    NSString *key = SN3ModelField(m, @"apiKey",  @"");
+    NSString *md  = SN3ModelField(m, @"model",   @"glm-4v-flash");
+    if (!key.length) { [self _sn3Alert:@"未配置 Key" msg:@"所选模型未填 API Key，请到「大模型库」编辑该模型填入。"]; return; }
+    [self _runTestWithTitle:@"测试中（识别模型）" baseURL:bu apiKey:key model:md];
 }
 
-// v5.25.7: 用「问 AI」当前配置打一发最小 chat 请求，验证 OpenAI 兼容接口（含豆包 Ark）是否可用
+// v6.07: 用「问AI」所选模型打一发最小 chat 请求验证 OpenAI 兼容接口是否可用
 - (void)testAskAIConnection:(PSSpecifier *)spec {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
-    NSString *bu   = [d stringForKey:XZ_KEY_AI_BASEURL] ?: @"https://api.openai.com";
-    NSString *key  = [d stringForKey:XZ_KEY_AI_KEY]     ?: @"";
-    NSString *md   = [d stringForKey:XZ_KEY_AI_MODEL]   ?: @"gpt-4o-mini";
-    if (!key.length) {
-        [self _sn3Alert:@"未配置 API Key"
-                     msg:@"请先在「问 AI」段填写 API Key。\n接豆包：Base URL 填 https://ark.cn-beijing.volces.com/api/v3，模型名填接入点 ID（ep-xxxx，不是 doubao-xxx）。"];
-        return;
-    }
+    NSArray *models = SN3LoadModels();
+    NSDictionary *m = SN3ModelById(models, [d stringForKey:SN3_K_AI] ?: @"");
+    if (!m) { [self _sn3Alert:@"未选择模型" msg:@"请先在「大模型库」给问AI选一个模型（或一键导入预设）。"]; return; }
+    NSString *bu  = SN3ModelField(m, @"baseURL", @"https://api.deepseek.com/v1");
+    NSString *key = SN3ModelField(m, @"apiKey",  @"");
+    NSString *md  = SN3ModelField(m, @"model",   @"deepseek-chat");
+    if (!key.length) { [self _sn3Alert:@"未配置 Key" msg:@"所选模型未填 API Key，请到「大模型库」编辑该模型填入。"]; return; }
     [self _runTestWithTitle:@"测试中（问 AI）" baseURL:bu apiKey:key model:md];
 }
 
@@ -190,10 +190,24 @@
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
-// v6.06：打开「机框来源/帮助」GitHub 仓库（device-frames-media，提供各机型 frame.png + template.json）
-- (void)openFrameHelp:(PSSpecifier *)spec {
-    NSURL *u = [NSURL URLWithString:@"https://github.com/jonnyjackson26/device-frames-media"];
-    if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+// v6.07：打开「大模型库」管理页
+- (void)openModelLib:(PSSpecifier *)spec {
+    SN3ModelLibController *vc = [[SN3ModelLibController alloc] init];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+// v6.07：为 问AI / 识别引擎 / 翻译 选「使用模型」
+- (void)openPickAI:(PSSpecifier *)spec {
+    SN3ModelPickerController *vc = [[SN3ModelPickerController alloc] initWithFeatureKey:SN3_K_AI title:@"问AI · 使用模型"];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+- (void)openPickOCR:(PSSpecifier *)spec {
+    SN3ModelPickerController *vc = [[SN3ModelPickerController alloc] initWithFeatureKey:SN3_K_OCR title:@"识别引擎 · 使用模型"];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+- (void)openPickTrans:(PSSpecifier *)spec {
+    SN3ModelPickerController *vc = [[SN3ModelPickerController alloc] initWithFeatureKey:SN3_K_TRANS title:@"翻译 · 使用模型"];
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 // v5.25.0: PSButtonCell 打开外部链接 (替代 PSLinkCell+detail=类名, 那个写法会让 iOS 14+ PSListController

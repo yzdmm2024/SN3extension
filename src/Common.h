@@ -52,6 +52,16 @@
 #define XZ_KEY_HISTORY_ENABLED  @"History_Enabled"   // 历史记录开关（默认开）
 #define XZ_KEY_HISTORY_MAX      @"History_Max"       // 历史保留条数（默认 50）
 
+// v6.07：大模型库 —— 统一 识别引擎 / 问AI / 翻译 三处配置，避免各填一套、误点即崩
+//   库本身以 JSON 字符串存于 XZ_KEY_MODEL_LIB（NSUserDefaults，domain 同 prefs）
+//   每个模型: {id, name, baseURL, apiKey, model, vendor}
+//   各功能只存「选中的模型 id」，真正配置集中在库里（面板=登录口子，模型=真正干活的）
+#define XZ_KEY_MODEL_LIB        @"ModelLibrary_JSON" // 模型库数组(JSON 字符串)
+#define XZ_KEY_MODEL_AI         @"ModelAI_ID"        // 问AI 选用的模型 id（空=未选）
+#define XZ_KEY_MODEL_OCR        @"ModelOCR_ID"       // 识别引擎 选用的模型 id
+#define XZ_KEY_MODEL_TRANS      @"ModelTrans_ID"     // 翻译 选用的模型 id
+#define XZ_KEY_MODEL_MIGRATED   @"ModelLib_Migrated" // 一次性迁移标记
+
 // 自定义资源目录（用户用 Filza 放入；SpringBoard 可调取）
 #define XZ_PHONE_FRAME_DIR  @"/var/mobile/Documents/com.axs.snapper3zhext/Frames"   // 自定义机框：每机型一个子目录(frame.png + info.json)
 #define XZ_HISTORY_DIR       @"/var/mobile/Documents/com.axs.snapper3zhext/History" // 历史截图缩略图
@@ -86,5 +96,18 @@
 
 // 主线程执行（darwin 通知回调不在主线程）
 + (void)runOnMain:(dispatch_block_t)block;
+
+#pragma mark - v6.07 大模型库解析（tweak 侧）
+
+// 模型库（NSArray<NSDictionary *>），从 XZ_KEY_MODEL_LIB(JSON) 解析；空返回 @[]
++ (NSArray<NSDictionary *> *)sn3ModelLibrary;
+// 按 id 取模型；取不到返回 nil
++ (NSDictionary *)sn3ModelById:(NSString *)mid;
+// 各功能当前选中的模型配置（含 baseURL/apiKey/model）；未选返回 nil
++ (NSDictionary *)sn3AIConfig;
++ (NSDictionary *)sn3OCRConfig;
++ (NSDictionary *)sn3TransConfig;
+// 一次性迁移：把旧的 AskAI_* / BigModel_* 配置并入模型库，避免「误点即崩」+ 老用户配置不丢
++ (void)sn3MigrateModelsIfNeeded;
 
 @end
