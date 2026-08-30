@@ -3,22 +3,32 @@
 //
 #import <CommonCrypto/CommonDigest.h>
 #import "Common.h"
+#import "ResultWindow.h"      // v6.09: 错误提示改走久经验证的 Alert+600 结果浮层
 
-// v6.07: alert 关闭回调持有者（被 presentationController.delegate retain，防止提前释放）
-@interface SN3AlertDismisser : NSObject <UIAdaptivePresentationControllerDelegate>
-@property (nonatomic, copy) void (^onDismiss)(void);
-@end
-@implementation SN3AlertDismisser
-- (void)presentationControllerDidDismiss:(UIPresentationController *)pc { if (_onDismiss) _onDismiss(); }
-@end
-
-// 顶层 alert 窗口 + 其 dismiss 回调对象的静态强引用。
-// 关键点：UIPresentationController.delegate 是 weak，不会 retain 回调对象。
-// 若不额外强引用，presentAlertOnTop: 返回后回调对象即被释放，
-// 用户点「知道了」dismiss 时向僵尸对象发消息 → EXC_BAD_ACCESS → SpringBoard 崩 → 安全模式。
-// 这里用静态强引用把对象撑到 dismiss 回调里再释放。
-static __strong UIWindow *gSN3AlertWin = nil;
-static __strong SN3AlertDismisser *gSN3AlertDismisser = nil;
+// ============================================================================
+// v6.09 崩溃复盘（重要，勿再犯）
+//
+// v6.07/v6.08 为了解决「OCR 失败提示被工具栏遮住点不了」，自建了一个
+// UIWindow(Alert+750) 并在其上 presentViewController: 一个 UIAlertController。
+// 这套写法引入了三个致命问题，导致点 OCR/翻译 直接把 SpringBoard 打进安全模式：
+//
+//   1) [w makeKeyAndVisible] —— 在 SpringBoard 里向系统抢 key window。
+//      SpringBoard 不是普通 app，随手抢 key window 会破坏其窗口状态机。
+//      正确做法：只设 w.hidden = NO（触摸投递本来就不要求成为 key window）。
+//
+//   2) initWithWindowScene: 没有显式 frame —— 窗口尺寸依赖场景推断，不可靠。
+//      正确做法：initWithFrame: 显式给 bounds。
+//
+//   3) 靠 presentationController.delegate 回收窗口 —— 该属性是 weak（v6.08 已用
+//      静态强引用兜住），但更本质的错是：presentationControllerDidDismiss: 只在
+//      「用户手势交互式 dismiss」时触发，UIAlertController 点按钮属于程序化
+//      dismiss，该回调**根本不会触发** → 2750 层的空窗口永久残留、盖住全屏吞掉
+//      所有触摸。这正是 v5.25.4 早已踩过并写在 EditToolbarWindow.m 注释里的坑。
+//
+// v6.09 的修法：不再自建窗口、不再碰 presentationController。直接复用本项目
+// 已长期跑通的 ResultWindow（Alert+600，显式 frame、hidden=NO、单例管生命周期、
+// 自带关闭按钮），它本来就是为「稳盖过工具栏面板(_panelWin≈2000)」设计的。
+// ============================================================================
 
 @implementation Common
 
@@ -104,52 +114,35 @@ static __strong SN3AlertDismisser *gSN3AlertDismisser = nil;
     });
 }
 
-// v5.23.0: OCR/网络等失败时弹的 alert (不静默, 用户必须看到)
-// v6.07: 改为挂到独立顶层窗口(Alert+750)，稳盖过工具栏面板(≈2000)与选区窗(≈1990)，
-//        彻底解决「OCR 失败提示框在选区/工具栏下面、点不了」的问题。
+// v5.23.0: OCR/网络等失败时提示 (不静默, 用户必须看到)
+// v6.09: 不再自建 UIWindow + UIAlertController（v6.07/6.08 因此崩进安全模式，见文件头复盘）。
+//        改用 ResultWindow —— 本项目已长期跑通的 Alert+600 结果浮层：
+//        · 显式 frame、hidden=NO（不抢 SpringBoard 的 key window）
+//        · 单例持有窗口，关闭按钮/点空白处 确定性回收，无残留
+//        · Alert+600(≈2600) 天然盖过工具栏面板(_panelWin≈2000)与选区窗(≈1990) → 可见且可点
 + (void)sn3AlertError:(NSString *)title message:(NSString *)msg {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:title
-                                                                    message:msg
-                                                             preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentAlertOnTop:a];
-    });
-}
-
-// v6.07/v6.08: 在独立 UIWindow(Alert+750) 上弹出 alert，保证位于所有截图 UI 之上、可点。
-// v6.08 修复：delegate 是 weak，需用静态强引用 gSN3AlertDismisser 把回调对象撑到 dismiss 之后，
-//            否则点「知道了」时回调对象已是僵尸 → 安全模式。
-+ (void)presentAlertOnTop:(UIAlertController *)alert {
-    if (!alert) return;
-    UIWindowScene *scene = [self activeWindowScene];
-    if (!scene) {
-        // 兜底：挂到 keyWindow 的顶层 VC 上，至少把错误弹出来（不崩，只是可能仍被面板遮一点）
-        UIWindow *kw = [self topWindow];
-        UIViewController *host = kw ? [self topViewControllerFrom:kw] : nil;
-        if (host && host.view.window) {
-            [host presentViewController:alert animated:YES completion:nil];
-        } else {
-            NSLog(@"[SN3] presentAlertOnTop: 无 scene 且无 host，丢弃 alert");
+    NSString *t = title.length ? title : @"出错了";
+    NSString *m = msg.length ? msg : @"未知错误";
+    NSLog(@"[SN3] sn3AlertError: %@ / %@", t, m);
+    [self runOnMain:^{
+        @try {
+            [ResultWindow showWithTitle:t text:m image:nil];
+        } @catch (NSException *e) {
+            // 兜底：走已有 @try/@catch 保护的 present:fromWindow: 通道（proven 路径）
+            NSLog(@"[SN3] sn3AlertError ResultWindow 异常，降级 alert: %@ %@", e.name, e.reason);
+            @try {
+                UIAlertController *a = [UIAlertController alertControllerWithTitle:t
+                                                                          message:m
+                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                [a addAction:[UIAlertAction actionWithTitle:@"知道了"
+                                                     style:UIAlertActionStyleDefault
+                                                   handler:nil]];
+                [self present:a fromWindow:[self topWindow]];
+            } @catch (NSException *e2) {
+                NSLog(@"[SN3] sn3AlertError 降级仍失败: %@ %@", e2.name, e2.reason);
+            }
         }
-        return;
-    }
-    UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
-    w.windowLevel = UIWindowLevelAlert + 750;
-    w.backgroundColor = [UIColor clearColor];
-    UIViewController *root = [UIViewController new];
-    root.view.backgroundColor = [UIColor clearColor];
-    w.rootViewController = root;
-    gSN3AlertWin = w;
-    SN3AlertDismisser *d = [SN3AlertDismisser new];
-    d.onDismiss = ^{
-        gSN3AlertWin = nil;
-        gSN3AlertDismisser = nil;
-    };
-    alert.presentationController.delegate = d;
-    gSN3AlertDismisser = d;        // 静态强引用，撑到 dismiss 回调
-    [w makeKeyAndVisible];         // 关键：否则 alert 窗口不接收触摸，「知道了」点不了
-    [root presentViewController:alert animated:YES completion:nil];
+    }];
 }
 
 + (UIWindow *)topWindow {
@@ -241,15 +234,28 @@ static __strong SN3AlertDismisser *gSN3AlertDismisser = nil;
 
 #pragma mark - v6.07 大模型库解析
 
+// v6.09 加固：偏好里的 JSON 可能被误编辑/写坏/被别的版本写成别的结构。
+// 只要有一个元素不是字典，旧实现在 sn3ModelById: 里就会 [非字典 objectForKey:] →
+// unrecognized selector → SpringBoard 崩。这里逐元素过滤，只放行真正的字典。
 + (NSArray<NSDictionary *> *)sn3ModelLibrary {
     NSString *json = [self stringPref:XZ_KEY_MODEL_LIB default:@""];
-    if (!json.length) return @[];
+    if (![json isKindOfClass:[NSString class]] || !json.length) return @[];
     NSData *d = [json dataUsingEncoding:NSUTF8StringEncoding];
-    if (!d) return @[];
-    NSError *e = nil;
-    id obj = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:&e];
+    if (!d.length) return @[];
+    id obj = nil;
+    @try {
+        NSError *e = nil;
+        obj = [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingMutableContainers error:&e];
+    } @catch (NSException *ex) {
+        NSLog(@"[SN3] sn3ModelLibrary JSON 解析异常: %@", ex.reason);
+        return @[];
+    }
     if (![obj isKindOfClass:[NSArray class]]) return @[];
-    return obj;
+    NSMutableArray *clean = [NSMutableArray array];
+    for (id m in (NSArray *)obj) {
+        if ([m isKindOfClass:[NSDictionary class]]) [clean addObject:m];
+    }
+    return clean;
 }
 
 + (void)sn3SetModelLibrary:(NSArray *)arr {
@@ -259,10 +265,13 @@ static __strong SN3AlertDismisser *gSN3AlertDismisser = nil;
     [self setPref:XZ_KEY_MODEL_LIB value:json];
 }
 
+// v6.09 加固：id 字段可能不是字符串（NSNumber/NSNull/嵌套容器）。
+// 旧实现直接 isEqualToString: → unrecognized selector → 崩。这里先做类型校验。
 + (NSDictionary *)sn3ModelById:(NSString *)mid {
-    if (!mid.length) return nil;
+    if (![mid isKindOfClass:[NSString class]] || !mid.length) return nil;
     for (NSDictionary *m in [self sn3ModelLibrary]) {
-        if ([[m objectForKey:@"id"] isEqualToString:mid]) return m;
+        id v = [m objectForKey:@"id"];
+        if ([v isKindOfClass:[NSString class]] && [(NSString *)v isEqualToString:mid]) return m;
     }
     return nil;
 }
@@ -271,9 +280,11 @@ static __strong SN3AlertDismisser *gSN3AlertDismisser = nil;
 + (NSDictionary *)sn3OCRConfig   { [self sn3MigrateModelsIfNeeded]; return [self sn3ModelById:[self stringPref:XZ_KEY_MODEL_OCR   default:@""]]; }
 + (NSDictionary *)sn3TransConfig { [self sn3MigrateModelsIfNeeded]; return [self sn3ModelById:[self stringPref:XZ_KEY_MODEL_TRANS default:@""]]; }
 
+// v6.09 加固：m 传进来的可能不是字典（上游取值失败/结构被写坏），先校验再取值。
 + (NSString *)sn3ModelField:(NSDictionary *)m key:(NSString *)k def:(NSString *)def {
-    NSString *v = [m objectForKey:k];
-    return (v && [v isKindOfClass:[NSString class]] && v.length) ? v : def;
+    if (![m isKindOfClass:[NSDictionary class]] || ![k isKindOfClass:[NSString class]]) return def;
+    id v = [m objectForKey:k];
+    return ([v isKindOfClass:[NSString class]] && [(NSString *)v length]) ? (NSString *)v : def;
 }
 
 // 一次性迁移：把旧的 AskAI_* / BigModel_* 配置并入模型库，老用户配置不丢，

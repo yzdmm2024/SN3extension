@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.08
+Version: 6.09
 Architecture: iphoneos-arm64
-Description: [v6.08] 热修 v6.07 安全模式崩溃：OCR/翻译报错弹窗点「知道了」时，顶层 alert 的 dismiss 回调对象因 delegate 是 weak 已被提前释放，向僵尸对象发消息导致 SpringBoard 崩溃进入安全模式；改为用静态强引用把回调对象撑到 dismiss 完成后再释放，并补 makeKeyAndVisible 保证按钮可点。(沿用 v6.07 大模型库 + 关闭按钮常驻 + 顶层提示 + 音量键触发加固)
+Description: [v6.09] 彻底根治「点 OCR/翻译 进安全模式」：v6.07/6.08 为把失败提示抬到工具栏之上,自建了 Alert+750 的 UIWindow 并在其上 present UIAlertController —— 其中 makeKeyAndVisible 在 SpringBoard 里抢 key window、窗口无显式 frame、且靠 presentationControllerDidDismiss: 回收(该回调对 UIAlertController 点按钮的程序化 dismiss 根本不触发,2750 层空窗口永久残留吞掉全屏触摸),三处叠加直接崩 SpringBoard。v6.09 删掉整套自建窗口机制,改用本项目已长期跑通的 ResultWindow(Alert+600,显式 frame、hidden=NO 不抢 key window、单例确定性回收),既盖过工具栏面板(约2000)可点、又不再崩。另: ①模型库解析全面加固(JSON 元素非字典/id 非字符串不再 unrecognized selector 崩溃); ②工具栏按钮加异常兜底(tweak 内未捕获异常不再拖垮 SpringBoard); ③修正 AI 按钮仍在读旧 AskAI_Key 未走大模型库的遗漏。(沿用 v6.07 大模型库 + 关闭按钮常驻 + 音量键触发加固)
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

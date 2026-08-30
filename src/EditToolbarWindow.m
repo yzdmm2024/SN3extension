@@ -350,7 +350,20 @@ static EditToolbarWindow *_shared = nil;
 // ⚠️ 用 if/else 链而不是 switch：ObjC++ 下 switch case 内声明带 block 捕获的变量
 //    会直接编译报错（v4.0 踩过：cannot jump from switch statement）。
 //
+// v6.09: 外层加异常兜底。tweak 跑在 SpringBoard 进程里，任何未捕获的 ObjC 异常
+// 都会直接把 SpringBoard 打进安全模式。工具按钮是用户高频入口，必须兜住。
+// （Makefile 已带 -fobjc-exceptions）
 - (void)toolTapped:(UIButton *)btn {
+    @try {
+        [self _toolTappedInner:btn];
+    } @catch (NSException *e) {
+        NSLog(@"[SN3] toolTapped 异常 tag=%ld: %@ / %@ / %@",
+              (long)btn.tag, e.name, e.reason, e.callStackSymbols);
+        [Common toast:[NSString stringWithFormat:@"操作失败：%@", e.reason ?: e.name]];
+    }
+}
+
+- (void)_toolTappedInner:(UIButton *)btn {
     UIImage *img = _imageView.image;
     if (!img) return;
     NSInteger tag = btn.tag;
@@ -376,14 +389,14 @@ static EditToolbarWindow *_shared = nil;
         }];
     } else if (tag == ETBTagAI) {
         // v6.04：合并「问AI / 对话」为单一 AI 按钮 —— 立即进对话，后台把截图文字当上下文。
-        // 未配置密钥时给出明确指引（不再静默无反应）。
-        NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
-        if (key.length == 0) {
-            UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"未配置 AI 接口"
-                                                                       message:@"请先在「设置 → 超级截图 → AI/大模型」填写：\n• 接口地址（如 https://api.deepseek.com/v1）\n• API Key\n• 模型名（如 deepseek-chat；火山方舟填 ep-xxxx 接入点 ID）"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-            [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
-            [Common present:ac fromWindow:_win];
+        // v6.09 修正：这里原先仍在读旧的 AskAI_Key，没走「大模型库」，提示语也指向已废弃的
+        //            旧设置路径。改为按大模型库里「问AI·使用模型」的选择来判断。
+        NSDictionary *aiCfg = [Common sn3AIConfig];
+        NSString *aiKey = [Common sn3ModelField:aiCfg key:@"apiKey" def:@""];
+        if (!aiCfg || aiKey.length == 0) {
+            [Common sn3AlertError:@"AI 还没配好"
+                          message:aiCfg ? @"「问AI」所选模型没填 API Key。\n\n请到「设置 → 超级截图 → 大模型库」，点开该模型补上 API Key。"
+                                        : @"「问AI」还没选模型。\n\n请到「设置 → 超级截图 → 大模型库」：\n1) 点 + 从预设一键导入（DeepSeek / OpenAI / 智谱 等）\n2) 填入你的 API Key\n3) 回到「问AI · 使用模型」选中它"];
             return;
         }
         [AIChatWindow showWithTitle:@"AI 对话" firstText:@"这是关于你当前截图的对话，直接提问即可。"];
