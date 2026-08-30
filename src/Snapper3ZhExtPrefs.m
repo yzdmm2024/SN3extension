@@ -217,23 +217,28 @@
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
-// v6.10: 打开百度智能云「文字识别」控制台（拿 API Key / Secret Key）
+// v6.11: 打开 AI Studio PaddleOCR 任务页（拿 API_URL / Token）
 - (void)openPPOCRPage:(PSSpecifier *)spec {
-    NSURL *u = [NSURL URLWithString:@"https://console.bce.baidu.com/ai/#/ai/ocr/overview/index"];
+    NSURL *u = [NSURL URLWithString:@"https://aistudio.baidu.com/paddleocr/task"];
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
-// v6.10: 验证百度 PP-OCR 的 Key 是否有效（只换 access_token，不需要图片）
+// v6.11: 验证 AI Studio PaddleOCR 的 API_URL + Token 是否有效（POST 一张小图，看能否拿到正常 JSON 回包）
 - (void)testPPOCRConnection:(PSSpecifier *)spec {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
-    NSString *ak = [d stringForKey:XZ_KEY_PPOCR_AK] ?: @"";
-    NSString *sk = [d stringForKey:XZ_KEY_PPOCR_SK] ?: @"";
-    if (!ak.length || !sk.length) {
-        [self _sn3Alert:@"未配置 Key" msg:@"请先填入 PP-OCR 的 API Key 和 Secret Key（百度智能云「文字识别」应用获取）。"];
+    NSString *apiURL = [d stringForKey:XZ_KEY_PPOCR_URL] ?: @"";
+    NSString *token  = [d stringForKey:XZ_KEY_PPOCR_TOKEN] ?: @"";
+    if (!apiURL.length || !token.length) {
+        [self _sn3Alert:@"未配置" msg:@"请先在「百度 PaddleOCR」里填入 API_URL 和 Token（均从 aistudio.baidu.com/paddleocr/task 页面获取）。"];
         return;
     }
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"测试中（百度 PP-OCR）"
-                                                                message:@"正在用 API Key / Secret Key 换取 access_token，请稍候…"
+    NSURL *u = [NSURL URLWithString:apiURL];
+    if (!u) {
+        [self _sn3Alert:@"API_URL 无效" msg:@"复制的 API_URL 不完整或含非法字符，请确认以 https:// 开头、完整粘贴。"];
+        return;
+    }
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"测试中（百度 PaddleOCR）"
+                                                                message:@"正在用 API_URL + Token 发一张测试图，请稍候…"
                                                          preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:ac animated:YES completion:nil];
     __block BOOL resolved = NO;
@@ -241,14 +246,27 @@
         if (resolved) return;
         resolved = YES;
         ac.title = @"✗ 验证失败";
-        ac.message = @"请求超时（20 秒未响应）。请检查设备网络，或确认 API Key / Secret Key 是否正确。";
+        ac.message = @"请求超时（20 秒未响应）。请检查：① 设备网络；② API_URL 是否完整正确；③ Token 是否有效。";
         [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
             [ac dismissViewControllerAnimated:YES completion:nil];
         }]];
     }];
-    NSString *u = [NSString stringWithFormat:@"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%@&client_secret=%@", ak, sk];
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
-    [req setHTTPMethod:@"GET"];
+    // 构造一张 64x64 白底小图做探测（不需要真有文字）
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(64, 64), YES, 1.0);
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    if (c) { CGContextSetFillColorWithColor(c, [UIColor whiteColor].CGColor); CGContextFillRect(c, CGRectMake(0, 0, 64, 64)); }
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    NSData *jpeg = UIImageJPEGRepresentation(img ?: [UIImage new], 0.8);
+    NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
+    NSDictionary *body = @{ @"file": b64, @"fileType": @1 };
+    NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:u];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [req setValue:[@"token " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+    [req setHTTPBody:json];
+    [req setTimeoutInterval:20];
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         if (resolved) return;
         resolved = YES;
@@ -259,13 +277,19 @@
         } else {
             NSError *je = nil;
             id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:&je];
-            if ([j isKindOfClass:[NSDictionary class]] && j[@"access_token"]) {
-                ac.title = @"✓ Key 有效";
-                ac.message = @"API Key / Secret Key 正确，已成功换取 access_token。\n\n去主面板点 OCR 即可识别文字（个人实名免费 1000 次/月）。";
+            if (![j isKindOfClass:[NSDictionary class]]) {
+                ac.title = @"✗ 验证失败";
+                ac.message = @"返回的不是 JSON（API_URL 可能不正确，或不是 PaddleOCR 接口地址）。";
             } else {
-                NSString *em = j[@"error_description"] ?: j[@"error"] ?: @"未知错误";
-                ac.title = @"✗ Key 无效";
-                ac.message = [NSString stringWithFormat:@"百度鉴权失败：%@\n\n请检查：① API Key 和 Secret Key 是否填反；② 是否来自「文字识别」应用（不是别的 AI 服务）。", em];
+                NSNumber *ec = j[@"errorCode"];
+                if (ec && ec.integerValue != 0) {
+                    NSString *em = j[@"errorMsg"] ?: @"未知错误";
+                    ac.title = @"✗ 验证失败";
+                    ac.message = [NSString stringWithFormat:@"AI Studio 返回错误：%@\n\n请检查 Token 是否有效、API_URL 是否来自 paddleocr/task 页面。", em];
+                } else {
+                    ac.title = @"✓ 连接成功";
+                    ac.message = @"API_URL + Token 正确，已成功联通百度 PaddleOCR。\n\n去主面板点 OCR 即可识别文字（免费）。";
+                }
             }
         }
         [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {

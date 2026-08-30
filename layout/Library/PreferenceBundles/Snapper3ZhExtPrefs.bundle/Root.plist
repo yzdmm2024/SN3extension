@@ -91,9 +91,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>百度 PP-OCR 是官方免费文字识别（个人实名 1000 次/月），独立于「大模型库」。开启后识别引擎 / 翻译都改走它。需填「文字识别」应用的 API Key + Secret Key（两个都要）。</string>
+			<string>百度 PaddleOCR（AI Studio 免费版，独立于「大模型库」）。开启后识别引擎 / 翻译都改走它。需填 API_URL + Token（均从 aistudio.baidu.com/paddleocr/task 页面的「API 调用示例」复制）。免费额度以 AI Studio 页面为准。</string>
 			<key>label</key>
-			<string>百度 PP-OCR（内置免费）</string>
+			<string>百度 PaddleOCR（AI Studio 免费）</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -107,7 +107,7 @@
 			<key>key</key>
 			<string>PPOCR_Enabled</string>
 			<key>label</key>
-			<string>启用 PP-OCR 识别（覆盖大模型库）</string>
+			<string>启用 PaddleOCR 识别（覆盖大模型库）</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -117,11 +117,11 @@
 			<key>defaults</key>
 			<string>com.axs.snapper3zhext</string>
 			<key>key</key>
-			<string>PPOCR_APIKey</string>
+			<string>PPOCR_APIURL</string>
 			<key>label</key>
-			<string>PP-OCR API Key</string>
+			<string>PaddleOCR API_URL</string>
 			<key>placeholder</key>
-			<string>百度智能云「文字识别」应用 API Key</string>
+			<string>从 paddleocr/task 复制的完整接口地址</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -131,11 +131,11 @@
 			<key>defaults</key>
 			<string>com.axs.snapper3zhext</string>
 			<key>key</key>
-			<string>PPOCR_SecretKey</string>
+			<string>PPOCR_Token</string>
 			<key>label</key>
-			<string>PP-OCR Secret Key</string>
+			<string>PaddleOCR Token</string>
 			<key>placeholder</key>
-			<string>百度智能云「文字识别」应用 Secret Key</string>
+			<string>AI Studio Access Token</string>
 		</dict>
 		<dict>
 			<key>action</key>
@@ -143,7 +143,7 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>    测试 PP-OCR 连接（验证 Key 有效性）</string>
+			<string>    测试 PaddleOCR 连接（验证可用性）</string>
 		</dict>
 		<dict>
 			<key>action</key>
@@ -151,7 +151,7 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>    打开 百度智能云「文字识别」控制台（拿 Key）</string>
+			<string>    打开 AI Studio PaddleOCR 任务页（拿 API_URL / Token）</string>
 		</dict>
 		<dict>
 			<key>cell</key>
