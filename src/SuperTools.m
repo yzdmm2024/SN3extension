@@ -1374,7 +1374,7 @@ static UIWindow *_floatWin = nil;
 
 + (void)save:(UIImage *)image completion:(void (^)(BOOL ok))completion {
     if (!image) { if (completion) completion(NO); return; }
-    // v6.20.5：所有保存统一走自定义相册「SN3截图」，不再只进相机胶卷
+    // v6.20.5：所有保存统一走自定义相册「超级截图」，不再只进相机胶卷
     [ImageUtils saveToCustomAlbum:image completion:^(BOOL ok, NSError *e) {
         if (e) NSLog(@"[SN3] save to album failed: %@", e);
         if (completion) completion(ok);

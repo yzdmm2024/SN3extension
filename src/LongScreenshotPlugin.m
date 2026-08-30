@@ -25,7 +25,7 @@
                         actionTitle:@"保存到相册" onAction:^{
             [ImageUtils saveToCustomAlbum:stitched completion:^(BOOL ok, NSError *err) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if (ok) [Common toast:@"已保存到相册「SN3截图」"];
+                    if (ok) [Common toast:@"已保存到相册「超级截图」"];
                     else [Common toast:err ? [NSString stringWithFormat:@"保存失败：%@", err.localizedDescription] : @"保存失败"];
                 });
             }];

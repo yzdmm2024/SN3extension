@@ -7,7 +7,7 @@
 //        - 进入即局部截图模式，直接拖框；松手【立即】裁出选区 → 销毁窗口A → 弹窗口B
 //          两排编辑工具栏（OCR/翻译/画图/识码/打码/复制/贴图/保存/分享/更多）。
 //        - 底部常驻三个按钮：【正常截图】【长截图】【取消】。
-//        - 正常截图：仿系统电源+音量键，截整屏直接存相册「SN3截图」，不弹编辑。
+//        - 正常截图：仿系统电源+音量键，截整屏直接存相册「超级截图」，不弹编辑。
 //    · 长截图 = 全屏宽「实时预览框」：
 //        - 点【长截图】直接弹出全屏宽截取框；框外区域不参与输出。
 //        - 框内触摸穿透，底层 App（微信群聊/单聊/朋友圈/公众号等）可上下滑动，
@@ -1010,7 +1010,7 @@ static int SN3_LoopKVOContext = 0;
     [Common toast:@"已退出长截图"];
 }
 
-// 保存长图：拼接 → 直接存相册「SN3截图」→ 销毁窗口A（不弹编辑）
+// 保存长图：拼接 → 直接存相册「超级截图」→ 销毁窗口A（不弹编辑）
 - (void)onSaveLong {
     if ([[LongShotCapture sharedInstance] frameCount] < 1) {
         [Common toast:@"请先在框内滑动页面采集内容"];
@@ -1029,7 +1029,7 @@ static int SN3_LoopKVOContext = 0;
             [ss dismiss];
             if (img) {
                 [ImageUtils saveToCustomAlbum:img completion:^(BOOL ok, NSError *e) {
-                    [Common toast: ok ? @"长图已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+                    [Common toast: ok ? @"长图已保存到相册「超级截图」" : @"保存失败，请检查相册权限"];
                 }];
             } else {
                 [Common toast:@"拼接失败，请重试"];
@@ -1745,7 +1745,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     } else if (tag == XZLocalSave) {
         [self recordSnap:img];
         [SuperTools save:img completion:^(BOOL ok) {
-            [Common toast: ok ? @"已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+            [Common toast: ok ? @"已保存到相册「超级截图」" : @"保存失败，请检查相册权限"];
             [self dismiss];
         }];
     } else if (tag == XZLocalShare) {
@@ -1832,7 +1832,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     [ResultWindow showWithTitle:@"识别结果" text:code image:nil];
 }
 
-// 正常截图：整屏 → 保存到相册「SN3截图」→ 直接结束（不弹编辑，仿原生）
+// 正常截图：整屏 → 保存到相册「超级截图」→ 直接结束（不弹编辑，仿原生）
 - (void)captureFullScreenAndSave {
     if (!_win) return;
     [self setWindowHidden:YES];
@@ -1853,7 +1853,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
             }
         }
         [ImageUtils saveToCustomAlbum:screen completion:^(BOOL ok, NSError *e) {
-            [Common toast: ok ? @"已截图，已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+            [Common toast: ok ? @"已截图，已保存到相册「超级截图」" : @"保存失败，请检查相册权限"];
             if (ok) [self recordSnap:screen];   // v6.06：正常截图也计入统计 + 历史
         }];
     });

@@ -224,13 +224,13 @@
                 return;
             }
             
-            // 查找或创建「SN3截图」相册
+            // 查找或创建「超级截图」相册
             __block PHAssetCollection *targetAlbum = nil;
             PHFetchResult *collections = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeAlbum
                                                                                  subtype:PHAssetCollectionSubtypeAlbumRegular
                                                                                  options:nil];
             [collections enumerateObjectsUsingBlock:^(PHAssetCollection *obj, NSUInteger idx, BOOL *stop) {
-                if ([obj.localizedTitle isEqualToString:@"SN3截图"]) {
+                if ([obj.localizedTitle isEqualToString:@"超级截图"]) {
                     targetAlbum = obj;
                     *stop = YES;
                 }
@@ -239,7 +239,7 @@
             if (!targetAlbum) {
                 // 创建新相册
                 [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-                    [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:@"SN3截图"];
+                    [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:@"超级截图"];
                 } completionHandler:^(BOOL success, NSError *error) {
                     if (success) {
                         // 重新查找
@@ -247,7 +247,7 @@
                                                                                         subtype:PHAssetCollectionSubtypeAlbumRegular
                                                                                         options:nil];
                         [newCol enumerateObjectsUsingBlock:^(PHAssetCollection *obj, NSUInteger idx, BOOL *stop) {
-                            if ([obj.localizedTitle isEqualToString:@"SN3截图"]) {
+                            if ([obj.localizedTitle isEqualToString:@"超级截图"]) {
                                 targetAlbum = obj;
                                 *stop = YES;
                             }
