@@ -73,6 +73,8 @@ static const CGFloat kBarPad  = 10.0;
     UIImage *_originalImage;   // 还原用：保留最初传入的原图
     UIScrollView *_singleRowScroll;   // v5.25.5：单排循环滑动用
     CGFloat _singleRowBtnW;            // v5.25.5：单排按钮步距（宽+间距）
+    CGFloat _singleRowSetW;            // v5.25.7：单排一组按钮的总跨度，用于无限制循环回绕
+    BOOL    _rotateLongPressed;        // v5.25.7：区分「点按(90°)」与「长按(180°)」，避免两者同时触发
 }
 
 static EditToolbarWindow *_shared = nil;
@@ -131,6 +133,11 @@ static EditToolbarWindow *_shared = nil;
     NSMutableArray<NSNumber *> *enabled = [NSMutableArray array];
     for (NSNumber *t in savedOrder) {
         if (![disabled containsObject:t]) [enabled addObject:t];
+    }
+    // v5.25.7：「启用问 AI」关闭时，从工具栏移除「问 AI」与「AI 对话」两个按钮
+    if (![Common boolPref:XZ_KEY_AI_ENABLED default:YES]) {
+        [enabled removeObject:@(ETBTagAI)];
+        [enabled removeObject:@(ETBTagAIChat)];
     }
     return enabled;
 }
@@ -249,7 +256,8 @@ static EditToolbarWindow *_shared = nil;
     [_rootVC.view addSubview:_toolbar];
 
     if (singleRow) {
-        // 单排 + 横向循环滑动：全部按钮放在 UIScrollView 内，首尾相接循环
+        // v5.25.7：真·无限制循环滑动。放 3 组相同按钮（前/中/后），初始停在中组，
+        // 滚动越界即在 scrollViewDidScroll 里无感回绕到中组对应位置，左右都可无限滑。
         UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(0, kBarPad, scr.size.width, kRowH)];
         sv.showsHorizontalScrollIndicator = NO;
         sv.alwaysBounceHorizontal = YES;
@@ -257,18 +265,24 @@ static EditToolbarWindow *_shared = nil;
         sv.tag = 9901;   // 标记，用于循环滑动时识别
         [_toolbar addSubview:sv];
         CGFloat bw = 64.0, gap = 8.0;
-        CGFloat x = 10.0;
-        for (NSNumber *t in enabledTags) {
-            NSDictionary *spec = catalog[t];
-            NSMutableDictionary *full = [spec mutableCopy];
-            full[@"tag"] = t;
-            UIButton *b = [self makeToolButton:full width:bw];
-            b.frame = CGRectMake(x, 0, bw, kRowH);
-            [sv addSubview:b];
-            x += bw + gap;
+        CGFloat stride = (bw + gap) * (CGFloat)enabledTags.count;   // 一组按钮的总跨度（相邻组同款按钮的间距）
+        for (int copy = 0; copy < 3; copy++) {
+            CGFloat baseX = copy * stride;
+            CGFloat x = 10.0 + baseX;
+            for (NSNumber *t in enabledTags) {
+                NSDictionary *spec = catalog[t];
+                NSMutableDictionary *full = [spec mutableCopy];
+                full[@"tag"] = t;
+                UIButton *b = [self makeToolButton:full width:bw];
+                b.frame = CGRectMake(x, 0, bw, kRowH);
+                [sv addSubview:b];
+                x += bw + gap;
+            }
         }
-        sv.contentSize = CGSizeMake(x, kRowH);
+        sv.contentSize = CGSizeMake(stride * 3.0 + 20.0, kRowH);
+        sv.contentOffset = CGPointMake(stride, 0);   // 停在中组，按钮排列与单组一致
         _singleRowScroll = sv;
+        _singleRowSetW = stride;
         _singleRowBtnW = bw + gap;
     } else {
         // 双排：每行固定 5 个，自动折行（不再 5 + 余下，避免第二排被压成 10 个）
@@ -287,19 +301,21 @@ static EditToolbarWindow *_shared = nil;
     }
 }
 
-#pragma mark - 单排循环滑动
+#pragma mark - 单排循环滑动（真·无限制）
 
-- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+// v5.25.7：3 组按钮首尾相接，滚动越界即无感回绕，左右都能无限循环滑。
+// 始终把 offset 钳制在「中组」区间 [setW, 2*setW)，越界就平移一个 setW。
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
     if (scrollView.tag != 9901) return;
-    CGFloat w = scrollView.bounds.size.width;
-    CGFloat maxX = scrollView.contentSize.width - w;
-    if (maxX <= 0) return;
+    CGFloat setW = _singleRowSetW;
+    if (setW <= 0) return;
+    // 一组就能放下时无需循环，避免回绕把视图弹飞
+    if (setW <= [UIScreen mainScreen].bounds.size.width) return;
     CGFloat off = scrollView.contentOffset.x;
-    // 滚到最右 → 回到最左；滚到最左（往回拉）→ 跳到最右，形成循环
-    if (off >= maxX - 1) {
-        [scrollView setContentOffset:CGPointMake(0, 0) animated:NO];
-    } else if (off <= 1) {
-        [scrollView setContentOffset:CGPointMake(maxX, 0) animated:NO];
+    if (off < setW) {
+        scrollView.contentOffset = CGPointMake(off + setW, 0);
+    } else if (off >= 2.0 * setW) {
+        scrollView.contentOffset = CGPointMake(off - setW, 0);
     }
 }
 
@@ -309,6 +325,12 @@ static EditToolbarWindow *_shared = nil;
     b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
     b.layer.cornerRadius = 10;
     [b addTarget:self action:@selector(toolTapped:) forControlEvents:UIControlEventTouchUpInside];
+    // v5.25.7：旋转按钮支持长按 = 旋转 180°（点按 = 旋转 90°，见 onRotateLongPress:）
+    if ([spec[@"tag"] integerValue] == ETBTagRotate) {
+        UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(onRotateLongPress:)];
+        lp.minimumPressDuration = 0.5;
+        [b addGestureRecognizer:lp];
+    }
 
     UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake((bw - 24) / 2, 8, 24, 24)];
     iv.image = [Common systemIcon:spec[@"icon"]];
@@ -385,8 +407,10 @@ static EditToolbarWindow *_shared = nil;
             if (text.length) [AIChatWindow appendContext:text];
         }];
     } else if (tag == ETBTagRotate) {
-        // v5.25.5：旋转当前编辑图 90°（顺时针）
-        [self rotateCurrentImage];
+        // v5.25.7：区分点按(90°)与长按(180°)。长按已置 _rotateLongPressed，
+        // 此处跳过以免 90° 与 180° 叠加（净转 270°）。
+        if (_rotateLongPressed) { _rotateLongPressed = NO; return; }
+        [self rotateCurrentImage];   // v5.25.5：旋转当前编辑图 90°（顺时针）
     } else if (tag == ETBTagCopy) {
         [SuperTools copy:img];
     } else if (tag == ETBTagFloating) {
@@ -504,21 +528,38 @@ static EditToolbarWindow *_shared = nil;
     _sizeLabel.text = [NSString stringWithFormat:@"%.0f × %.0f px", img.size.width, img.size.height];
 }
 
-// v5.25.5：把当前编辑图顺时针旋转 90°（每次点一下转 90°）
-- (void)rotateCurrentImage {
+// v5.25.7：统一旋转入口；rad=M_PI_2 转 90°(顺时针)，rad=M_PI 转 180°
+- (void)rotateCurrentImageBy:(CGFloat)rad {
     UIImage *img = _imageView.image;
     if (!img) return;
     CGFloat w = img.size.width, h = img.size.height;
-    CGSize outSize = CGSizeMake(h, w);
+    BOOL swap = (fabs(fmod(rad, M_PI)) > 0.01);   // 90/270 交换宽高；180 不变
+    CGSize outSize = swap ? CGSizeMake(h, w) : CGSizeMake(w, h);
     UIGraphicsBeginImageContextWithOptions(outSize, NO, img.scale);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(ctx, h / 2.0, w / 2.0);
-    CGContextRotateCTM(ctx, M_PI_2);
+    CGContextTranslateCTM(ctx, outSize.width / 2.0, outSize.height / 2.0);
+    CGContextRotateCTM(ctx, rad);
     CGContextTranslateCTM(ctx, -w / 2.0, -h / 2.0);
     [img drawInRect:CGRectMake(0, 0, w, h)];
     UIImage *rot = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    if (rot) [self replaceImage:rot];
+    if (rot) {
+        [self replaceImage:rot];
+        [Common toast:swap ? @"已旋转 90°" : @"已旋转 180°"];
+    }
+}
+
+// v5.25.5：点按旋转按钮 = 顺时针 90°
+- (void)rotateCurrentImage {
+    [self rotateCurrentImageBy:M_PI_2];
+}
+
+// v5.25.7：长按旋转按钮 = 旋转 180°
+- (void)onRotateLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) {
+        _rotateLongPressed = YES;
+        [self rotateCurrentImageBy:M_PI];
+    }
 }
 
 @end

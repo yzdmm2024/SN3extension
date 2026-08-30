@@ -111,6 +111,40 @@
     }];
 }
 
+// v5.25.7: 用「问 AI」当前配置打一发最小 chat 请求，验证 OpenAI 兼容接口（含豆包 Ark）是否可用
+- (void)testAskAIConnection:(PSSpecifier *)spec {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+    NSString *bu   = [d stringForKey:XZ_KEY_AI_BASEURL] ?: @"https://api.openai.com";
+    NSString *key  = [d stringForKey:XZ_KEY_AI_KEY]     ?: @"";
+    NSString *md   = [d stringForKey:XZ_KEY_AI_MODEL]   ?: @"gpt-4o-mini";
+    if (!key.length) {
+        [self _sn3Alert:@"未配置 API Key"
+                     msg:@"请先在「问 AI」段填写 API Key。\n接豆包：Base URL 填 https://ark.cn-beijing.volces.com/api/v3，模型名填接入点 ID（ep-xxxx，不是 doubao-xxx）。"];
+        return;
+    }
+    [self _sn3Alert:@"测试中" msg:@"正在用「问 AI」当前配置打一发请求，请稍候 3-10 秒…"];
+
+    NSDictionary *txt = @{ @"type": @"text", @"text": @"ping, reply with one word: pong" };
+    NSArray *messages = @[ @{ @"role": @"user", @"content": @[ txt ] } ];
+
+    [AskAIEngine askMessages:messages baseURL:bu apiKey:key model:md
+                  completion:^(NSString *answer, NSString *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (err.length) {
+                [self _sn3Alert:@"✗ 连接失败" msg:err];
+            } else {
+                [self _sn3Alert:@"✓ 连接成功" msg:[NSString stringWithFormat:@"模型 %@ 返回:\n\n%@", md, answer ?: @"(空)"]];
+            }
+        });
+    }];
+}
+
+// v5.25.7: 打开火山方舟 Ark 控制台（拿 API Key + 创建接入点取 ep-xxxx）
+- (void)openArkPage:(PSSpecifier *)spec {
+    NSURL *u = [NSURL URLWithString:@"https://console.volcengine.com/ark"];
+    if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+}
+
 // v5.25.0: PSButtonCell 打开外部链接 (替代 PSLinkCell+detail=类名, 那个写法会让 iOS 14+ PSListController
 // 找不到 plist 文件而抛错, 整个 prefs bundle 被标记为损坏, 进设置报「未能载入软件包」).
 - (void)openBigModelAPIPage:(PSSpecifier *)spec {

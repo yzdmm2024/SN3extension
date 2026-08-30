@@ -310,7 +310,8 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>兼容 OpenAI 接口格式（/v1/chat/completions）。API Key 仅保存在本机。</string>
+			<string>兼容 OpenAI 接口格式（/v1/chat/completions）。API Key 仅保存在本机。
+接豆包（火山方舟）：Base URL 填 https://ark.cn-beijing.volces.com/api/v3，模型名填「接入点 ID」（ep-xxxx，不是 doubao-xxx）。填好后点「测试连接」一键验证是否可用。</string>
 			<key>label</key>
 			<string>问 AI</string>
 		</dict>
@@ -320,7 +321,7 @@
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
-			<false/>
+			<true/>
 			<key>defaults</key>
 			<string>com.axs.snapper3zhext</string>
 			<key>key</key>
@@ -366,9 +367,9 @@
 			<key>key</key>
 			<string>AskAI_Model</string>
 			<key>label</key>
-			<string>模型</string>
+			<string>模型 / 接入点 ID</string>
 			<key>placeholder</key>
-			<string>gpt-4o-mini</string>
+			<string>gpt-4o-mini（豆包填 ep-xxxx）</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -383,6 +384,22 @@
 			<string>AskAI_Prompt</string>
 			<key>label</key>
 			<string>提问词</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>testAskAIConnection</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    测试连接（一键测试 问AI 是否可用）</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>openArkPage</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    打开 火山方舟 Ark 申请页（浏览器）</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -428,7 +445,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>单排滑动：所有按钮横排放在 UIScrollView 里，菜单可以左右循环滑到底。设置保存后下次打开局部截图自动生效。</string>
+			<string>单排滑动：所有按钮横排放在 UIScrollView 里，3 组按钮首尾相接，可左右无限制循环滑动（滑到尽头自动绕回）。设置保存后下次打开局部截图自动生效。</string>
 			<key>label</key>
 			<string>说明</string>
 		</dict>
