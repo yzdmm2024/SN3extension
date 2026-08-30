@@ -83,16 +83,7 @@ jobs:
           cp .theos/obj/debug/SN3CCModule.bundle/SN3CCModule stage/var/jb/Library/ControlCenter/Bundles/SN3CCModule.bundle/ 2>/dev/null || \
           cp .theos/obj/SN3CCModule.bundle/SN3CCModule stage/var/jb/Library/ControlCenter/Bundles/SN3CCModule.bundle/ || { echo "FATAL: SN3CCModule executable not found"; exit 1; }
 
-          # ---- Companion App（v6.17 套壳）：拷贝 theos 产出的 .app
-          mkdir -p stage/var/jb/Applications
-          APP_PATH=$(find .theos/obj -name "SN3Companion.app" -type d 2>/dev/null | head -1)
-          if [ -z "$APP_PATH" ]; then echo "FATAL: SN3Companion.app not found"; exit 1; fi
-          cp -R "$APP_PATH" stage/var/jb/Applications/
-          # theos 不一定把 Info.plist / 图标拷进 .app，手动补齐（幂等，覆盖无害）
-          cp App/Info.plist stage/var/jb/Applications/SN3Companion.app/Info.plist
-          cp App/Icon.png App/Icon@2x.png App/Icon@3x.png stage/var/jb/Applications/SN3Companion.app/
-          # 对 app 可执行文件做假签名（theos 一般已签，这里兜底）
-          ldid -S stage/var/jb/Applications/SN3Companion.app/SN3Companion 2>/dev/null || true
+          # v6.18：已移除 companion App 拷贝步骤（套壳方案已撤销）。
 
           # ---- PreferenceLoader 入口
           mkdir -p stage/var/jb/Library/PreferenceLoader/Preferences
@@ -102,8 +93,7 @@ jobs:
           test -f stage/var/jb/Library/PreferenceBundles/Snapper3ZhExtPrefs.bundle/Snapper3ZhExtPrefs || { echo "FATAL: prefs executable missing"; exit 1; }
           test -f stage/var/jb/Library/PreferenceBundles/Snapper3ZhExtPrefs.bundle/Root.plist || { echo "FATAL: Root.plist missing"; exit 1; }
           test -f stage/var/jb/Library/ControlCenter/Bundles/SN3CCModule.bundle/SN3CCModule || { echo "FATAL: CC executable missing"; exit 1; }
-          test -f stage/var/jb/Applications/SN3Companion.app/SN3Companion || { echo "FATAL: companion app executable missing"; exit 1; }
-          plutil -extract CFBundleIdentifier raw stage/var/jb/Applications/SN3Companion.app/Info.plist
+          # v6.18：已移除 companion App 自检（套壳已撤销）。
           plutil -extract NSPrincipalClass raw stage/var/jb/Library/PreferenceBundles/Snapper3ZhExtPrefs.bundle/Info.plist
 
           # ---- 保险：对所有 Mach-O 显式假签名（theos 一般已签，这里兜底）

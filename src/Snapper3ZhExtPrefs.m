@@ -10,6 +10,13 @@
 @interface SN3PrefsController : PSListController
 @end
 
+@interface SN3PrefsController ()
+@property (nonatomic, strong) UIAlertController *sn3TestAlert;
+@property (nonatomic, strong) NSURLSessionDataTask *sn3TestTask;
+@property (nonatomic, strong) NSTimer *sn3TestTimer;
+@property (nonatomic, assign) BOOL sn3TestResolved;
+@end
+
 @implementation SN3PrefsController
 
 // v5.19：设置面板偶发空白（iOS 14 PSListController 在 viewWillAppear 同帧改 specifiers 时
@@ -223,11 +230,13 @@
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
-// v6.15: 验证 AI Studio PaddleOCR 的 API_URL + Token 是否有效（v2 异步接口：multipart 提交 + 轮询到 done）
-//   注意 v2 接口返回的是 {"code":0,"data":{"jobId":...}}（不是旧同步接口的 errorCode），
-//   所以旧的「判断 errorCode==0」对 v2 是假成功（errorCode 为 nil 被当成成功）。现改为走真实异步流程。
-//   所有 UI 更新统一 dispatch 到主线程（避免跨线程改 UIAlertController 在系统进程里崩）。
+// v6.18: PaddleOCR 连通性测试（崩溃防护版）
+//   修复点：① 全部 UI 变更只走主线程；② 轮询改用主队列递归，杜绝后台线程改 UIAlertController；
+//          ③ 用实例属性(self.sn3TestAlert/Task/Timer/Resolved) 代替 __block 栈变量，避免跨线程竞态；
+//          ④ 每次更新都先查 self.sn3TestResolved，已结束则直接 return，绝不改已 dismiss 的弹窗；
+//          ⑤ 超时守卫 + 每次结束都 invalidate 计时器 / cancel 请求，单一收尾入口 _sn3ResolveTestWithTitle:。
 - (void)testPPOCRConnection:(PSSpecifier *)spec {
+	[self _sn3FinishTest];   // 先清掉上一次可能残留的测试态
 	NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
 	NSString *apiURL = [d stringForKey:XZ_KEY_PPOCR_URL] ?: @"";
 	NSString *token  = [d stringForKey:XZ_KEY_PPOCR_TOKEN] ?: @"";
@@ -251,17 +260,15 @@
 		[self _sn3Alert:@"API_URL 可能不对" msg:@"PaddleOCR 的接口地址主机名应为 xxx.aistudio-app.com。你填的看起来不是 AI Studio 给的接口地址，请检查是否复制完整。"];
 		return;
 	}
+	__weak typeof(self) wself = self;
+	self.sn3TestResolved = NO;
 	UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"测试中（百度 PaddleOCR）" message:@"正在提交测试任务，请稍候…（v2 异步接口，约 10~30 秒）" preferredStyle:UIAlertControllerStyleAlert];
+	self.sn3TestAlert = ac;
 	[self presentViewController:ac animated:YES completion:nil];
-	__block BOOL resolved = NO;
-	__block NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:45.0 repeats:NO block:^(NSTimer *t) {
-		if (resolved) return;
-		resolved = YES;
-		ac.title = @"✗ 验证失败";
-		ac.message = @"请求超时（45 秒未响应）。请检查：① 设备网络；② API_URL 是否完整正确；③ Token 是否有效；④ AI Studio 队列是否繁忙（可稍后重试）。";
-		[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
-			[ac dismissViewControllerAnimated:YES completion:nil];
-		}]];
+	// 单一超时守卫（45s），在主运行循环触发、主线程执行，安全
+	wself.sn3TestTimer = [NSTimer scheduledTimerWithTimeInterval:45.0 repeats:NO block:^(NSTimer *t) {
+		[wself _sn3ResolveTestWithTitle:@"✗ 验证失败"
+		                         message:@"请求超时（45 秒未响应）。请检查：① 设备网络；② API_URL 是否完整正确；③ Token 是否有效；④ AI Studio 队列是否繁忙（可稍后重试）。"];
 	}];
 	// 构造一张 64x64 白底小图做探测（不需要真有文字）
 	UIGraphicsBeginImageContextWithOptions(CGSizeMake(64, 64), YES, 1.0);
@@ -271,19 +278,50 @@
 	UIGraphicsEndImageContext();
 	NSData *jpeg = UIImageJPEGRepresentation(img ?: [UIImage new], 0.8);
 
-	// v6.15：v2 异步任务接口（URL 含 /api/v2/ocr/jobs）→ 真实提交+轮询；其它地址 → 同步 JSON 兜底
+	// v2 异步任务接口（URL 含 /api/v2/ocr/jobs）→ 真实提交+轮询；其它地址 → 同步 JSON 兜底
 	BOOL isJobs = [[u.path lowercaseString] containsString:@"/api/v2/ocr/jobs"];
 	if (isJobs) {
-		[self _sn3PPOCRTestJobsURL:u token:token model:model jpeg:jpeg ac:ac resolved:&resolved timer:&timer];
+		[wself _sn3PPOCRTestJobsURL:u token:token model:model jpeg:jpeg];
 	} else {
-		[self _sn3PPOCRTestSyncURL:u token:token jpeg:jpeg ac:ac resolved:&resolved timer:&timer];
+		[wself _sn3PPOCRTestSyncURL:u token:token jpeg:jpeg];
 	}
 }
 
-// v6.15: v2 异步任务接口的连通性测试（multipart 提交，拿到 jobId 后转轮询）
-- (void)_sn3PPOCRTestJobsURL:(NSURL *)u token:(NSString *)token model:(NSString *)model
-                         jpeg:(NSData *)jpeg ac:(UIAlertController *)ac
-                     resolved:(BOOL *)resolved timer:(NSTimer **)timer {
+// 统一收尾：标记已结束 + 作废计时器 + 取消请求；并在主线程更新弹窗内容（若弹窗还在）。
+// 任意支路只能成功结束一次（靠 self.sn3TestResolved 守卫）。
+- (void)_sn3ResolveTestWithTitle:(NSString *)title message:(NSString *)message {
+	if (self.sn3TestResolved) return;   // 已经结束过，绝不重复处理 / 改已 dismiss 的弹窗
+	self.sn3TestResolved = YES;
+	[self.sn3TestTimer invalidate]; self.sn3TestTimer = nil;
+	[self.sn3TestTask cancel];     self.sn3TestTask = nil;
+	UIAlertController *ac = self.sn3TestAlert;
+	if (!ac) return;
+	ac.title = title;
+	ac.message = message;
+	if (ac.actions.count == 0) {
+		[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){
+			[self _sn3DismissTestAlert];
+		}]];
+	}
+}
+
+- (void)_sn3DismissTestAlert {
+	UIAlertController *ac = self.sn3TestAlert;
+	if (!ac) return;
+	[self.sn3TestAlert dismissViewControllerAnimated:YES completion:nil];
+	self.sn3TestAlert = nil;
+}
+
+// 测试开始前 / 切换到别的页面前：彻底清掉上一次测试残留
+- (void)_sn3FinishTest {
+	[self.sn3TestTimer invalidate]; self.sn3TestTimer = nil;
+	[self.sn3TestTask cancel];     self.sn3TestTask = nil;
+	self.sn3TestResolved = YES;
+	self.sn3TestAlert = nil;
+}
+
+// v6.18: v2 异步任务接口的连通性测试（multipart 提交，拿到 jobId 后转主队列轮询）
+- (void)_sn3PPOCRTestJobsURL:(NSURL *)u token:(NSString *)token model:(NSString *)model jpeg:(NSData *)jpeg {
 	NSString *boundary = @"----SN3PaddleOCRBoundary7Q2k9X";
 	NSMutableData *body = [NSMutableData data];
 	void (^af)(NSString *, NSString *) = ^(NSString *name, NSString *value) {
@@ -308,7 +346,8 @@
 	[req setHTTPBody:body];
 	[req setTimeoutInterval:40];
 	__weak typeof(self) wself = self;
-	[[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+	self.sn3TestTask = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+		if (wself.sn3TestResolved) return;
 		NSString *title = @"✗ 验证失败", *msg = nil;
 		if (err) {
 			msg = [NSString stringWithFormat:@"网络错误：%@", err.localizedDescription];
@@ -323,34 +362,32 @@
 				if (![jobId isKindOfClass:[NSString class]] || !jobId.length) {
 					msg = @"已联通但未返回任务 ID，请重试。";
 				} else {
-					[wself _sn3PPOCRTestPollJob:jobId baseURL:u token:token ac:ac resolved:resolved timer:timer];
+					[wself _sn3PPOCRTestPollJob:jobId baseURL:u token:token];
 					return;
 				}
 			}
 		}
 		dispatch_async(dispatch_get_main_queue(), ^{
-			if (*resolved) return; *resolved = YES; [*timer invalidate];
-			ac.title = title; ac.message = msg;
-			[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+			[wself _sn3ResolveTestWithTitle:title message:msg];
 		});
-	}] resume];
+	}];
+	[self.sn3TestTask resume];
 }
 
-// v6.15: 轮询任务状态直到 done / failed
-- (void)_sn3PPOCRTestPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token
-                           ac:(UIAlertController *)ac resolved:(BOOL *)resolved timer:(NSTimer **)timer {
+// v6.18: 轮询任务状态直到 done / failed（主队列递归，所有状态/UI 变更统一在主线程）
+- (void)_sn3PPOCRTestPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token {
+	if (self.sn3TestResolved) return;
 	NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/%@", [u absoluteString], jobId]];
 	NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
 	[req setHTTPMethod:@"GET"];
 	[req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
 	[req setTimeoutInterval:30];
 	__weak typeof(self) wself = self;
-	[[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+	self.sn3TestTask = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+		if (wself.sn3TestResolved) return;
 		if (err) {
 			dispatch_async(dispatch_get_main_queue(), ^{
-				if (*resolved) return; *resolved = YES; [*timer invalidate];
-				ac.title = @"✗ 验证失败"; ac.message = [NSString stringWithFormat:@"轮询失败：%@", err.localizedDescription];
-				[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+				[wself _sn3ResolveTestWithTitle:@"✗ 验证失败" message:[NSString stringWithFormat:@"轮询失败：%@", err.localizedDescription]];
 			});
 			return;
 		}
@@ -359,29 +396,27 @@
 		NSString *state = dd[@"state"];
 		if ([state isEqualToString:@"done"]) {
 			dispatch_async(dispatch_get_main_queue(), ^{
-				if (*resolved) return; *resolved = YES; [*timer invalidate];
-				ac.title = @"✓ 连接成功";
-				ac.message = @"API_URL + Token 正确，已成功联通百度 PaddleOCR（v2 异步接口，提交并跑完了一个任务）。\n\n去主面板点 OCR 即可识别文字（免费）。";
-				[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+				[wself _sn3ResolveTestWithTitle:@"✓ 连接成功"
+				                         message:@"API_URL + Token 正确，已成功联通百度 PaddleOCR（v2 异步接口，提交并跑完了一个任务）。\n\n去主面板点 OCR 即可识别文字（免费）。"];
 			});
 		} else if ([state isEqualToString:@"failed"]) {
 			NSString *em = dd[@"errorMsg"] ?: @"任务失败";
 			dispatch_async(dispatch_get_main_queue(), ^{
-				if (*resolved) return; *resolved = YES; [*timer invalidate];
-				ac.title = @"✗ 验证失败"; ac.message = [NSString stringWithFormat:@"任务失败：%@", em];
-				[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+				[wself _sn3ResolveTestWithTitle:@"✗ 验证失败" message:[NSString stringWithFormat:@"任务失败：%@", em]];
 			});
 		} else {
-			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2*NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0), ^{
-				[wself _sn3PPOCRTestPollJob:jobId baseURL:u token:token ac:ac resolved:resolved timer:timer];
+			// 关键：用主队列递归轮询，所有 UI/状态变更统一在主线程，杜绝跨线程改弹窗
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+				[wself _sn3PPOCRTestPollJob:jobId baseURL:u token:token];
 			});
 		}
-	}] resume];
+	}];
+	[self.sn3TestTask resume];
 }
 
-// v6.15: 同步接口兜底测试（非 /api/v2/ocr/jobs 的其它地址）
-- (void)_sn3PPOCRTestSyncURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg
-                           ac:(UIAlertController *)ac resolved:(BOOL *)resolved timer:(NSTimer **)timer {
+// v6.18: 同步接口兜底测试（非 /api/v2/ocr/jobs 的其它地址）
+- (void)_sn3PPOCRTestSyncURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg {
+	if (self.sn3TestResolved) return;
 	NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
 	BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
 	NSDictionary *body = isHub ? @{ @"image": b64 } : @{ @"file": b64, @"fileType": @1 };
@@ -392,7 +427,9 @@
 	[req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
 	[req setHTTPBody:json];
 	[req setTimeoutInterval:20];
-	[[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+	__weak typeof(self) wself = self;
+	self.sn3TestTask = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+		if (wself.sn3TestResolved) return;
 		NSString *title = @"✗ 验证失败", *msg = nil;
 		if (err) msg = [NSString stringWithFormat:@"网络错误：%@", err.localizedDescription];
 		else {
@@ -405,11 +442,10 @@
 			}
 		}
 		dispatch_async(dispatch_get_main_queue(), ^{
-			if (*resolved) return; *resolved = YES; [*timer invalidate];
-			ac.title = title; ac.message = msg;
-			[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+			[wself _sn3ResolveTestWithTitle:title message:msg];
 		});
-	}] resume];
+	}];
+	[self.sn3TestTask resume];
 }
 
 - (void)openAPIPage:(PSSpecifier *)spec {

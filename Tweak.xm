@@ -82,53 +82,7 @@ __attribute__((constructor)) static void xz_ctor() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// v6.07：触发方式 —— 音量+电源键 拦截系统截图，改为拉起「超级截图」(实验性, 默认关)
-//
-// 原理：系统截屏（音量+电源）由 BackBoardServices 执行。iOS 13–15 走 SBScreenShotter，
-//       iOS 16 多走 SBScreenshotManager（两者都 hook，运行时只生效存在的那个，另一个安全 no-op）。
-//       开关 Screenshot_Trigger 开启时，直接拉起 MaskCropWindow 并 return 跳过 %orig，
-//       即抑制原生截图、改用超级截图 UI。
-// 风险：实验性。关闭后完全走系统原生截图，不影响其它功能。
+// v6.18：已移除「音量+电源键触发超级截图」拦截（实验性不稳定，按用户要求移除）。
+//        触发超级截图现仅剩：控制中心按钮（SN3CCModule 发 darwin 通知）。
 // ────────────────────────────────────────────────────────────────────────
 
-// 公共：触发一次超级截图（去重由 show 内部处理）
-static void SN3TriggerFromScreenshot(void) {
-    if (![Common boolPref:XZ_KEY_SS_TRIGGER default:NO]) return;
-    NSLog(@"[SN3] 音量+电源键 已拦截 -> 拉起超级截图");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        @try { [[MaskCropWindow sharedInstance] show]; }
-        @catch (NSException *e) { NSLog(@"[SN3] show on SS trigger failed: %@", e.reason); }
-    });
-}
-
-%hook SBScreenShotter
-
-- (void)saveScreenshot {
-    if ([Common boolPref:XZ_KEY_SS_TRIGGER default:NO]) { SN3TriggerFromScreenshot(); return; }
-    %orig;
-}
-
-- (void)saveScreenshotWithOptions:(id)options {
-    if ([Common boolPref:XZ_KEY_SS_TRIGGER default:NO]) { SN3TriggerFromScreenshot(); return; }
-    %orig;
-}
-
-%end
-
-%hook SBScreenshotManager
-
-- (void)saveScreenshot {
-    if ([Common boolPref:XZ_KEY_SS_TRIGGER default:NO]) { SN3TriggerFromScreenshot(); return; }
-    %orig;
-}
-
-- (void)saveScreenshotWithOptions:(id)options {
-    if ([Common boolPref:XZ_KEY_SS_TRIGGER default:NO]) { SN3TriggerFromScreenshot(); return; }
-    %orig;
-}
-
-%end
-
-%ctor {
-    NSLog(@"[SN3] v6.07 tweak loaded; 音量+电源键触发 hook 已挂载 (SBScreenShotter + SBScreenshotManager)");
-}

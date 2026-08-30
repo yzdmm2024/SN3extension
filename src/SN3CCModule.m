@@ -60,24 +60,36 @@ static void SN3_DismissControlCenter(void) {
     }
 }
 
-// 图标加载：优先用用户提供的模板 PNG（"/var/jb/Library/Snapper3ZhExt.bundle/Resources/icon.png"），
-// 失败则用 SF Symbol 兜底，再失败则 Core Graphics 现场画一个蓝底相机。
+// 图标加载：从模块自身 bundle 读取模板 PNG（白底透明，控制中心会按 tint 染色），
+// 名称由「控制中心图标」偏好（CC_Icon）决定；找不到再退回 SF Symbol / CG 兜底。
+// v6.18 修正：之前只读 /var/jb/Library/Snapper3ZhExt.bundle（该路径不存在）→ 永远走兜底，
+//          且 SF Symbol 在 iOS 16.6.1 控制中心里取不到 → 图标空白。现改为读本 bundle 内的 PNG。
+static UIImage *SN3LoadBundledGlyph(NSString *name) {
+    NSBundle *b = [NSBundle bundleForClass:NSClassFromString(@"SN3CCModule")];
+    if (!b) return nil;
+    UIImage *img = [UIImage imageNamed:name inBundle:b compatibleWithTraitCollection:nil];
+    if (img && img.size.width > 1) {
+        return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    }
+    return nil;
+}
+
 static UIImage *SN3GlyphImage(void) {
-    // v5.25.5：SF Symbol 优先，保证现代系统一定有图标（不再依赖可能缺失/损坏的自定义 PNG）
-    UIImage *g = [UIImage systemImageNamed:@"camera.viewfinder"];
+    // 读用户选的图标（默认相机）
+    NSString *choice = [[NSUserDefaults standardUserDefaults] stringForKey:@"CC_Icon"];
+    if (!choice.length) choice = @"camera";
+
+    UIImage *g = SN3LoadBundledGlyph(choice);
+    if (g) return g;
+    // 老名字兜底
+    g = SN3LoadBundledGlyph(@"icon");
+    if (g) return g;
+    // SF Symbol 兜底
+    g = [UIImage systemImageNamed:@"camera.viewfinder"];
     if (g) return g;
     g = [UIImage systemImageNamed:@"camera.fill"];
     if (g) return g;
-    // 可选：用户自定义模板 PNG（仅当存在且有效才用，避免坏图导致图标空白）
-    NSString *bundlePath = @"/var/jb/Library/Snapper3ZhExt.bundle";
-    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
-    if (bundle) {
-        UIImage *custom = [UIImage imageNamed:@"icon" inBundle:bundle compatibleWithTraitCollection:nil];
-        if (custom && custom.size.width > 1) {
-            return [custom imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-        }
-    }
-
+    // Core Graphics 兜底：画一个相机
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(64.0, 64.0), NO, 0.0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (ctx) {

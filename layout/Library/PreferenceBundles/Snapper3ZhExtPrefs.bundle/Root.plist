@@ -404,6 +404,36 @@
 			<string>控制中心</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>CC_Icon</string>
+			<key>title</key>
+			<string>控制中心图标</string>
+			<key>default</key>
+			<string>camera</string>
+			<key>values</key>
+			<array>
+				<string>camera</string>
+				<string>scissors</string>
+				<string>bolt</string>
+				<string>doc</string>
+				<string>star</string>
+			</array>
+			<key>titles</key>
+			<array>
+				<string>相机</string>
+				<string>剪刀</string>
+				<string>闪电</string>
+				<string>文档</string>
+				<string>星星</string>
+			</array>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
@@ -518,28 +548,6 @@
 			<string>自定义机框文件夹名</string>
 			<key>placeholder</key>
 			<string>与 Frames/ 下的子目录名一致，如 12pro_black</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>开启后，系统「音量+电源键」截图不再弹出系统截图，改为直接拉起「超级截图」浮动菜单（实验性）。不需要时随时关闭即恢复系统原生截图。与「控制中心按钮」互不冲突。</string>
-			<key>label</key>
-			<string>触发方式</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.axs.snapper3zhext.prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.axs.snapper3zhext</string>
-			<key>key</key>
-			<string>Screenshot_Trigger</string>
-			<key>label</key>
-			<string>音量+电源键触发超级截图</string>
 		</dict>
 		<dict>
 			<key>cell</key>
