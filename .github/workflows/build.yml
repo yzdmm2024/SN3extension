@@ -88,6 +88,9 @@ jobs:
           APP_PATH=$(find .theos/obj -name "SN3Companion.app" -type d 2>/dev/null | head -1)
           if [ -z "$APP_PATH" ]; then echo "FATAL: SN3Companion.app not found"; exit 1; fi
           cp -R "$APP_PATH" stage/var/jb/Applications/
+          # theos 不一定把 Info.plist / 图标拷进 .app，手动补齐（幂等，覆盖无害）
+          cp App/Info.plist stage/var/jb/Applications/SN3Companion.app/Info.plist
+          cp App/Icon.png App/Icon@2x.png App/Icon@3x.png stage/var/jb/Applications/SN3Companion.app/
           # 对 app 可执行文件做假签名（theos 一般已签，这里兜底）
           ldid -S stage/var/jb/Applications/SN3Companion.app/SN3Companion 2>/dev/null || true
 
