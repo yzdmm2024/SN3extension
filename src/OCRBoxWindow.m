@@ -50,7 +50,8 @@ static CGRect aspectFitRect(CGSize src, CGRect dst) {
         UIWindow *base = [Common topWindow];
         CGRect b = base.bounds;
         UIWindow *w = [[UIWindow alloc] initWithFrame:b];
-        w.windowLevel = base.windowLevel + 100;
+        // v6.06：抬到 Alert+600（≈2600），稳盖过局部工具栏面板(_panelWin≈2000)，OCR 结果不再被工具栏挡住
+        w.windowLevel = UIWindowLevelAlert + 600;
         w.hidden = NO;
         if (@available(iOS 13.0, *)) {
             UIScene *s = [[UIApplication sharedApplication] connectedScenes].allObjects.firstObject;

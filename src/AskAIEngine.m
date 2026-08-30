@@ -19,6 +19,10 @@
     if (![u hasSuffix:@"/"]) u = [u stringByAppendingString:@"/"];
     u = [u stringByAppendingString:@"chat/completions"];
 
+    // v6.06：密钥/模型也去首尾空白（粘贴时常带换行/空格 → Bearer 令牌格式错误 → 401 "API key format is incorrect"）
+    apiKey = [apiKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    model  = [model stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
     NSURL *url = [NSURL URLWithString:u];
     if (!url) { if (completion) completion(nil, @"AI 接口地址无效"); return; }
 

@@ -68,7 +68,7 @@ static NSDictionary<NSNumber *, NSString *> *kTagNames(void) {
 
     // —— 顶部说明 ——
     _tip = [[UILabel alloc] initWithFrame:CGRectZero];
-    _tip.text = @"点右上角「编辑」拖动排序；每行开关控制该按钮是否在工具栏显示。改动即时生效。";
+    _tip.text = @"点右上角「编辑」拖动排序；每行开关控制按钮是否显示。轻点某行可改它的「显示名称 / 图标(SF Symbol 名)」。改动即时生效。";
     _tip.font = [UIFont systemFontOfSize:13];
     _tip.textColor = [UIColor secondaryLabelColor];
     _tip.numberOfLines = 2;
@@ -139,7 +139,14 @@ static NSDictionary<NSNumber *, NSString *> *kTagNames(void) {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"sn3row"];
     if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"sn3row"];
     NSNumber *t = _order[ip.row];
-    c.textLabel.text = kTagNames()[t] ?: [NSString stringWithFormat:@"按钮 %@", t];
+
+    // v6.06：行文字显示「已自定义的名称」，否则用默认名
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kDomain];
+    NSString *custom = [d stringForKey:[NSString stringWithFormat:@"Toolbar_Name_%ld", (long)t.integerValue]];
+    NSString *display = (custom && custom.length)
+        ? custom
+        : (kTagNames()[t] ?: [NSString stringWithFormat:@"按钮 %@", t]);
+    c.textLabel.text = display;
     c.showsReorderControl = YES;
 
     UISwitch *sw = [[UISwitch alloc] init];
@@ -148,6 +155,57 @@ static NSDictionary<NSNumber *, NSString *> *kTagNames(void) {
     [sw addTarget:self action:@selector(onSwitch:) forControlEvents:UIControlEventValueChanged];
     c.accessoryView = sw;
     return c;
+}
+
+// v6.06：非编辑模式下轻点某行 → 弹窗改「显示名称 / 图标(SF Symbol 名)」
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (tv.editing) return;   // 编辑模式用于排序，不弹窗
+    NSNumber *t = _order[ip.row];
+    [self editCustomForTag:t];
+}
+
+// v6.06：自定义某按钮的名称 / 图标（写 Toolbar_Name_<tag> / Toolbar_Icon_<tag>，与读取端一致）
+- (void)editCustomForTag:(NSNumber *)tag {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kDomain];
+    NSString *defName = kTagNames()[tag] ?: [NSString stringWithFormat:@"按钮 %@", tag];
+    NSString *curName = [d stringForKey:[NSString stringWithFormat:@"Toolbar_Name_%ld", (long)tag.integerValue]] ?: defName;
+    NSString *curIcon = [d stringForKey:[NSString stringWithFormat:@"Toolbar_Icon_%ld", (long)tag.integerValue]] ?: @"";
+
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"自定义名称 / 图标"
+                                                                message:[NSString stringWithFormat:@"按钮「%@」", defName]
+                                                         preferredStyle:UIAlertControllerStyleAlert];
+    [ac addTextFieldWithConfigurationHandler:^(UITextField *tf){
+        tf.placeholder = @"显示名称（留空用默认）";
+        tf.text = curName;
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [ac addTextFieldWithConfigurationHandler:^(UITextField *tf){
+        tf.placeholder = @"SF Symbol 图标名（留空用默认，如 xmark.circle）";
+        tf.text = curIcon;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
+        NSString *nm = [ac.textFields[0].text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *ic = [ac.textFields[1].text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSUserDefaults *dd = [[NSUserDefaults alloc] initWithSuiteName:kDomain];
+        NSString *kNm = [NSString stringWithFormat:@"Toolbar_Name_%ld", (long)tag.integerValue];
+        NSString *kIc = [NSString stringWithFormat:@"Toolbar_Icon_%ld", (long)tag.integerValue];
+        if (nm.length) [dd setObject:nm forKey:kNm]; else [dd removeObjectForKey:kNm];
+        if (ic.length) [dd setObject:ic forKey:kIc]; else [dd removeObjectForKey:kIc];
+        [dd synchronize];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             (CFStringRef)@"com.axs.snapper3zhext.prefsChanged", NULL, NULL, YES);
+        // 刷新本行（显示最新自定义名）
+        NSUInteger idx = [_order indexOfObject:tag];
+        if (idx != NSNotFound) {
+            [self.tv reloadRowsAtIndexPaths:@[ [NSIndexPath indexPathForRow:idx inSection:0] ]
+                           withRowAnimation:UITableViewRowAnimationNone];
+        }
+    }]];
+    [self presentViewController:ac animated:YES completion:nil];
 }
 
 - (void)onSwitch:(UISwitch *)sw {

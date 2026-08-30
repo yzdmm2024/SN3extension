@@ -413,7 +413,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>自定义截图后的工具栏：拖动 ≡ 调整按钮顺序、点开关禁用不需要的按钮，并切换「单排滑动 / 双排」显示模式。</string>
+			<string>自定义截图后的工具栏：点「工具栏排序」进入，拖动 ≡ 调整按钮顺序、点开关禁用不需要的按钮，并切换「单排滑动 / 双排」显示模式。轻点排序页里的某行可改该按钮的「显示名称 / 图标(SF Symbol 名)」。</string>
 			<key>label</key>
 			<string>工具栏</string>
 		</dict>
@@ -461,7 +461,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>选中机型外壳后，点「正常截图」会直接把整屏套上手机壳再存入相册。仅对正常截图生效，局部截图不受影响。</string>
+			<string>选中机型外壳后，点「正常截图」会直接把整屏套上手机壳再存入相册。仅对正常截图生效，局部截图不受影响。
+机框来源：GitHub 仓库 jonnyjackson26/device-frames-media 提供各机型 frame.png + template.json（含屏幕坐标）。
+自定义：用 Filza 在 /var/mobile/Documents/com.axs.snapper3zhext/Frames/&lt;名称&gt;/ 下放 frame.png 和 info.json（=仓库里的 template.json，可加 radius/background 字段），然后本页选「自定义」并填文件夹名即可。</string>
 			<key>label</key>
 			<string>手机壳库</string>
 		</dict>
@@ -499,6 +501,7 @@
 				<string>12pro_blue</string>
 				<string>12pro_silver</string>
 				<string>12pro_gold</string>
+				<string>custom</string>
 			</array>
 			<key>titles</key>
 			<array>
@@ -507,7 +510,90 @@
 				<string>iPhone 12 Pro · 海蓝色</string>
 				<string>iPhone 12 Pro · 银色</string>
 				<string>iPhone 12 Pro · 金色</string>
+				<string>自定义机框（填下方名称）</string>
 			</array>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PhoneCase_CustomName</string>
+			<key>label</key>
+			<string>自定义机框文件夹名</string>
+			<key>placeholder</key>
+			<string>与 Frames/ 下的子目录名一致，如 12pro_black</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>openFrameHelp:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    打开 机框来源/帮助（GitHub，浏览器）</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>开启后，系统「音量+电源键」截图不再弹出系统截图，改为直接拉起「超级截图」浮动菜单（实验性）。不需要时随时关闭即恢复系统原生截图。与「控制中心按钮」互不冲突。</string>
+			<key>label</key>
+			<string>触发方式</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>Screenshot_Trigger</string>
+			<key>label</key>
+			<string>音量+电源键触发超级截图</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>面板顶部实时显示「累计截图次数」。开启「保存截图历史」后，每次截图存一张缩略图到历史（点面板上的「历史」可查看/分享/删除，最多保留下方条数）。历史缩略图存在 /var/mobile/Documents/com.axs.snapper3zhext/History/。</string>
+			<key>label</key>
+			<string>统计与历史</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>History_Enabled</string>
+			<key>label</key>
+			<string>保存截图历史</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>50</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>History_Max</string>
+			<key>label</key>
+			<string>历史保留条数</string>
+			<key>placeholder</key>
+			<string>50</string>
 		</dict>
 	</array>
 	<key>title</key>

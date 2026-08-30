@@ -80,3 +80,41 @@ __attribute__((constructor)) static void xz_ctor() {
         }
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// v6.06：触发方式 —— 音量+电源键 拦截系统截图，改为拉起「超级截图」(实验性, 默认关)
+//
+// 原理：iOS 13–16 的系统截屏（音量+电源）由 BackBoardServices 的 SBScreenShotter
+//       服务执行捕获。我们 %hook 它的 saveScreenshot / saveScreenshotWithOptions:
+//       （iOS 16.5+ 改名带 Options，两个都 hook，运行时只生效存在的那个，另一个安全 no-op）。
+//       当「音量+电源键触发」开关开启、且当前没有超级截图面板时，直接拉起 MaskCropWindow
+//       并 return 跳过 %orig —— 即抑制原生截图，改用超级截图 UI。
+// 风险：实验性。关闭后完全走系统原生截图，不影响其它功能。
+// ────────────────────────────────────────────────────────────────────────
+%hook SBScreenShotter
+
+- (void)saveScreenshot {
+    if ([Common boolPref:XZ_KEY_SS_TRIGGER default:NO] && ![MaskCropWindow isShowing]) {
+        NSLog(@"[SN3] 音量+电源键 已拦截 -> 拉起超级截图");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try { [[MaskCropWindow sharedInstance] show]; }
+            @catch (NSException *e) { NSLog(@"[SN3] show on SS trigger failed: %@", e.reason); }
+        });
+        return; // 抑制原生截图
+    }
+    %orig;
+}
+
+- (void)saveScreenshotWithOptions:(id)options {
+    if ([Common boolPref:XZ_KEY_SS_TRIGGER default:NO] && ![MaskCropWindow isShowing]) {
+        NSLog(@"[SN3] 音量+电源键(opts) 已拦截 -> 拉起超级截图");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try { [[MaskCropWindow sharedInstance] show]; }
+            @catch (NSException *e) { NSLog(@"[SN3] show on SS trigger failed: %@", e.reason); }
+        });
+        return;
+    }
+    %orig;
+}
+
+%end

@@ -42,8 +42,19 @@
 #define XZ_KEY_AI_PROMPT        @"AskAI_Prompt"
 
 // v6.05：手机壳库（仅对「正常截图」生效，局部截图不受影响）
-#define XZ_KEY_PHONE_CASE       @"PhoneCase_Id"      // 选中的手机壳 id（none=不套壳）
+#define XZ_KEY_PHONE_CASE       @"PhoneCase_Id"      // 选中的手机壳 id（none=不套壳；custom:<名称>=自定义机框）
 #define XZ_KEY_PHONE_CASE_ON    @"PhoneCase_AutoOn"  // 正常截图自动套壳开关
+
+// v6.06：触发方式 —— 音量+电源键拦截系统截图，改为拉起超级截图（默认关，实验性）
+#define XZ_KEY_SS_TRIGGER       @"Screenshot_Trigger"
+// v6.06：截图统计 + 历史记录
+#define XZ_KEY_SNAP_COUNT       @"Snap_Count"        // 累计截图次数
+#define XZ_KEY_HISTORY_ENABLED  @"History_Enabled"   // 历史记录开关（默认开）
+#define XZ_KEY_HISTORY_MAX      @"History_Max"       // 历史保留条数（默认 50）
+
+// 自定义资源目录（用户用 Filza 放入；SpringBoard 可调取）
+#define XZ_PHONE_FRAME_DIR  @"/var/mobile/Documents/com.axs.snapper3zhext/Frames"   // 自定义机框：每机型一个子目录(frame.png + info.json)
+#define XZ_HISTORY_DIR       @"/var/mobile/Documents/com.axs.snapper3zhext/History" // 历史截图缩略图
 
 // 长截图：帧间重叠比例（0~0.3），Vision 配准失败时的兜底值
 #define XZ_LONG_OVERLAP_DEFAULT  0.50

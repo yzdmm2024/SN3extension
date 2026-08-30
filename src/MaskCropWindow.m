@@ -29,6 +29,8 @@
 #import "AIChatWindow.h"
 #import "LongShotCapture.h"
 #import "SuperTools.h"
+#import "ResultWindow.h"
+#import "HistoryWindow.h"
 #include <math.h>
 #include <notify.h>
 #import "SN3Notify.h"
@@ -135,6 +137,8 @@ static int SN3_LoopKVOContext = 0;
     // ---- v4.9：面板独立窗口（同步渲染，消除闪现/延迟）----
     XZPassThroughWindow *_panelWin;  // 承载功能面板的独立 UIWindow（抓屏隐藏窗口A时面板不受影响）
     UIViewController *_panelVC;     // 面板窗口的 rootVC（结果弹窗 present 落点）
+    UILabel  *_snapCountLabel;       // v6.06：面板顶部「已截 N 张」标签（实时刷新）
+    BOOL     _showing;               // v6.06：是否正在显示（供音量+电源键钩子去重）
     CGRect          _cropScreenRect; // 当前选区屏幕坐标（后台抓屏裁剪用）
     UIScrollView    *_panelScroll;   // 本地面板循环滑动（delegate 方式，tag=9902）
     UIImage         *_originalCropImage; // 首次裁剪原图，供「还原」用
@@ -171,6 +175,7 @@ static int SN3_LoopKVOContext = 0;
     // 重复点按控制中心：先完整销毁旧窗口，避免叠加泄漏
     if (_win) [self dismiss];
     [[LongShotCapture sharedInstance] reset];
+    _showing = YES;   // v6.06：标记正在显示，供音量+电源键钩子去重
 
     CGRect scr = [UIScreen mainScreen].bounds;
 
@@ -325,6 +330,7 @@ static int SN3_LoopKVOContext = 0;
 }
 
 - (void)dismiss {
+    _showing = NO;    // v6.06：清除显示标记
     _mode = XZMaskModeCrop;
     _drag = XZDragNone;
     _hasCrop = NO;
@@ -1344,17 +1350,18 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     if (!_win) return;
     CGRect scr = [UIScreen mainScreen].bounds;
 
-    // v6.05：图标/文字/间距全面压缩，更紧凑但仍可点（按钮最小约 48pt 宽）
-    CGFloat iconS = 15.0;
-    CGFloat labelH = 11.0;
-    CGFloat rowH  = iconS + labelH + 6.0;   // 紧凑单行高
-    CGFloat rowGap = 6.0;
+    // v6.06：横向间距收紧（更紧凑），但文字不再被压缩——字号回到 12，按钮最小 54 保证 4 字标签完整显示
+    CGFloat iconS = 18.0;
+    CGFloat labelH = 13.0;                    // 标签行高（承载 12pt 文字）
+    CGFloat rowH  = iconS + labelH + 7.0;     // 单行高
+    CGFloat rowGap = 4.0;                     // 横向间距收紧
     CGFloat vPad  = 7.0;
     CGFloat pad   = 8.0;
-    CGFloat closeW = 30.0;                    // 最右侧红色 X 占位（小、不占黑框）
+    CGFloat closeW = 36.0;                    // 最右侧红色关闭（明显、一指可点）
     CGFloat prevW  = 52.0;                    // 左侧预览缩略图宽
+    CGFloat headerH = 16.0;                   // 顶部统计条（已截 N 张 + 历史入口）
     CGFloat panelW = scr.size.width - pad * 2;
-    CGFloat areaW  = panelW - closeW - prevW - 16.0;  // 按钮区可用宽（左留预览、右留关闭）
+    CGFloat areaW  = panelW - closeW - prevW - 16.0;  // 按钮区可用宽（左预览、右关闭、顶统计）
 
     BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
 
@@ -1385,6 +1392,11 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         if (spec) {
             NSMutableDictionary *d = [spec mutableCopy];
             d[@"tag"] = t;
+            // v6.06：工具栏排序页可自定义名称/图标（仅本机生效）
+            NSString *nm = [Common stringPref:[NSString stringWithFormat:@"Toolbar_Name_%ld", (long)t.integerValue] default:@""];
+            if (nm.length) d[@"label"] = nm;
+            NSString *ic = [Common stringPref:[NSString stringWithFormat:@"Toolbar_Icon_%ld", (long)t.integerValue] default:@""];
+            if (ic.length) d[@"icon"] = ic;
             [all addObject:d];
         }
     }
@@ -1392,7 +1404,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 
     NSInteger kCols = 5;
     NSInteger rows = singleRow ? 1 : (NSInteger)ceil((double)all.count / (double)kCols);
-    CGFloat panelH = vPad * 2 + rowH * rows + rowGap * MAX(0, rows - 1);
+    CGFloat panelH = headerH + vPad * 2 + rowH * rows + rowGap * MAX(0, rows - 1);
 
     // 复用 _panelWin：移除旧面板/旧滚动视图
     if (_localPanel) { [_localPanel removeFromSuperview]; _localPanel = nil; }
@@ -1420,6 +1432,23 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     panel.userInteractionEnabled = YES;
     _localPanel = panel;
 
+    // v6.06：顶部统计条 —— 已截 N 张 + 历史入口（点「历史」看截图记录）
+    UILabel *hdr = [[UILabel alloc] initWithFrame:CGRectMake(10, 1, panelW - 80, headerH - 2)];
+    hdr.text = [NSString stringWithFormat:@"已截 %ld 张", (long)[Common intPref:XZ_KEY_SNAP_COUNT default:0]];
+    hdr.textColor = [UIColor colorWithWhite:1 alpha:0.88];
+    hdr.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    hdr.userInteractionEnabled = NO;
+    _snapCountLabel = hdr;
+    [panel addSubview:hdr];
+
+    UIButton *histBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    histBtn.frame = CGRectMake(panelW - 72, 0, 64, headerH);
+    [histBtn setTitle:@"历史" forState:UIControlStateNormal];
+    histBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [histBtn setTitleColor:[UIColor systemYellowColor] forState:UIControlStateNormal];
+    [histBtn addTarget:self action:@selector(openHistory) forControlEvents:UIControlEventTouchUpInside];
+    [panel addSubview:histBtn];
+
     // 左侧预览缩略图：显示当前裁剪图，旋转/还原/压缩后实时更新（让操作看得见）
     if (!_previewIV) {
         _previewIV = [[UIImageView alloc] init];
@@ -1430,21 +1459,22 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         _previewIV.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.25].CGColor;
         _previewIV.userInteractionEnabled = NO;
     }
-    CGFloat prevH = panelH - vPad * 2;
-    _previewIV.frame = CGRectMake(8, vPad, prevW, prevH);
+    CGFloat contentTop = headerH;
+    CGFloat prevH = panelH - contentTop - vPad * 2;
+    _previewIV.frame = CGRectMake(8, contentTop + vPad, prevW, prevH);
     [panel addSubview:_previewIV];
 
     CGFloat btnAreaX = 8 + prevW + 8;   // 按钮区起点（预览右侧）
-    CGFloat bw, gap = 6.0;
+    CGFloat bw, gap = 4.0;
     if (singleRow) {
         // 单排 + 横向循环滑动（3 组首尾相接，越界无感回绕）
-        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(btnAreaX, vPad, areaW, rowH)];
+        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(btnAreaX, contentTop + vPad, areaW, rowH)];
         sv.showsHorizontalScrollIndicator = NO;
         sv.alwaysBounceHorizontal = YES;
         sv.delegate = self;
         sv.tag = 9902;                 // 本地面板循环滑动标记
         [panel addSubview:sv];
-        bw = 52.0;
+        bw = 54.0;
         CGFloat stride = (bw + gap) * (CGFloat)all.count;
         for (int copy = 0; copy < 3; copy++) {
             CGFloat x = (CGFloat)copy * stride + 6.0;
@@ -1462,21 +1492,24 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     } else {
         // 双排：每行 5 个自动折行（左侧留预览、右侧留关闭）
         bw = (areaW - gap * (kCols - 1)) / (CGFloat)kCols;
-        if (bw < 48.0) bw = 48.0;     // 保证最小可点
+        if (bw < 54.0) bw = 54.0;     // 保证最小可点 + 4 字标签完整显示
         for (NSInteger i = 0; i < (NSInteger)all.count; i++) {
             NSInteger r = i / kCols, c = i % kCols;
             UIButton *b = [self makeLocalButton:all[i] iconSize:iconS labelH:labelH width:bw];
-            b.frame = CGRectMake(btnAreaX + c * (bw + gap), vPad + r * (rowH + rowGap), bw, rowH);
+            b.frame = CGRectMake(btnAreaX + c * (bw + gap), contentTop + vPad + r * (rowH + rowGap), bw, rowH);
             [panel addSubview:b];
         }
     }
 
-    // 最右侧固定红色 X 关闭（小、跟随工具栏右沿、一指可点）
+    // 最右侧固定红色关闭（明显可点：淡红圆底 + 红色 X，跟随工具栏右沿）
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(panelW - closeW, y + (panelH - 34) / 2.0, closeW - 2, 34);
+    CGFloat ch = 34;
+    close.frame = CGRectMake(panelW - closeW, y + (panelH - ch) / 2.0, closeW, ch);
     [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
     close.tintColor = [UIColor systemRedColor];
-    close.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    close.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    close.backgroundColor = [UIColor colorWithRed:1.0 green:0.25 blue:0.25 alpha:0.20];
+    close.layer.cornerRadius = ch / 2.0;
     [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
     [_panelWin addSubview:close];
     [_panelWin addInteractiveView:close];
@@ -1493,6 +1526,65 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 // v6.05：把当前裁剪图刷新到左侧预览缩略图
 - (void)updateLocalPreview {
     if (_previewIV) _previewIV.image = _cropImage;
+}
+
+#pragma mark - v6.06：截图统计 + 历史记录
+
++ (BOOL)isShowing {
+    return ((MaskCropWindow *)[self sharedInstance])._showing;
+}
+
+- (void)openHistory {
+    [HistoryWindow show];
+}
+
+// 把一张截图写入历史目录（缩略图），并裁剪到上限条数
+- (void)saveHistoryThumb:(UIImage *)image {
+    if (![Common boolPref:XZ_KEY_HISTORY_ENABLED default:YES]) return;
+    if (!image) return;
+    @try {
+        NSString *dir = XZ_HISTORY_DIR;
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        // 缩略图：长边缩到 360
+        CGFloat maxSide = 360.0 * (image.scale > 0 ? image.scale : 1.0);
+        CGFloat w = image.size.width, h = image.size.height;
+        CGFloat scale = MIN(1.0, maxSide / MAX(w, h));
+        CGSize ts = CGSizeMake(w * scale, h * scale);
+        UIGraphicsBeginImageContextWithOptions(ts, NO, 1.0);
+        [image drawInRect:CGRectMake(0, 0, ts.width, ts.height)];
+        UIImage *thumb = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        if (!thumb) return;
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        df.dateFormat = @"yyyyMMdd_HHmmss";
+        NSString *name = [NSString stringWithFormat:@"%@.jpg", [df stringFromDate:[NSDate date]]];
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        [UIImageJPEGRepresentation(thumb, 0.8) writeToFile:path atomically:YES];
+
+        // 裁剪到上限：保留最新 N 张
+        NSInteger maxN = [Common intPref:XZ_KEY_HISTORY_MAX default:50];
+        if (maxN < 1) maxN = 1;
+        NSArray *files = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil]
+                           sortedArrayUsingSelector:@selector(compare:)];
+        files = [files filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self ENDSWITH '.jpg'"]];
+        if ((NSInteger)files.count > maxN) {
+            for (NSInteger i = 0; i < (NSInteger)files.count - maxN; i++) {
+                NSString *old = [dir stringByAppendingPathComponent:files[i]];
+                [[NSFileManager defaultManager] removeItemAtPath:old error:nil];
+            }
+        }
+    } @catch (NSException *e) { NSLog(@"[SN3] save history failed: %@", e.reason); }
+}
+
+// 记录一次截图：计数 +1，并写入历史缩略图，刷新面板顶部计数
+- (void)recordSnap:(UIImage *)image {
+    NSInteger n = [Common intPref:XZ_KEY_SNAP_COUNT default:0] + 1;
+    [Common setPref:XZ_KEY_SNAP_COUNT value:@(n)];
+    [self saveHistoryThumb:image];
+    if (_snapCountLabel) {
+        _snapCountLabel.text = [NSString stringWithFormat:@"已截 %ld 张", (long)n];
+    }
 }
 
 // 与 EditToolbarWindow.resolveEnabledTags 同算法：读「工具栏排序」+ 禁用集合，返回启用按钮 tag 顺序
@@ -1568,11 +1660,14 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     iv.userInteractionEnabled = NO;
     [b addSubview:iv];
 
-    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 6 + iconS + 2, bw, labelH)];
+    UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(0, 6 + iconS + 1, bw, labelH)];
     lb.text = spec[@"label"];
     lb.textColor = [UIColor whiteColor];
-    lb.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+    lb.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];   // v6.06：回到 12pt，默认名不再被压缩
     lb.textAlignment = NSTextAlignmentCenter;
+    lb.adjustsFontSizeToFitWidth = YES;        // 仅当名字过长(自定义)才缩放，默认名保持 12pt
+    lb.minimumScaleFactor = 0.6;
+    lb.lineBreakMode = NSLineBreakByClipping;
     lb.userInteractionEnabled = NO;
     [b addSubview:lb];
 
@@ -1630,14 +1725,17 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [SuperTools floating:img withScreenRect:_cropRect];
         [self dismiss];
     } else if (tag == XZLocalSave) {
+        [self recordSnap:img];
         [SuperTools save:img completion:^(BOOL ok) {
             [Common toast: ok ? @"已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
             [self dismiss];
         }];
     } else if (tag == XZLocalShare) {
         // v5.22：分享面板也是 UIKit 弹窗, 同样不能用穿透窗口
+        [self recordSnap:img];
         [SuperTools share:img fromWindow:_win];
     } else if (tag == XZLocalPDF) {       // v6.05：加壳已移出局部工具栏，改为「手机壳库」设置，仅作用于正常截图
+        [self recordSnap:img];
         NSString *p = [SuperTools exportPDF:img];
         if (p) {
             NSURL *url = [NSURL fileURLWithPath:p];
@@ -1702,63 +1800,22 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 
 - (void)presentLocalText:(NSString *)text title:(NSString *)title {
     if (!text || text.length == 0) { [Common toast:@"没有识别到文字"]; return; }
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:title
-                                                               message:text
-                                                        preferredStyle:UIAlertControllerStyleAlert];
-    [ac addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [UIPasteboard generalPasteboard].string = text;
-        [Common toast:@"已复制文本"];
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    // v5.22：必须挂到 _win（不穿透），不能用 _panelWin（hit-test 穿透 → 弹窗按钮点不动）
-    [Common present:ac fromWindow:_win];
+    // v6.06：改用 ResultWindow（层级 Alert+600），稳盖过工具栏面板，不再被挡住
+    [ResultWindow showWithTitle:title text:text image:nil];
 }
 
 - (void)presentLocalTranslate:(NSString *)src dst:(NSString *)dst err:(NSString *)err {
-    if (err && err.length) {
-        UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"翻译失败"
-                                                                   message:err
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
-        // v5.22：同上, _panelWin 是穿透窗口, 弹窗挂上去按钮会被穿到下层 App
-        [Common present:ac fromWindow:_win];
-        return;
-    }
+    if (err && err.length) { [ResultWindow showWithTitle:@"翻译失败" text:err image:nil]; return; }
     if (!dst || dst.length == 0) { [Common toast:@"翻译失败"]; return; }
     NSString *msg = [NSString stringWithFormat:@"原文：\n%@\n\n译文：\n%@", src ?: @"", dst ?: @""];
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"翻译结果"
-                                                               message:msg
-                                                        preferredStyle:UIAlertControllerStyleAlert];
-    [ac addAction:[UIAlertAction actionWithTitle:@"复制译文" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [UIPasteboard generalPasteboard].string = dst;
-        [Common toast:@"已复制译文"];
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"复制原文" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [UIPasteboard generalPasteboard].string = src ?: @"";
-        [Common toast:@"已复制原文"];
-    }]];
-    [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    [Common present:ac fromWindow:_win];
+    // v6.06：改用 ResultWindow（层级 Alert+600），稳盖过工具栏面板，不再被挡住
+    [ResultWindow showWithTitle:@"翻译结果" text:msg image:nil];
 }
 
 - (void)presentLocalCode:(NSString *)code {
     if (!code || code.length == 0) { [Common toast:@"未识别到二维码"]; return; }
-    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"识别结果"
-                                                               message:code
-                                                        preferredStyle:UIAlertControllerStyleAlert];
-    [ac addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [UIPasteboard generalPasteboard].string = code;
-        [Common toast:@"已复制"];
-    }]];
-    NSURL *url = [NSURL URLWithString:code];
-    if (url && ([[code lowercaseString] hasPrefix:@"http://"] || [[code lowercaseString] hasPrefix:@"https://"])) {
-        [ac addAction:[UIAlertAction actionWithTitle:@"用 Safari 打开" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
-        }]];
-    }
-    [ac addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-    // v5.22：弹窗宿主统一用 _win, _panelWin 穿透会吞掉按钮 touch
-    [Common present:ac fromWindow:_win];
+    // v6.06：改用 ResultWindow（层级 Alert+600），稳盖过工具栏面板，不再被挡住
+    [ResultWindow showWithTitle:@"识别结果" text:code image:nil];
 }
 
 // 正常截图：整屏 → 保存到相册「SN3截图」→ 直接结束（不弹编辑，仿原生）
@@ -1783,6 +1840,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         }
         [ImageUtils saveToCustomAlbum:screen completion:^(BOOL ok, NSError *e) {
             [Common toast: ok ? @"已截图，已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
+            if (ok) [self recordSnap:screen];   // v6.06：正常截图也计入统计 + 历史
         }];
     });
 }

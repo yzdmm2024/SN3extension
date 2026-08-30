@@ -190,6 +190,12 @@
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
+// v6.06：打开「机框来源/帮助」GitHub 仓库（device-frames-media，提供各机型 frame.png + template.json）
+- (void)openFrameHelp:(PSSpecifier *)spec {
+    NSURL *u = [NSURL URLWithString:@"https://github.com/jonnyjackson26/device-frames-media"];
+    if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+}
+
 // v5.25.0: PSButtonCell 打开外部链接 (替代 PSLinkCell+detail=类名, 那个写法会让 iOS 14+ PSListController
 // 找不到 plist 文件而抛错, 整个 prefs bundle 被标记为损坏, 进设置报「未能载入软件包」).
 - (void)openBigModelAPIPage:(PSSpecifier *)spec {

@@ -7,6 +7,11 @@
 #import <Photos/Photos.h>
 #import <dlfcn.h>
 
+// v6.06：自定义机框支持（用户用 Filza 把机框 PNG + info.json 放进 XZ_PHONE_FRAME_DIR/<名称>/）
+@interface ImageUtils ()
++ (UIImage *)applyCustomPhoneFrame:(UIImage *)image customName:(NSString *)name;
+@end
+
 @implementation ImageUtils
 
 #pragma mark - 截屏
@@ -274,8 +279,27 @@
 
 // v6.05：按机型外壳参数把整屏截图套进透明「屏幕窗」，再在四周绘制手机中框 + 刘海。
 //       仅对「正常截图」生效（captureFullScreenAndSave 调用），局部截图不走这里。
+// v6.06：支持「自定义机框」——Root.plist 的 PSMultiValue 选「自定义」时 caseId=@"custom"，
+//       这里实时读 PhoneCase_CustomName 展开成 custom:<名称>；直接传 custom:<名称> 也能用。
 + (UIImage *)applyPhoneFrame:(UIImage *)image caseId:(NSString *)caseId {
     if (!image || !image.CGImage) return image;
+
+    // —— v6.06：展开「自定义」哨兵 ——
+    if ([caseId isEqualToString:@"custom"]) {
+        NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+        NSString *nm = [d stringForKey:@"PhoneCase_CustomName"];
+        nm = [nm stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!nm.length) return image;            // 选了自定义但没填名称 → 不套壳
+        caseId = [@"custom:" stringByAppendingString:nm];
+    }
+    if ([caseId hasPrefix:@"custom:"]) {
+        NSString *name = [caseId substringFromIndex:7];
+        UIImage *out = [self applyCustomPhoneFrame:image customName:name];
+        if (out) return out;
+        NSLog(@"[SN3] custom frame '%@' load failed, fallback to original", name);
+        return image;
+    }
+
     NSDictionary *p = [self phoneCaseParams:caseId];
     if (!p) return image;                         // none / 未知 → 原图返回（不套壳）
     CGFloat bezel   = [p[@"bezel"] floatValue];   // 中框厚度（点）
@@ -335,6 +359,104 @@
         return @{@"bezel":@26.0, @"screenR":@47.0, @"color":[UIColor colorWithRed:0.85 green:0.86 blue:0.88 alpha:1], @"notch":@YES};
     if ([caseId isEqualToString:@"12pro_gold"])
         return @{@"bezel":@26.0, @"screenR":@47.0, @"color":[UIColor colorWithRed:0.92 green:0.86 blue:0.76 alpha:1], @"notch":@YES};
+    return nil;
+}
+
+// v6.06：自定义机框 —— 用户用 Filza 把机框 PNG + info.json 放进
+//   /var/mobile/Documents/com.axs.snapper3zhext/Frames/<名称>/
+// info.json 结构（坐标单位 = frame.png 的像素，推荐导出 1x 或 2x；iOS 加载 data 默认 scale=1）：
+//   {
+//     "screen":    {"x":60,"y":60,"width":1080,"height":2340},  // 截图在机框 PNG 里的位置/尺寸
+//     "frameSize": {"width":1200,"height":2460},                // 机框 PNG 尺寸（仅校验用）
+//     "radius":    47,                                          // 屏幕圆角(可选,默认0)
+//     "background": "#000000"                                    // 屏幕区底色(可选,默认黑)
+//   }
+// 截图会以 aspect-fill 填进 screen 区域（居中、超出裁切，保证铺满），再叠在机框之上。
++ (UIImage *)applyCustomPhoneFrame:(UIImage *)image customName:(NSString *)name {
+    if (!name.length) return nil;
+    NSString *dir = [XZ_PHONE_FRAME_DIR stringByAppendingPathComponent:name];
+    NSString *framePath = [dir stringByAppendingPathComponent:@"frame.png"];
+    NSString *infoPath  = [dir stringByAppendingPathComponent:@"info.json"];
+
+    NSData *frameData = [NSData dataWithContentsOfFile:framePath];
+    if (!frameData) { NSLog(@"[SN3] custom frame missing png: %@", framePath); return nil; }
+    UIImage *frame = [UIImage imageWithData:frameData];
+    if (!frame || !frame.CGImage) { NSLog(@"[SN3] custom frame bad png: %@", framePath); return nil; }
+
+    NSData *infoData = [NSData dataWithContentsOfFile:infoPath];
+    if (!infoData) { NSLog(@"[SN3] custom frame missing info.json: %@", infoPath); return nil; }
+    NSError *je = nil;
+    NSDictionary *info = [NSJSONSerialization JSONObjectWithData:infoData options:0 error:&je];
+    if (!info || je) { NSLog(@"[SN3] custom frame info.json parse err: %@", je.localizedDescription); return nil; }
+
+    NSDictionary *sc = info[@"screen"];
+    if (!sc || ![sc isKindOfClass:[NSDictionary class]]) { NSLog(@"[SN3] custom frame info.json 缺 screen"); return nil; }
+    CGFloat sx = [sc[@"x"] floatValue], sy = [sc[@"y"] floatValue];
+    CGFloat sw = [sc[@"width"] floatValue], sh = [sc[@"height"] floatValue];
+    if (sw <= 0 || sh <= 0) { NSLog(@"[SN3] custom frame screen 尺寸非法"); return nil; }
+    CGFloat radius = [info[@"radius"] floatValue];          // 0 = 不圆角
+
+    CGFloat scale = frame.scale > 0 ? frame.scale : 1.0;
+    CGSize canvas = CGSizeMake(frame.size.width * scale, frame.size.height * scale);
+
+    UIGraphicsBeginImageContextWithOptions(canvas, NO, 1.0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+
+    // 1) 机框本体
+    [frame drawInRect:CGRectMake(0, 0, canvas.width, canvas.height)];
+
+    // 2) 截图塞进 screen 区域
+    CGRect screenRect = CGRectMake(sx * scale, sy * scale, sw * scale, sh * scale);
+    if (radius > 0) {
+        UIBezierPath *clip = [UIBezierPath bezierPathWithRoundedRect:screenRect
+                                                        cornerRadius:radius * scale];
+        [clip addClip];
+    }
+    // 屏幕区底色（防止截图透明处露白）
+    if (info[@"background"]) {
+        NSString *hex = info[@"background"];
+        UIColor *bg = [self _colorFromHex:hex] ?: [UIColor blackColor];
+        [bg setFill];
+        CGContextFillRect(ctx, screenRect);
+    } else {
+        [[UIColor blackColor] setFill];
+        CGContextFillRect(ctx, screenRect);
+    }
+    // aspect-fill：以 screen 区域为画布，居中填满
+    CGFloat ir = image.size.width / image.size.height;
+    CGFloat sr = screenRect.size.width / screenRect.size.height;
+    CGRect drawRect;
+    if (ir > sr) {
+        CGFloat w = screenRect.size.height * ir;
+        drawRect = CGRectMake(screenRect.origin.x + (screenRect.size.width - w) / 2.0,
+                              screenRect.origin.y, w, screenRect.size.height);
+    } else {
+        CGFloat h = screenRect.size.width / ir;
+        drawRect = CGRectMake(screenRect.origin.x,
+                              screenRect.origin.y + (screenRect.size.height - h) / 2.0,
+                              screenRect.size.width, h);
+    }
+    [image drawInRect:drawRect];
+
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result ?: image;
+}
+
+// v6.06：#RRGGBB / #RRGGBBAA 解析（自定义机框 info.json 的 background 字段用）
++ (UIColor *)_colorFromHex:(NSString *)hex {
+    if (!hex.length) return nil;
+    NSString *s = [hex stringByReplacingOccurrencesOfString:@"#" withString:@""];
+    if (s.length == 6 || s.length == 8) {
+        unsigned int v = 0;
+        [[NSScanner scannerWithString:s] scanHexInt:&v];
+        if (s.length == 6) return [UIColor colorWithRed:((v>>16)&0xFF)/255.0
+                                                  green:((v>>8)&0xFF)/255.0
+                                                   blue:(v&0xFF)/255.0 alpha:1.0];
+        return [UIColor colorWithRed:((v>>24)&0xFF)/255.0
+                                green:((v>>16)&0xFF)/255.0
+                                 blue:((v>>8)&0xFF)/255.0 alpha:(v&0xFF)/255.0];
+    }
     return nil;
 }
 
