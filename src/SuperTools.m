@@ -20,6 +20,15 @@
 #import "Common.h"
 #import "AskAIEngine.h"   // v5.17：大模型OCR（OpenAI 兼容，AI Studio/Doubao 等免费）
 #import "ImageUtils.h"
+
+// 私有方法声明（PaddleOCR 异步任务协议辅助）
+@interface SuperTools ()
++ (void)_ppocrJobsSubmitURL:(NSURL *)u token:(NSString *)token model:(NSString *)model jpeg:(NSData *)jpeg attempt:(NSInteger)attempt completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrJobsPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token attempt:(NSInteger)attempt completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrFetchResult:(NSString *)jsonl completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
++ (void)_ppocrSyncWithURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion;
+@end
+
 #import <Vision/Vision.h>
 #import <PDFKit/PDFKit.h>
 #import <Photos/Photos.h>
@@ -216,14 +225,19 @@ static CGRect XZRectFromValue(id v) {
 
 #pragma mark - v6.11 内置百度 PaddleOCR（AI Studio 免费版，独立通道）
 
-// AI Studio PaddleOCR（aistudio.baidu.com/paddleocr/task）：
-//   - 鉴权：API_URL（页面给的接口地址）+ Token（请求头 Authorization: token <TOKEN>）
-//   - 请求：POST API_URL，Content-Type: application/json，body {"file":<base64>,"fileType":1}
-//   - 返回：{"errorCode":0,"result":{"ocrResults":[{"prunedResult":{"rec_texts":[...],"rec_scores":[...]}}]}}
+// AI Studio PaddleOCR 有两种接口形态：
+//   1) v2 异步任务接口（用户实际用的，URL 含 /api/v2/ocr/jobs）：
+//        POST multipart/form-data（字段 model + optionalPayload(JSON串) + 文件 part 名 file）
+//        → 取 data.jobId → GET /{jobId} 轮询到 state=done → 取 data.resultUrl.jsonUrl(JSONL)
+//        → 每行 {"result":{"ocrResults":[{"prunedResult":{"rec_texts":[...]}}]}}
+//        鉴权：Authorization: Bearer <TOKEN>
+//   2) 同步接口（其它老地址，兜底）：POST JSON {"file":b64,"fileType":1}，直接回 result。
+// 文字最终都在 result.ocrResults[].prunedResult.rec_texts。
 + (void)ocrViaPPOCR:(UIImage *)image
          completion:(void (^)(NSArray<NSDictionary *> *items, NSString *err))completion {
     NSString *apiURL = [Common stringPref:XZ_KEY_PPOCR_URL default:@""];
     NSString *token  = [Common stringPref:XZ_KEY_PPOCR_TOKEN default:@""];
+    NSString *model  = [Common stringPref:XZ_KEY_PPOCR_MODEL default:@"PP-OCRv6"];
     if (!apiURL.length || !token.length) {
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -249,24 +263,201 @@ static CGRect XZRectFromValue(id v) {
         }
         return;
     }
-    NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
-    // v6.13：兼容两种 AI Studio 接口（按 host 区分请求体）
-    //   xxxx.aistudio-app.com/ocr        → {"file":b64,"fileType":1}
-    //   xxxx.aistudio-hub.baidu.com/ocr  → {"image":b64}
-    BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
-    NSDictionary *body = isHub ? @{ @"image": b64 } : @{ @"file": b64, @"fileType": @1 };
-    NSError *je = nil;
-    NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:&je];
-    if (!json) {
-        if (completion) {
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, @"请求体构造失败"); });
+    // v6.15：优先走 v2 异步任务接口；其它地址走同步兜底
+    BOOL isJobs = [[u.path lowercaseString] containsString:@"/api/v2/ocr/jobs"];
+    if (isJobs) {
+        [self _ppocrJobsSubmitURL:u token:token model:model jpeg:jpeg attempt:0 completion:completion];
+    } else {
+        [self _ppocrSyncWithURL:u token:token jpeg:jpeg completion:completion];
+    }
+}
+
+// —— v2 异步任务：提交（multipart），队列满则重试 ——
++ (void)_ppocrJobsSubmitURL:(NSURL *)u token:(NSString *)token model:(NSString *)model
+                        jpeg:(NSData *)jpeg attempt:(NSInteger)attempt
+                   completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
+    NSString *boundary = @"----SN3PaddleOCRBoundary7Q2k9X";
+    NSMutableData *body = [NSMutableData data];
+    void (^appendField)(NSString *, NSString *) = ^(NSString *name, NSString *value) {
+        [body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", name] dataUsingEncoding:NSUTF8StringEncoding]];
+        [body appendData:[value dataUsingEncoding:NSUTF8StringEncoding]];
+        [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    };
+    appendField(@"model", model);
+    appendField(@"optionalPayload", @"{\"useDocOrientationClassify\":false,\"useDocUnwarping\":false,\"useTextlineOrientation\":false}");
+    [body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[@"Content-Disposition: form-data; name=\"file\"; filename=\"image.jpg\"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[@"Content-Type: image/jpeg\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:jpeg];
+    [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[[NSString stringWithFormat:@"--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:u];
+    [req setHTTPMethod:@"POST"];
+    [req setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary] forHTTPHeaderField:@"Content-Type"];
+    [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+    [req setHTTPBody:body];
+    [req setTimeoutInterval:40];
+
+    NSURLSession *sess = [NSURLSession sharedSession];
+    [[sess dataTaskWithRequest:req completionHandler:^(NSData *od, NSURLResponse *r, NSError *oe) {
+        if (oe) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"百度 PaddleOCR 提交失败：%@", oe.localizedDescription]);
+            });
+            return;
         }
+        id oj = [NSJSONSerialization JSONObjectWithData:od options:0 error:nil];
+        if (![oj isKindOfClass:[NSDictionary class]]) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"百度 PaddleOCR 返回非 JSON（API_URL 可能不正确）");
+            });
+            return;
+        }
+        NSNumber *code = oj[@"code"];
+        if (code && code.integerValue != 0) {
+            NSString *msg = oj[@"msg"] ?: @"未知错误";
+            // 队列已满 → 重试（最多 4 次，间隔 3s）
+            if (code.integerValue == 10010 && attempt < 4) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
+                               dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                    [self _ppocrJobsSubmitURL:u token:token model:model jpeg:jpeg attempt:attempt+1 completion:completion];
+                });
+                return;
+            }
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"百度 PaddleOCR 错误(%@)：%@", code, msg]);
+            });
+            return;
+        }
+        NSString *jobId = oj[@"data"][@"jobId"];
+        if (![jobId isKindOfClass:[NSString class]] || !jobId.length) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"百度 PaddleOCR 未返回任务 ID");
+            });
+            return;
+        }
+        [self _ppocrJobsPollJob:jobId baseURL:u token:token attempt:0 completion:completion];
+    }] resume];
+}
+
+// —— v2 异步任务：轮询直到 done / failed / 超时 ——
++ (void)_ppocrJobsPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token
+                  attempt:(NSInteger)attempt
+               completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
+    if (attempt > 40) { // 40*2s = 80s 超时
+        if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+            completion(nil, @"百度 PaddleOCR 任务轮询超时（服务器繁忙，请稍后重试）");
+        });
         return;
     }
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/%@", [u absoluteString], jobId]];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    [req setHTTPMethod:@"GET"];
+    [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+    [req setTimeoutInterval:30];
+    NSURLSession *sess = [NSURLSession sharedSession];
+    [[sess dataTaskWithRequest:req completionHandler:^(NSData *od, NSURLResponse *r, NSError *oe) {
+        if (oe) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"百度 PaddleOCR 轮询失败：%@", oe.localizedDescription]);
+            });
+            return;
+        }
+        id oj = [NSJSONSerialization JSONObjectWithData:od options:0 error:nil];
+        if (![oj isKindOfClass:[NSDictionary class]]) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"百度 PaddleOCR 轮询返回异常");
+            });
+            return;
+        }
+        NSDictionary *data = oj[@"data"];
+        NSString *state = [data isKindOfClass:[NSDictionary class]] ? data[@"state"] : nil;
+        if ([state isEqualToString:@"done"]) {
+            NSString *jsonl = data[@"resultUrl"][@"jsonUrl"];
+            if ([jsonl isKindOfClass:[NSString class]] && jsonl.length) {
+                [self _ppocrFetchResult:jsonl completion:completion];
+            } else {
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, @"百度 PaddleOCR 任务完成但未返回结果地址");
+                });
+            }
+        } else if ([state isEqualToString:@"failed"]) {
+            NSString *em = data[@"errorMsg"] ?: @"任务失败";
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"百度 PaddleOCR 识别失败：%@", em]);
+            });
+        } else { // pending / running → 继续轮询
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                           dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                [self _ppocrJobsPollJob:jobId baseURL:u token:token attempt:attempt+1 completion:completion];
+            });
+        }
+    }] resume];
+}
+
+// —— v2 异步任务：取 JSONL 结果并解析文字 ——
++ (void)_ppocrFetchResult:(NSString *)jsonl
+               completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
+    NSURL *url = [NSURL URLWithString:jsonl];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    [req setHTTPMethod:@"GET"];
+    [req setTimeoutInterval:40];
+    // 注意：jsonl 是带 bce-auth 的 BOS 短链，不要再带 AI Studio token
+    NSURLSession *sess = [NSURLSession sharedSession];
+    [[sess dataTaskWithRequest:req completionHandler:^(NSData *od, NSURLResponse *r, NSError *oe) {
+        if (oe) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"百度 PaddleOCR 结果下载失败：%@", oe.localizedDescription]);
+            });
+            return;
+        }
+        NSString *text = [[NSString alloc] initWithData:od encoding:NSUTF8StringEncoding];
+        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+        for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+            NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (!t.length) continue;
+            id oj = [NSJSONSerialization JSONObjectWithData:[t dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+            if (![oj isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *res = oj[@"result"];
+            if (![res isKindOfClass:[NSDictionary class]]) continue;
+            NSArray *ocrResults = res[@"ocrResults"];
+            if (![ocrResults isKindOfClass:[NSArray class]]) continue;
+            for (NSDictionary *rr in ocrResults) {
+                if (![rr isKindOfClass:[NSDictionary class]]) continue;
+                NSDictionary *pr = rr[@"prunedResult"];
+                if (![pr isKindOfClass:[NSDictionary class]]) continue;
+                NSArray *texts = pr[@"rec_texts"];
+                if (![texts isKindOfClass:[NSArray class]]) continue;
+                for (id x in texts) {
+                    if ([x isKindOfClass:[NSString class]] && [x length]) {
+                        [items addObject:@{ @"text": x, @"box": [NSValue valueWithCGRect:CGRectZero] }];
+                    }
+                }
+            }
+        }
+        if (!items.count) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"百度 PaddleOCR 未识别到任何文字");
+            });
+            return;
+        }
+        if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(items, nil); });
+    }] resume];
+}
+
+// —— 同步接口兜底（非 /api/v2/ocr/jobs 的其它地址）——
++ (void)_ppocrSyncWithURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg
+               completion:(void (^)(NSArray<NSDictionary *> *, NSString *))completion {
+    NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
+    BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
+    NSDictionary *body = isHub ? @{ @"image": b64 } : @{ @"file": b64, @"fileType": @1 };
+    NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:u];
     [req setHTTPMethod:@"POST"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [req setValue:[@"token " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+    [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
     [req setHTTPBody:json];
     [req setTimeoutInterval:30];
     NSURLSession *sess = [NSURLSession sharedSession];
@@ -277,8 +468,7 @@ static CGRect XZRectFromValue(id v) {
             });
             return;
         }
-        NSError *pe = nil;
-        id oj = [NSJSONSerialization JSONObjectWithData:od options:0 error:&pe];
+        id oj = [NSJSONSerialization JSONObjectWithData:od options:0 error:nil];
         if (![oj isKindOfClass:[NSDictionary class]]) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{
                 completion(nil, @"百度 PaddleOCR 返回非 JSON 数据（API_URL 可能不正确）");
@@ -304,15 +494,14 @@ static CGRect XZRectFromValue(id v) {
                     NSDictionary *pr = r[@"prunedResult"];
                     if ([pr isKindOfClass:[NSDictionary class]]) texts = pr[@"rec_texts"];
                     if (![texts isKindOfClass:[NSArray class]]) texts = r[@"rec_texts"];
-                    [raw addObjectsFromArray:[self _sn3FlattenTexts:texts]];
+                    if ([texts isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:texts];
                 }
             }
-            if (!raw.count) [raw addObjectsFromArray:[self _sn3FlattenTexts:res[@"texts"]]];
-            if (!raw.count) [raw addObjectsFromArray:[self _sn3FlattenTexts:res[@"rec_texts"]]];
+            if (!raw.count && [res[@"texts"] isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:res[@"texts"]];
         }
         NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
         for (NSString *t in raw) {
-            if (t.length) [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:CGRectZero] }];
+            if ([t isKindOfClass:[NSString class]] && t.length) [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:CGRectZero] }];
         }
         if (!items.count) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{

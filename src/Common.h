@@ -69,6 +69,7 @@
 #define XZ_KEY_PPOCR_ON    @"PPOCR_Enabled"   // 是否启用内置 PaddleOCR（默认关）
 #define XZ_KEY_PPOCR_URL   @"PPOCR_APIURL"    // AI Studio PaddleOCR 的 API_URL（从 paddleocr/task 页面复制）
 #define XZ_KEY_PPOCR_TOKEN @"PPOCR_Token"     // AI Studio Access Token
+#define XZ_KEY_PPOCR_MODEL @"PPOCR_Model"     // PaddleOCR 模型名（默认 PP-OCRv6；亦可填 PP-OCRv5 等）
 #define XZ_PPOCR_SENTINEL  @"__paddleocr__"   // 识别引擎选择器里「内置 PaddleOCR」选中的哨兵 id（不走大模型库）
 
 // 自定义资源目录（用户用 Filza 放入；SpringBoard 可调取）

@@ -223,14 +223,15 @@
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
-// v6.12: 验证 AI Studio PaddleOCR 的 API_URL + Token 是否有效（POST 一张小图，看能否拿到正常 JSON 回包）
-//   修复 v6.11 闪退根因：NSURLSession 回调跑在后台线程，旧代码直接在回调里改 ac.title/message/addAction
-//   → 跨线程改 UIAlertController 在 SpringBoard/Preferences 系统进程里会直接崩（安全模式）。
-//   现改为：回调里只做 JSON 解析，所有 UI 更新统一 dispatch 到主线程（与项目其它网络回调一致）。
+// v6.15: 验证 AI Studio PaddleOCR 的 API_URL + Token 是否有效（v2 异步接口：multipart 提交 + 轮询到 done）
+//   注意 v2 接口返回的是 {"code":0,"data":{"jobId":...}}（不是旧同步接口的 errorCode），
+//   所以旧的「判断 errorCode==0」对 v2 是假成功（errorCode 为 nil 被当成成功）。现改为走真实异步流程。
+//   所有 UI 更新统一 dispatch 到主线程（避免跨线程改 UIAlertController 在系统进程里崩）。
 - (void)testPPOCRConnection:(PSSpecifier *)spec {
 	NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
 	NSString *apiURL = [d stringForKey:XZ_KEY_PPOCR_URL] ?: @"";
 	NSString *token  = [d stringForKey:XZ_KEY_PPOCR_TOKEN] ?: @"";
+	NSString *model  = [d stringForKey:XZ_KEY_PPOCR_MODEL] ?: @"PP-OCRv6";
 	if (!apiURL.length || !token.length) {
 		[self _sn3Alert:@"未配置" msg:@"请先在「百度 PaddleOCR」里填入 API_URL 和 Token（均从 aistudio.baidu.com/paddleocr/task 页面获取）。"];
 		return;
@@ -240,24 +241,24 @@
 		[self _sn3Alert:@"API_URL 无效" msg:@"复制的 API_URL 不完整或含非法字符，请确认以 https:// 开头、完整粘贴。"];
 		return;
 	}
-	// v6.12：严格校验——很多人把「任务页网址」误填进 API_URL，提前给出明确指引而不是让它去请求再崩
+	// 严格校验——很多人把「任务页网址」误填进 API_URL，提前给明确指引而不是让它去请求再崩
 	NSString *host = u.host ?: @"";
 	if ([host isEqualToString:@"aistudio.baidu.com"] || [apiURL containsString:@"aistudio.baidu.com/paddleocr"]) {
-		[self _sn3Alert:@"API_URL 填错了" msg:@"你填的是「任务页网址」(aistudio.baidu.com/paddleocr/task)，不是接口地址。\n\n请回到该页面，点右侧「API」按钮，复制示例代码里带 /ocr 结尾的接口地址（形如 https://xxxx.aistudio-app.com/ocr），再粘贴进来。"];
+		[self _sn3Alert:@"API_URL 填错了" msg:@"你填的是「任务页网址」(aistudio.baidu.com/paddleocr/task)，不是接口地址。\n\n请回到该页面，点右侧「API」按钮，复制示例代码里的接口地址（形如 https://paddleocr.aistudio-app.com/api/v2/ocr/jobs），再粘贴进来。"];
 		return;
 	}
 	if (![host containsString:@"aistudio-app.com"]) {
-		[self _sn3Alert:@"API_URL 可能不对" msg:@"PaddleOCR 的接口地址主机名应为 xxx.aistudio-app.com（且以 /ocr 结尾）。你填的看起来不是 AI Studio 给的接口地址，请检查是否复制完整。"];
+		[self _sn3Alert:@"API_URL 可能不对" msg:@"PaddleOCR 的接口地址主机名应为 xxx.aistudio-app.com。你填的看起来不是 AI Studio 给的接口地址，请检查是否复制完整。"];
 		return;
 	}
-	UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"测试中（百度 PaddleOCR）" message:@"正在用 API_URL + Token 发一张测试图，请稍候…" preferredStyle:UIAlertControllerStyleAlert];
+	UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"测试中（百度 PaddleOCR）" message:@"正在提交测试任务，请稍候…（v2 异步接口，约 10~30 秒）" preferredStyle:UIAlertControllerStyleAlert];
 	[self presentViewController:ac animated:YES completion:nil];
 	__block BOOL resolved = NO;
-	NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:20.0 repeats:NO block:^(NSTimer *t) {
+	__block NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:45.0 repeats:NO block:^(NSTimer *t) {
 		if (resolved) return;
 		resolved = YES;
 		ac.title = @"✗ 验证失败";
-		ac.message = @"请求超时（20 秒未响应）。请检查：① 设备网络；② API_URL 是否完整正确；③ Token 是否有效。";
+		ac.message = @"请求超时（45 秒未响应）。请检查：① 设备网络；② API_URL 是否完整正确；③ Token 是否有效；④ AI Studio 队列是否繁忙（可稍后重试）。";
 		[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
 			[ac dismissViewControllerAnimated:YES completion:nil];
 		}]];
@@ -269,6 +270,118 @@
 	UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
 	UIGraphicsEndImageContext();
 	NSData *jpeg = UIImageJPEGRepresentation(img ?: [UIImage new], 0.8);
+
+	// v6.15：v2 异步任务接口（URL 含 /api/v2/ocr/jobs）→ 真实提交+轮询；其它地址 → 同步 JSON 兜底
+	BOOL isJobs = [[u.path lowercaseString] containsString:@"/api/v2/ocr/jobs"];
+	if (isJobs) {
+		[self _sn3PPOCRTestJobsURL:u token:token model:model jpeg:jpeg ac:ac resolved:&resolved timer:&timer];
+	} else {
+		[self _sn3PPOCRTestSyncURL:u token:token jpeg:jpeg ac:ac resolved:&resolved timer:&timer];
+	}
+}
+
+// v6.15: v2 异步任务接口的连通性测试（multipart 提交，拿到 jobId 后转轮询）
+- (void)_sn3PPOCRTestJobsURL:(NSURL *)u token:(NSString *)token model:(NSString *)model
+                         jpeg:(NSData *)jpeg ac:(UIAlertController *)ac
+                     resolved:(BOOL *)resolved timer:(NSTimer **)timer {
+	NSString *boundary = @"----SN3PaddleOCRBoundary7Q2k9X";
+	NSMutableData *body = [NSMutableData data];
+	void (^af)(NSString *, NSString *) = ^(NSString *name, NSString *value) {
+		[body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+		[body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", name] dataUsingEncoding:NSUTF8StringEncoding]];
+		[body appendData:[value dataUsingEncoding:NSUTF8StringEncoding]];
+		[body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	};
+	af(@"model", model);
+	af(@"optionalPayload", @"{\"useDocOrientationClassify\":false,\"useDocUnwarping\":false,\"useTextlineOrientation\":false}");
+	[body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:[@"Content-Disposition: form-data; name=\"file\"; filename=\"image.jpg\"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:[@"Content-Type: image/jpeg\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:jpeg];
+	[body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:[[NSString stringWithFormat:@"--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+
+	NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:u];
+	[req setHTTPMethod:@"POST"];
+	[req setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary] forHTTPHeaderField:@"Content-Type"];
+	[req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+	[req setHTTPBody:body];
+	[req setTimeoutInterval:40];
+	__weak typeof(self) wself = self;
+	[[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+		NSString *title = @"✗ 验证失败", *msg = nil;
+		if (err) {
+			msg = [NSString stringWithFormat:@"网络错误：%@", err.localizedDescription];
+		} else {
+			id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+			NSNumber *code = [j isKindOfClass:[NSDictionary class]] ? j[@"code"] : nil;
+			if (![j isKindOfClass:[NSDictionary class]] || (code && code.integerValue != 0)) {
+				NSString *m = [j isKindOfClass:[NSDictionary class]] ? j[@"msg"] : @"返回非 JSON";
+				msg = [NSString stringWithFormat:@"AI Studio 返回错误：%@\n\n请检查 Token 是否有效、模型名是否正确、API_URL 是否来自 paddleocr/task 页面。", m];
+			} else {
+				NSString *jobId = j[@"data"][@"jobId"];
+				if (![jobId isKindOfClass:[NSString class]] || !jobId.length) {
+					msg = @"已联通但未返回任务 ID，请重试。";
+				} else {
+					[wself _sn3PPOCRTestPollJob:jobId baseURL:u token:token ac:ac resolved:resolved timer:timer];
+					return;
+				}
+			}
+		}
+		dispatch_async(dispatch_get_main_queue(), ^{
+			if (*resolved) return; *resolved = YES; [*timer invalidate];
+			ac.title = title; ac.message = msg;
+			[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+		});
+	}] resume];
+}
+
+// v6.15: 轮询任务状态直到 done / failed
+- (void)_sn3PPOCRTestPollJob:(NSString *)jobId baseURL:(NSURL *)u token:(NSString *)token
+                           ac:(UIAlertController *)ac resolved:(BOOL *)resolved timer:(NSTimer **)timer {
+	NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/%@", [u absoluteString], jobId]];
+	NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+	[req setHTTPMethod:@"GET"];
+	[req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+	[req setTimeoutInterval:30];
+	__weak typeof(self) wself = self;
+	[[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+		if (err) {
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (*resolved) return; *resolved = YES; [*timer invalidate];
+				ac.title = @"✗ 验证失败"; ac.message = [NSString stringWithFormat:@"轮询失败：%@", err.localizedDescription];
+				[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+			});
+			return;
+		}
+		id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+		NSDictionary *dd = [j isKindOfClass:[NSDictionary class]] ? j[@"data"] : nil;
+		NSString *state = dd[@"state"];
+		if ([state isEqualToString:@"done"]) {
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (*resolved) return; *resolved = YES; [*timer invalidate];
+				ac.title = @"✓ 连接成功";
+				ac.message = @"API_URL + Token 正确，已成功联通百度 PaddleOCR（v2 异步接口，提交并跑完了一个任务）。\n\n去主面板点 OCR 即可识别文字（免费）。";
+				[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+			});
+		} else if ([state isEqualToString:@"failed"]) {
+			NSString *em = dd[@"errorMsg"] ?: @"任务失败";
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if (*resolved) return; *resolved = YES; [*timer invalidate];
+				ac.title = @"✗ 验证失败"; ac.message = [NSString stringWithFormat:@"任务失败：%@", em];
+				[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
+			});
+		} else {
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2*NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0), ^{
+				[wself _sn3PPOCRTestPollJob:jobId baseURL:u token:token ac:ac resolved:resolved timer:timer];
+			});
+		}
+	}] resume];
+}
+
+// v6.15: 同步接口兜底测试（非 /api/v2/ocr/jobs 的其它地址）
+- (void)_sn3PPOCRTestSyncURL:(NSURL *)u token:(NSString *)token jpeg:(NSData *)jpeg
+                           ac:(UIAlertController *)ac resolved:(BOOL *)resolved timer:(NSTimer **)timer {
 	NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
 	BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
 	NSDictionary *body = isHub ? @{ @"image": b64 } : @{ @"file": b64, @"fileType": @1 };
@@ -276,44 +389,27 @@
 	NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:u];
 	[req setHTTPMethod:@"POST"];
 	[req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-	[req setValue:[@"token " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
+	[req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
 	[req setHTTPBody:json];
 	[req setTimeoutInterval:20];
-	NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-		// 后台线程：只做解析，绝不碰 UI
-		NSString *title = @"✗ 验证失败";
-		NSString *msg = nil;
-		if (err) {
-			msg = [NSString stringWithFormat:@"网络错误：%@", err.localizedDescription];
-		} else {
-			NSError *je = nil;
-			id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:&je];
-			if (![j isKindOfClass:[NSDictionary class]]) {
-				msg = @"返回的不是 JSON（API_URL 可能不正确，或不是 PaddleOCR 接口地址）。";
-			} else {
+	[[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+		NSString *title = @"✗ 验证失败", *msg = nil;
+		if (err) msg = [NSString stringWithFormat:@"网络错误：%@", err.localizedDescription];
+		else {
+			id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+			if (![j isKindOfClass:[NSDictionary class]]) msg = @"返回的不是 JSON（API_URL 可能不正确，或不是 PaddleOCR 接口地址）。";
+			else {
 				NSNumber *ec = j[@"errorCode"];
-				if (ec && ec.integerValue != 0) {
-					NSString *em = j[@"errorMsg"] ?: @"未知错误";
-					msg = [NSString stringWithFormat:@"AI Studio 返回错误：%@\n\n请检查 Token 是否有效、API_URL 是否来自 paddleocr/task 页面。", em];
-				} else {
-					title = @"✓ 连接成功";
-					msg = @"API_URL + Token 正确，已成功联通百度 PaddleOCR。\n\n去主面板点 OCR 即可识别文字（免费）。";
-				}
+				if (ec && ec.integerValue != 0) msg = [NSString stringWithFormat:@"AI Studio 返回错误：%@\n\n请检查 Token / API_URL。", j[@"errorMsg"] ?: @"未知"];
+				else { title = @"✓ 连接成功"; msg = @"API_URL + Token 正确，已成功联通百度 PaddleOCR。"; }
 			}
 		}
-		// 所有 UI 更新回主线程（关键修复：避免跨线程改 UIAlertController 导致 SpringBoard 崩）
 		dispatch_async(dispatch_get_main_queue(), ^{
-			if (resolved) return;
-			resolved = YES;
-			[timer invalidate];
-			ac.title = title;
-			ac.message = msg;
-			[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
-				[ac dismissViewControllerAnimated:YES completion:nil];
-			}]];
+			if (*resolved) return; *resolved = YES; [*timer invalidate];
+			ac.title = title; ac.message = msg;
+			[ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){ [ac dismissViewControllerAnimated:YES completion:nil]; }]];
 		});
-	}];
-	[task resume];
+	}] resume];
 }
 
 - (void)openAPIPage:(PSSpecifier *)spec {

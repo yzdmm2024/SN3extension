@@ -121,7 +121,7 @@
 			<key>label</key>
 			<string>PaddleOCR API_URL</string>
 			<key>placeholder</key>
-			<string>点「API」按钮复制的接口地址（形如 https://xxxx.aistudio-app.com/ocr，带 /ocr 结尾）</string>
+			<string>v2 异步接口地址：https://paddleocr.aistudio-app.com/api/v2/ocr/jobs</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -136,6 +136,22 @@
 			<string>PaddleOCR Token</string>
 			<key>placeholder</key>
 			<string>AI Studio Access Token</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PPOCR_Model</string>
+			<key>label</key>
+			<string>PaddleOCR 模型名</string>
+			<key>placeholder</key>
+			<string>PP-OCRv6（亦可填 PP-OCRv5 等）</string>
+			<key>default</key>
+			<string>PP-OCRv6</string>
 		</dict>
 		<dict>
 			<key>action</key>

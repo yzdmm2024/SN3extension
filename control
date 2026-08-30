@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.14
+Version: 6.15
 Architecture: iphoneos-arm64
-Description: [v6.14] 让「百度 PaddleOCR (免费)」直接在「识别引擎·使用模型」选择器里可选（无需先导入预设）：OCR 选择器末尾内置一行，选中即走免费通道（API_URL+Token 仍在本页 PPOCR 组填）。保留 v6.13 的两种接口格式适配+多结构解析兜底；保留独立 PPOCR 开关作为备选。(沿用 v6.13 识别空修复 + v6.12 主线程修复 + v6.11 AI Studio 免费 PaddleOCR + v6.07 大模型库)
+Description: [v6.15] 重写 PaddleOCR 通道以适配 AI Studio v2 异步任务接口（用户实际用的就是它）：multipart 提交任务→轮询 jobId 到 done→取 JSONL 结果，文字解析 result.ocrResults[].prunedResult.rec_texts；鉴权 Bearer；测试连接也改为真实异步流程（旧版只验 errorCode 对 v2 是假成功）。新增「PaddleOCR 模型名」设置项(默认 PP-OCRv6)。保留独立开关与选择器内置项。(沿用 v6.14 选择器内置 + v6.13 识别空修复 + v6.12 主线程修复)
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024
