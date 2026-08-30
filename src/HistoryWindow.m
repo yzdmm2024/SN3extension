@@ -4,6 +4,7 @@
 //
 #import "HistoryWindow.h"
 #import "Common.h"
+#import <objc/runtime.h>   // v6.06：objc_setAssociatedObject / OBJC_ASSOCIATION_RETAIN
 
 @interface HistoryWindow ()
 @property (nonatomic, strong) UIWindow *window;
