@@ -30,7 +30,10 @@
 // 保存到自定义相册（创建「SN3截图」相册）
 + (void)saveToCustomAlbum:(UIImage *)image completion:(void (^)(BOOL success, NSError *error))completion;
 
-// 图片加手机外壳（简易圆角+刘海）
+// 图片加手机外壳（可选指定壳型 id；@"none"/未知=不加壳）
++ (UIImage *)applyPhoneFrame:(UIImage *)image caseId:(NSString *)caseId;
+
+// 图片加手机外壳（默认不加壳，向后兼容）
 + (UIImage *)applyPhoneFrame:(UIImage *)image;
 
 // 创建悬浮窗口（带图片）
