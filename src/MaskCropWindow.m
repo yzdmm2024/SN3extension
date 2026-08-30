@@ -1286,6 +1286,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     XZLocalCompress = 13,
     XZLocalColorPick= 15,
     XZLocalReset    = 16,
+    XZLocalLaunchApp= 21,   // v6.20.9：快捷启动 App（弹层选微信/QQ/闲鱼/自选，秒开）
 };
 
 // 构建功能面板视图（给定已定位好的 frame）
@@ -1380,6 +1381,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @(XZLocalCompress): @{@"icon":@"arrow.down.circle",           @"label":@"压缩"},
         @(XZLocalColorPick):@{@"icon":@"eyedropper",                  @"label":@"取色"},
         @(XZLocalReset):    @{@"icon":@"arrow.counterclockwise",       @"label":@"还原"},
+        @(XZLocalLaunchApp):@{@"icon":@"app.fill",                     @"label":@"启动"},
     };
 
     // 读「工具栏排序」+ 禁用集合，得到当前应显示的按钮顺序
@@ -1586,7 +1588,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     NSArray<NSNumber *> *defOrder = @[ @(XZLocalOCR), @(XZLocalTranslate), @(XZLocalDraw), @(XZLocalCode),
                                        @(XZLocalAIImage), @(XZLocalRotate), @(XZLocalCopy), @(XZLocalFloating),
                                        @(XZLocalSave), @(XZLocalShare), @(XZLocalPDF),
-                                       @(XZLocalCompress), @(XZLocalColorPick), @(XZLocalReset) ];
+                                       @(XZLocalCompress), @(XZLocalColorPick), @(XZLocalReset), @(XZLocalLaunchApp) ];
     NSMutableArray<NSNumber *> *saved = [NSMutableArray array];
     NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
     if (orderStr.length) [saved addObjectsFromArray:[orderStr componentsSeparatedByString:@","]];
@@ -1759,7 +1761,40 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         if (_originalCropImage) { self->_cropImage = _originalCropImage; [Common toast:@"已还原原图"]; }
         else [Common toast:@"无原图可还原"];
         [self updateLocalPreview];      // v6.05：还原后刷新预览
+    } else if (tag == XZLocalLaunchApp) {
+        // v6.20.9：一键秒开微信/QQ/闲鱼等任意 App（弹层选择，图同时入剪贴板可粘贴）
+        [self launchLocalAppWithImage:img];
     }
+}
+
+- (void)launchLocalAppWithImage:(UIImage *)img {
+    NSArray<NSDictionary *> *apps = [SuperTools sn3LaunchApps];
+    if (apps.count == 0) {
+        [Common toast:@"请先到设置 → 快捷启动 里添加 App"];
+        return;
+    }
+    void (^doOpen)(NSDictionary *) = ^(NSDictionary *a){
+        BOOL opened = [SuperTools openAppScheme:a[@"scheme"] withImage:img];
+        NSString *nm = a[@"name"] ?: @"App";
+        if (opened) {
+            [Common toast:[NSString stringWithFormat:@"已打开%@，截图已复制到剪贴板，长按输入框可粘贴", nm]];
+        } else {
+            UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[img] applicationActivities:nil];
+            [Common present:avc fromWindow:_win];
+            [Common toast:[NSString stringWithFormat:@"未检测到%@，已用系统分享，请选择%@", nm, nm]];
+        }
+        [self dismiss];
+    };
+    if (apps.count == 1) { doOpen(apps.firstObject); return; }
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"启动 App"
+                                                               message:@"选一个要打开的 App"
+                                                        preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSDictionary *a in apps) {
+        NSString *name = a[@"name"] ?: (a[@"scheme"] ?: @"App");
+        [ac addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *act){ doOpen(a); }]];
+    }
+    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [Common present:ac fromWindow:_win];
 }
 
 // 退出原地面板，回到框选模式（v5.6：保留选区，可直接拖动/缩放调整，不必重新截图）

@@ -1397,6 +1397,28 @@ static UIWindow *_floatWin = nil;
     return opened;
 }
 
+#pragma mark - 8c. 打开任意 App（带图）
+
++ (BOOL)openAppScheme:(NSString *)scheme withImage:(UIImage *)image {
+    if (!scheme || scheme.length == 0) return NO;
+    // 把图写入系统剪贴板，App 启动后长按输入框可粘贴（与打开豆包同款补偿：多数 App 的 scheme 不接受图片参数）
+    if (image) [[UIPasteboard generalPasteboard] setImage:image];
+    NSURL *url = [NSURL URLWithString:scheme];
+    if (!url) return NO;
+    // 同步返回 BOOL 的 openURL:（新版 openURL:options:completionHandler: 返回 void，会编译报错）
+    return [[UIApplication sharedApplication] openURL:url];
+}
+
++ (NSArray<NSDictionary *> *)sn3LaunchApps {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+    NSArray *raw = [d arrayForKey:XZ_KEY_LAUNCH_APPS];
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+    if ([raw isKindOfClass:[NSArray class]]) {
+        for (id o in raw) if ([o isKindOfClass:[NSDictionary class]]) [out addObject:o];
+    }
+    return out;
+}
+
 #pragma mark - 9. 分享
 
 static UIWindow *_shareWin = nil;

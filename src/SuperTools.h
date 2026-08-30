@@ -46,6 +46,13 @@
 // 9c. 打开豆包：把图写入剪贴板并直接 Deep Link 拉起豆包 App；返回 YES 表示已拉起（未安装返回 NO，调用方可回退系统分享）
 + (BOOL)openDoubaoWithImage:(UIImage *)image;
 
+// 9d. 打开任意 App：把图写入剪贴板并直接 Deep Link 拉起该 scheme 的 App（weixin:// / mqq:// / xianyu:// 等）；
+//     返回 YES 表示已拉起（未安装返回 NO，调用方可回退系统分享）
++ (BOOL)openAppScheme:(NSString *)scheme withImage:(UIImage *)image;
+
+// 9e. 读取「快捷启动」App 列表（设置面板管理），返回过滤后的数组（元素 {name, scheme}），无则返回 @[]
++ (NSArray<NSDictionary *> *)sn3LaunchApps;
+
 // 9b. 加手机壳：给截图套一个 iPhone 外壳边框
 + (UIImage *)phoneCase:(UIImage *)image;
 

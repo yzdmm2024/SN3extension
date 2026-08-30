@@ -17,7 +17,7 @@
 
 // 工具栏全部按钮（tag 与 EditToolbarWindow 的 ETBTag 枚举一一对应）
 static NSArray<NSNumber *> *kAllTags(void) {
-    return @[ @1, @2, @3, @4, @19, @6, @7, @8, @9, @12, @13, @20, @15, @16 ];
+    return @[ @1, @2, @3, @4, @19, @6, @7, @8, @9, @12, @13, @20, @15, @16, @21 ];
 }
 static NSDictionary<NSNumber *, NSString *> *kTagNames(void) {
     return @{
@@ -25,7 +25,7 @@ static NSDictionary<NSNumber *, NSString *> *kTagNames(void) {
         @20: @"打开豆包", @19: @"旋转",
         @6 : @"复制",    @7 : @"贴图",    @8 : @"保存",    @9 : @"分享",
         @12: @"PDF",     @13: @"压缩",    @20: @"打开豆包",
-        @15: @"取色",    @16: @"还原",
+        @15: @"取色",    @16: @"还原",    @21: @"启动",
     };
 }
 

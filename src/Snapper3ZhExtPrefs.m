@@ -7,6 +7,8 @@
 #import "SN3ModelStore.h"
 #import "SN3License.h"
 
+@class SN3LaunchAppsController;
+
 // 设置面板主控制器：iOS 设置 → 超级截图
 @interface SN3PrefsController : PSListController
 @end
@@ -109,6 +111,12 @@
 - (void)openToolbarOrder:(PSSpecifier *)spec {
     SN3ToolbarOrderController *vc = [[SN3ToolbarOrderController alloc] init];
     vc.title = @"工具栏排序";
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+// v6.20.9：打开「快捷启动」App 管理页
+- (void)openLaunchApps:(PSSpecifier *)spec {
+    SN3LaunchAppsController *vc = [[SN3LaunchAppsController alloc] init];
     [self.navigationController pushViewController:vc animated:YES];
 }
 
@@ -551,6 +559,155 @@
         NSURL *u = [NSURL URLWithString:url];
         if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
     }
+}
+
+@end
+
+#pragma mark - v6.20.9 快捷启动 App 管理
+
+@interface SN3LaunchAppsController : UIViewController <UITableViewDataSource, UITableViewDelegate>
+@end
+
+@implementation SN3LaunchAppsController {
+    NSMutableArray<NSDictionary *> *_apps;
+    UITableView *_tv;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.title = @"快捷启动";
+    [self _load];
+    _tv = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    _tv.dataSource = self;
+    _tv.delegate = self;
+    _tv.editing = YES;                       // 开启左滑删除
+    _tv.allowsSelectionDuringEditing = YES;
+    [self.view addSubview:_tv];
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithTitle:@"添加"
+                                         style:UIBarButtonItemStylePlain
+                                        target:self
+                                        action:@selector(addMenu)];
+    [self _layout];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self _layout];
+}
+
+- (void)_layout {
+    CGFloat top = 0;
+    if (@available(iOS 11.0, *)) top = self.view.safeAreaInsets.top;
+    else top = self.topLayoutGuide.length;
+    _tv.frame = CGRectMake(0, top, self.view.bounds.size.width, self.view.bounds.size.height - top);
+}
+
+- (void)_load {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+    NSArray *raw = [d arrayForKey:XZ_KEY_LAUNCH_APPS];
+    _apps = [NSMutableArray array];
+    if ([raw isKindOfClass:[NSArray class]]) {
+        for (id o in raw) if ([o isKindOfClass:[NSDictionary class]]) [_apps addObject:o];
+    }
+}
+
+- (void)_save {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+    [d setObject:_apps forKey:XZ_KEY_LAUNCH_APPS];
+    [d synchronize];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (CFStringRef)@"com.axs.snapper3zhext.prefsChanged",
+                                         NULL, NULL, YES);
+}
+
+#pragma mark - UITableView
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
+    return _apps.count ? _apps.count : 1;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"sn3launch"];
+    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"sn3launch"];
+    if (_apps.count == 0) {
+        c.textLabel.text = @"（暂无，点右上角「添加」）";
+        c.detailTextLabel.text = @"";
+        return c;
+    }
+    NSDictionary *a = _apps[ip.row];
+    c.textLabel.text = a[@"name"] ?: @"(未命名)";
+    c.detailTextLabel.text = a[@"scheme"] ?: @"";
+    return c;
+}
+
+- (BOOL)tableView:(UITableView *)tv canEditRowAtIndexPath:(NSIndexPath *)ip {
+    return _apps.count > 0;
+}
+
+- (void)tableView:(UITableView *)tv commitEditingStyle:(UITableViewCellEditingStyle)style forRowAtIndexPath:(NSIndexPath *)ip {
+    if (style == UITableViewCellEditingStyleDelete && ip.row < _apps.count) {
+        [_apps removeObjectAtIndex:ip.row];
+        [self _save];
+        [tv deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationAutomatic];
+    }
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (_apps.count == 0) [self addMenu];
+}
+
+#pragma mark - 添加
+
+- (void)addMenu {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"添加 App"
+                                                               message:@"选预设，或填自定义（名称 + scheme，如 weixin://）"
+                                                        preferredStyle:UIAlertControllerStyleActionSheet];
+    [ac addAction:[UIAlertAction actionWithTitle:@"微信 (weixin://)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){ [self _addPreset:@"微信" scheme:@"weixin://"]; }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"QQ (mqq://)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){ [self _addPreset:@"QQ" scheme:@"mqq://"]; }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"闲鱼 (xianyu://)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){ [self _addPreset:@"闲鱼" scheme:@"xianyu://"]; }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"自定义…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){ [self _addCustom]; }]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:ac animated:YES completion:nil];
+}
+
+- (void)_addPreset:(NSString *)name scheme:(NSString *)scheme {
+    for (NSDictionary *e in _apps) if ([e[@"scheme"] isEqualToString:scheme]) { [self _toast:@"已添加过"]; return; }
+    [_apps addObject:@{@"name":name, @"scheme":scheme}];
+    [self _save]; [_tv reloadData];
+}
+
+- (void)_addCustom {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"自定义 App"
+                                                               message:@"填写名称与 URL Scheme"
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [ac addTextFieldWithConfigurationHandler:^(UITextField *tf){
+        tf.placeholder = @"名称，如 钉钉";
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [ac addTextFieldWithConfigurationHandler:^(UITextField *tf){
+        tf.placeholder = @"scheme，如 dingtalk://";
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [ac addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [ac addAction:[UIAlertAction actionWithTitle:@"添加" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){
+        NSString *nm = [ac.textFields[0].text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *sc = [ac.textFields[1].text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!sc.length) { [self _toast:@"scheme 不能为空"]; return; }
+        if (!nm.length) nm = sc;
+        [_apps addObject:@{@"name":nm, @"scheme":sc}];
+        [self _save]; [_tv reloadData];
+    }]];
+    [self presentViewController:ac animated:YES completion:nil];
+}
+
+- (void)_toast:(NSString *)msg {
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:nil message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:ac animated:YES completion:nil];
 }
 
 @end

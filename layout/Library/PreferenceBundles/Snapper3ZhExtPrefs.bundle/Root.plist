@@ -477,6 +477,22 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
+			<string>点工具栏「启动」按钮可秒开你常用的 App，并把当前截图放进剪贴板（进 App 后长按输入框可粘贴）。在这里添加 / 删除要秒开的 App：微信 / QQ / 闲鱼 一键加，或填任意 App 的 scheme 自选（如 dingtalk://、alipay://）。</string>
+			<key>label</key>
+			<string>快捷启动</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>openLaunchApps:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    管理快捷启动 App（微信 / QQ / 闲鱼 / 自选）</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
 			<string>单排滑动：所有按钮横排放在 UIScrollView 里，3 组按钮首尾相接，可左右无限制循环滑动（滑到尽头自动绕回）。设置保存后下次打开局部截图自动生效。</string>
 			<key>label</key>
 			<string>说明</string>

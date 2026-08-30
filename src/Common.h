@@ -26,6 +26,9 @@
 #define XZ_KEY_TB_ORDER         @"Toolbar_Order"         // v5.18：工具栏按钮顺序(逗号分隔的tag)
 #define XZ_KEY_TB_DISABLED      @"Toolbar_Disabled"      // v5.18：工具栏禁用的按钮(逗号分隔的tag)
 #define XZ_KEY_TB_LAYOUT        @"Toolbar_Layout"        // v5.18：工具栏布局 — 0=双排(默认), 1=单排滑动
+
+// v6.20.9：快捷启动 App 列表（NSArray<NSDictionary {name, scheme}>），设置面板「快捷启动」管理，工具栏「启动」按钮读取
+#define XZ_KEY_LAUNCH_APPS      @"LaunchApps"
 #define XZ_KEY_TRANS_ENABLED    @"Translate_Enabled"
 #define XZ_KEY_TRANS_APPID      @"Translate_APIAppID"
 #define XZ_KEY_TRANS_KEY        @"Translate_APIKey"
