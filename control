@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.07
+Version: 6.08
 Architecture: iphoneos-arm64
-Description: [v6.07] ①新增「大模型库」统一管理 识别引擎/问AI/翻译 的配置(只填一次Key,支持一键导入DeepSeek/OpenAI/智谱/通义/火山方舟/Ollama预设,误点某项也不再带崩其它功能,旧配置自动迁移); ②关闭按钮移到面板顶栏「历史」旁常驻可见(不用再移动选取框); ③OCR失败等错误提示改挂独立顶层窗口(Alert+750),彻底解决被选区/工具栏遮挡点不了; ④音量+电源键触发超级截图加固(同时hook SBScreenShotter+SBScreenshotManager); ⑤自动套壳去掉GitHub帮助按钮,内置iPhone12Pro四色开箱即用,自定义机框用Filza放Frames/<名称>/即可; ⑥AI对话/OCR/翻译均改走大模型库所选模型(翻译无模型时回退百度). (沿用 v6.06 大模型库 + v6.05 紧凑工具栏)
+Description: [v6.08] 热修 v6.07 安全模式崩溃：OCR/翻译报错弹窗点「知道了」时，顶层 alert 的 dismiss 回调对象因 delegate 是 weak 已被提前释放，向僵尸对象发消息导致 SpringBoard 崩溃进入安全模式；改为用静态强引用把回调对象撑到 dismiss 完成后再释放，并补 makeKeyAndVisible 保证按钮可点。(沿用 v6.07 大模型库 + 关闭按钮常驻 + 顶层提示 + 音量键触发加固)
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

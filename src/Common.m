@@ -12,6 +12,14 @@
 - (void)presentationControllerDidDismiss:(UIPresentationController *)pc { if (_onDismiss) _onDismiss(); }
 @end
 
+// 顶层 alert 窗口 + 其 dismiss 回调对象的静态强引用。
+// 关键点：UIPresentationController.delegate 是 weak，不会 retain 回调对象。
+// 若不额外强引用，presentAlertOnTop: 返回后回调对象即被释放，
+// 用户点「知道了」dismiss 时向僵尸对象发消息 → EXC_BAD_ACCESS → SpringBoard 崩 → 安全模式。
+// 这里用静态强引用把对象撑到 dismiss 回调里再释放。
+static __strong UIWindow *gSN3AlertWin = nil;
+static __strong SN3AlertDismisser *gSN3AlertDismisser = nil;
+
 @implementation Common
 
 + (NSUserDefaults *)defaults {
@@ -109,22 +117,38 @@
     });
 }
 
-// v6.07: 在独立 UIWindow(Alert+750) 上弹出 alert，保证位于所有截图 UI 之上、可点。
-static __strong UIWindow *gSN3AlertWin = nil;
+// v6.07/v6.08: 在独立 UIWindow(Alert+750) 上弹出 alert，保证位于所有截图 UI 之上、可点。
+// v6.08 修复：delegate 是 weak，需用静态强引用 gSN3AlertDismisser 把回调对象撑到 dismiss 之后，
+//            否则点「知道了」时回调对象已是僵尸 → 安全模式。
 + (void)presentAlertOnTop:(UIAlertController *)alert {
     if (!alert) return;
     UIWindowScene *scene = [self activeWindowScene];
-    if (!scene) return;
+    if (!scene) {
+        // 兜底：挂到 keyWindow 的顶层 VC 上，至少把错误弹出来（不崩，只是可能仍被面板遮一点）
+        UIWindow *kw = [self topWindow];
+        UIViewController *host = kw ? [self topViewControllerFrom:kw] : nil;
+        if (host && host.view.window) {
+            [host presentViewController:alert animated:YES completion:nil];
+        } else {
+            NSLog(@"[SN3] presentAlertOnTop: 无 scene 且无 host，丢弃 alert");
+        }
+        return;
+    }
     UIWindow *w = [[UIWindow alloc] initWithWindowScene:scene];
     w.windowLevel = UIWindowLevelAlert + 750;
-    w.hidden = NO;
+    w.backgroundColor = [UIColor clearColor];
     UIViewController *root = [UIViewController new];
     root.view.backgroundColor = [UIColor clearColor];
     w.rootViewController = root;
     gSN3AlertWin = w;
     SN3AlertDismisser *d = [SN3AlertDismisser new];
-    d.onDismiss = ^{ gSN3AlertWin = nil; };
-    alert.presentationController.delegate = d; // presentationController 会 retain delegate
+    d.onDismiss = ^{
+        gSN3AlertWin = nil;
+        gSN3AlertDismisser = nil;
+    };
+    alert.presentationController.delegate = d;
+    gSN3AlertDismisser = d;        // 静态强引用，撑到 dismiss 回调
+    [w makeKeyAndVisible];         // 关键：否则 alert 窗口不接收触摸，「知道了」点不了
     [root presentViewController:alert animated:YES completion:nil];
 }
 
