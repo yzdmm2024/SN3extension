@@ -1392,7 +1392,9 @@ static UIWindow *_floatWin = nil;
     if (!url) return NO;
     // ⚠️ tweak 宿主 App 不一定在 LSApplicationQueriesSchemes 声明 doubao，
     //    故不能用 canOpenURL 判断，直接 openURL 并以返回值确认是否拉起成功。
-    return [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+    //    用同步返回 BOOL 的 openURL:（新版 openURL:options:completionHandler: 返回 void，会编译报错）。
+    BOOL opened = [[UIApplication sharedApplication] openURL:url];
+    return opened;
 }
 
 #pragma mark - 9. 分享
