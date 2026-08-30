@@ -94,7 +94,8 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
     else dispatch_async(dispatch_get_main_queue(), block);
 }
 
-// 自建非 key 窗口挂载 alert（SpringBoard 安全模式坑已避开：不 makeKeyAndVisible、hidden=NO、显式 frame）
+// 自建 host 窗口挂载 alert。注意：必须由调用方在展示前 [host makeKeyAndVisible]（见 presentVerificationFromWindow:），
+// 否则 alert 虽显示却收不到触摸事件导致「点不动」；dismiss 时再把 key 还给先前的窗口。
 + (UIWindow *)_makeHostWindow {
     UIWindow *host = nil;
     if (@available(iOS 13.0, *)) {
@@ -120,7 +121,7 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
     host.backgroundColor = [UIColor clearColor];
     host.rootViewController = [[UIViewController alloc] init];
     host.rootViewController.view.backgroundColor = [UIColor clearColor];
-    host.hidden = NO;   // 关键：不抢 key window
+    host.hidden = NO;   // presenter 会再 makeKeyAndVisible 接管为 key
     return host;
 }
 
@@ -153,6 +154,7 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
         UIAlertController *a = [UIAlertController alertControllerWithTitle:@"设备授权验证"
                                                                    message:@"本插件已绑定设备 UDID，需输入解锁码才能使用。点「复制 UDID」把设备标识发给开发者生成解锁码。"
                                                             preferredStyle:UIAlertControllerStyleAlert];
+        NSString *baseMsg = @"本插件已绑定设备 UDID，需输入解锁码才能使用。点「复制 UDID」把设备标识发给开发者生成解锁码。";
         [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
             tf.placeholder = @"解锁码（15 位）";
             tf.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
@@ -165,6 +167,10 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
             NSLog(@"[SN3] License: 无法创建 host 窗口，放弃弹窗");
             return;
         }
+        // 关键修复：必须把 host 设为 key window，否则 alert 虽显示却收不到触摸（点不动）。
+        // 记住先前的 key window，dismiss 时还回去，避免长期劫持 SpringBoard 的 key window。
+        UIWindow *prevKey = [UIApplication sharedApplication].keyWindow;
+        [host makeKeyAndVisible];
 
         __block BOOL resolved = NO;
         void (^finish)(BOOL, NSString *) = ^(BOOL ok, NSString *toastMsg) {
@@ -172,6 +178,8 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
             resolved = YES;
             [a dismissViewControllerAnimated:YES completion:^{
                 if (toastMsg.length) [self toast:toastMsg onHost:host];
+                host.userInteractionEnabled = NO;    // 释放触摸拦截
+                [prevKey makeKeyAndVisible];         // 把 key 还给 SpringBoard
                 // 弹窗关闭且 toast 显示期间保持 host 存活，之后释放
                 [self performSelector:@selector(_releaseHost:) withObject:host afterDelay:1.6];
             }];
@@ -196,7 +204,7 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
                 [self markUnlocked];
                 finish(YES, @"解锁成功，本机已授权");
             } else {
-                [self toast:@"解锁码无效" onHost:host];   // 留在弹窗，等待正确输入
+                a.message = [baseMsg stringByAppendingString:@"\n\n❌ 解锁码无效，请重试。"];
             }
         }]];
 
@@ -219,6 +227,10 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
     }];
 }
 
-+ (void)_releaseHost:(UIWindow *)host { (void)host; /* 释放引用，ARC 自动回收 */ }
++ (void)_releaseHost:(UIWindow *)host {
+    host.userInteractionEnabled = NO;
+    host.hidden = YES;
+    host.rootViewController = nil;
+}
 
 @end
