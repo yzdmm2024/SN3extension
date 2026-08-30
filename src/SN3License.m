@@ -131,7 +131,7 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
         [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
             tf.placeholder = @"解锁码（15 位）";
             tf.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
-            tf.autocorrectionType = UITextCorrectionTypeNo;
+            tf.autocorrectionType = UITextAutocorrectionTypeNo;
             tf.clearButtonMode = UITextFieldViewModeWhileEditing;
         }];
 
