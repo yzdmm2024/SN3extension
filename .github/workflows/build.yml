@@ -83,6 +83,13 @@ jobs:
           cp .theos/obj/debug/SN3CCModule.bundle/SN3CCModule stage/var/jb/Library/ControlCenter/Bundles/SN3CCModule.bundle/ 2>/dev/null || \
           cp .theos/obj/SN3CCModule.bundle/SN3CCModule stage/var/jb/Library/ControlCenter/Bundles/SN3CCModule.bundle/ || { echo "FATAL: SN3CCModule executable not found"; exit 1; }
 
+          # ---- Companion App（v6.17 套壳）：拷贝 theos 产出的 .app
+          mkdir -p stage/var/jb/Applications
+          cp -R .theos/obj/debug/SN3Companion.app stage/var/jb/Applications/ 2>/dev/null || \
+          cp -R .theos/obj/SN3Companion.app stage/var/jb/Applications/ || { echo "FATAL: SN3Companion.app not found"; exit 1; }
+          # 对 app 可执行文件做假签名（theos 一般已签，这里兜底）
+          ldid -S stage/var/jb/Applications/SN3Companion.app/SN3Companion 2>/dev/null || true
+
           # ---- PreferenceLoader 入口
           mkdir -p stage/var/jb/Library/PreferenceLoader/Preferences
           cp layout/Library/PreferenceLoader/Preferences/Snapper3ZhExt.plist stage/var/jb/Library/PreferenceLoader/Preferences/
@@ -91,6 +98,8 @@ jobs:
           test -f stage/var/jb/Library/PreferenceBundles/Snapper3ZhExtPrefs.bundle/Snapper3ZhExtPrefs || { echo "FATAL: prefs executable missing"; exit 1; }
           test -f stage/var/jb/Library/PreferenceBundles/Snapper3ZhExtPrefs.bundle/Root.plist || { echo "FATAL: Root.plist missing"; exit 1; }
           test -f stage/var/jb/Library/ControlCenter/Bundles/SN3CCModule.bundle/SN3CCModule || { echo "FATAL: CC executable missing"; exit 1; }
+          test -f stage/var/jb/Applications/SN3Companion.app/SN3Companion || { echo "FATAL: companion app executable missing"; exit 1; }
+          plutil -extract CFBundleIdentifier raw stage/var/jb/Applications/SN3Companion.app/Info.plist
           plutil -extract NSPrincipalClass raw stage/var/jb/Library/PreferenceBundles/Snapper3ZhExtPrefs.bundle/Info.plist
 
           # ---- 保险：对所有 Mach-O 显式假签名（theos 一般已签，这里兜底）

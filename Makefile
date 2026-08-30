@@ -56,3 +56,19 @@ SN3CCModule_FRAMEWORKS = UIKit Foundation
 SN3CCModule_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/bundle.mk
+
+# ────────────────────────────────────────────────────────────────────────
+# v6.17：套壳 companion App（主屏图标 + snapper:// URL Scheme 唤起截图）
+#   点图标 / Siri·快捷指令 snapper://capture → notify_post 唤醒 Tweak.xm 的
+#   xz_ccCapture（已在 SpringBoard 注册）→ 拉起 MaskCropWindow 截图浮层。
+#   snapper://settings → 打开本插件设置面板。
+#   App 本身只是一个壳：截图 UI 仍由注入 SpringBoard 的 tweak 提供。
+# ────────────────────────────────────────────────────────────────────────
+APP_NAME = SN3Companion
+SN3Companion_FILES = App/main.m App/SN3AppDelegate.m App/SN3ViewController.m
+SN3Companion_INFORMATION_PROPERTY_LIST = App/Info.plist
+SN3Companion_RESOURCES = App/Icon.png App/Icon@2x.png App/Icon@3x.png
+SN3Companion_INSTALL_PATH = /Applications
+SN3Companion_FRAMEWORKS = UIKit Foundation
+SN3Companion_CFLAGS = -fobjc-arc -Wno-error -Wno-arc-performSelector-leaks
+include $(THEOS_MAKE_PATH)/application.mk
