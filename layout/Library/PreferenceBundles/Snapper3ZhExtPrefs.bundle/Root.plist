@@ -96,7 +96,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>pasteBigModelKey</string>
+			<string>pasteBigModelKey:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
@@ -104,7 +104,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>testBigModelConnection</string>
+			<string>testBigModelConnection:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
@@ -112,7 +112,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>openBigModelAPIPage</string>
+			<string>openBigModelAPIPage:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
@@ -128,7 +128,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>openAPIPage</string>
+			<string>openAPIPage:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
@@ -387,7 +387,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>testAskAIConnection</string>
+			<string>testAskAIConnection:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
@@ -395,7 +395,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>openArkPage</string>
+			<string>openArkPage:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
@@ -443,7 +443,7 @@
 		</dict>
 		<dict>
 			<key>action</key>
-			<string>openToolbarOrder</string>
+			<string>openToolbarOrder:</string>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>

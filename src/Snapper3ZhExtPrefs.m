@@ -71,15 +71,30 @@
     });
 }
 
-// v6.01: 修复「设置面板所有蓝色按钮（PSButtonCell）点击无反应」。
-// iOS 16 的 Preferences 里 PSButtonCell 会用自身的 buttonAction 触发，
-// 而 plist 的 <key>action</key> 声明式写法不会正确设置 buttonAction（点击被吞、无回调）。
-// 这里在 specifiers 加载后统一补 setButtonAction:，复用与 SN3LinksController 相同的已验证路径。
+// v6.02: 修复「设置面板所有蓝色按钮（PSButtonCell）点击无反应」的根因。
+// 根因：plist 里写的 action 是「testAskAIConnection / openArkPage / openToolbarOrder」这种
+//       不带冒号的字符串，但实际方法签名是带冒号的 testAskAIConnection:(PSSpecifier*)、
+//       openArkPage:(PSSpecifier*)（吃一个参数）。NSSelectorFromString(@"testAskAIConnection")
+//       得到的是 0 参数的选择器，跟带冒号的方法不是同一个 → PSButtonCell 点上去找不到方法、
+//       整组按钮（含 v5.23 的旧 测试连接/申请页）全部静默失效。
+// 修复：用 propertyForKey:@"action" 取出字符串后，若本类没有该无冒号方法、但有「带冒号」版本，
+//       则改用带冒号的选择器；并同时 setButtonAction: 与 setAction: 兼容框架两种写法。
 - (void)_applyButtonActions {
     for (PSSpecifier *s in self.specifiers) {
         NSString *act = [s propertyForKey:@"action"];
-        if ([act isKindOfClass:[NSString class]] && act.length) {
-            [s setButtonAction:NSSelectorFromString(act)];
+        if (![act isKindOfClass:[NSString class]] || act.length == 0) continue;
+        SEL sel = NSSelectorFromString(act);
+        if (![self respondsToSelector:sel]) {
+            NSString *alt = [act stringByAppendingString:@":"];
+            if ([self respondsToSelector:NSSelectorFromString(alt)]) {
+                sel = NSSelectorFromString(alt);
+            }
+        }
+        if ([self respondsToSelector:sel]) {
+            [s setButtonAction:sel];
+            if ([s respondsToSelector:@selector(setAction:)]) {
+                [s setAction:sel];
+            }
         }
     }
 }
