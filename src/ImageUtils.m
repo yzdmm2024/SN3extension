@@ -272,43 +272,75 @@
 
 #pragma mark - 手机外壳
 
-+ (UIImage *)applyPhoneFrame:(UIImage *)image {
-    CGFloat frameW = image.size.width + 40;
-    CGFloat frameH = image.size.height + 100;
-    CGFloat notchH = 34;
-    CGFloat bottomBarH = 20;
-    
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(frameW, frameH), NO, image.scale);
-    
-    // 背景（外壳）
-    UIBezierPath *framePath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, frameW, frameH)
-                                                         cornerRadius:30];
+// v6.05：按机型外壳参数把整屏截图套进透明「屏幕窗」，再在四周绘制手机中框 + 刘海。
+//       仅对「正常截图」生效（captureFullScreenAndSave 调用），局部截图不走这里。
++ (UIImage *)applyPhoneFrame:(UIImage *)image caseId:(NSString *)caseId {
+    if (!image || !image.CGImage) return image;
+    NSDictionary *p = [self phoneCaseParams:caseId];
+    if (!p) return image;                         // none / 未知 → 原图返回（不套壳）
+    CGFloat bezel   = [p[@"bezel"] floatValue];   // 中框厚度（点）
+    CGFloat screenR = [p[@"screenR"] floatValue]; // 屏幕圆角（点）
+    UIColor *bezelColor = p[@"color"];
+    BOOL notch = [p[@"notch"] boolValue];
+
+    CGFloat w = image.size.width, h = image.size.height;
+    CGFloat scale = image.scale > 0 ? image.scale : [UIScreen mainScreen].scale;
+    if (scale <= 0) scale = 3.0;
+    CGFloat bz = bezel * scale;                   // 中框（像素）
+    CGFloat sr = screenR * scale;                 // 屏幕圆角（像素）
+    CGFloat outW = w * scale + 2 * bz;
+    CGFloat outH = h * scale + 2 * bz;
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(outW, outH), NO, 1.0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+
+    // 外框（中框）
+    UIBezierPath *outer = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, outW, outH)
+                                                      cornerRadius:sr + bz];
+    [bezelColor setFill];
+    [outer fill];
+
+    // 屏幕区域（先把黑底铺上，避免截图透明处露白，再贴截图）
+    CGRect screenRect = CGRectMake(bz, bz, w * scale, h * scale);
+    UIBezierPath *screen = [UIBezierPath bezierPathWithRoundedRect:screenRect cornerRadius:sr];
+    [screen addClip];
     [[UIColor blackColor] setFill];
-    [framePath fill];
-    
-    // 屏幕区域
-    CGRect screenRect = CGRectMake(20, notchH + 10, image.size.width, image.size.height);
+    CGContextFillRect(ctx, screenRect);
     [image drawInRect:screenRect];
-    
-    // 刘海（notch）
-    CGFloat notchW = 120;
-    CGFloat notchX = (frameW - notchW) / 2;
-    UIBezierPath *notchPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(notchX, 0, notchW, notchH * 1.5)
-                                                         byRoundingCorners:UIRectCornerBottomLeft | UIRectCornerBottomRight
-                                                               cornerRadii:CGSizeMake(12, 12)];
-    [[UIColor blackColor] setFill];
-    [notchPath fill];
-    
-    // 底部横条
-    CGFloat barW = 120, barH = 4;
-    UIBezierPath *barPath = [UIBezierPath bezierPathWithRoundedRect:CGRectMake((frameW - barW)/2, frameH - bottomBarH - 8, barW, barH)
-                                                       cornerRadius:2];
-    [[UIColor colorWithWhite:0.3 alpha:1] setFill];
-    [barPath fill];
-    
+
+    // 刘海（屏幕顶部居中黑块）
+    if (notch) {
+        CGFloat nW = w * scale * 0.40, nH = 30 * scale;
+        CGFloat nX = (outW - nW) / 2.0;
+        UIBezierPath *np = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(nX, bz, nW, nH)
+                                                  byRoundingCorners:UIRectCornerBottomLeft | UIRectCornerBottomRight
+                                                        cornerRadii:CGSizeMake(14 * scale, 14 * scale)];
+        [[UIColor blackColor] setFill];
+        [np fill];
+    }
+
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    return result;
+    return result ?: image;
+}
+
+// 机型外壳参数表（v6.05 首版：iPhone 12 Pro 四色；后续可扩展）
++ (NSDictionary *)phoneCaseParams:(NSString *)caseId {
+    if (!caseId || [caseId isEqualToString:@"none"]) return nil;
+    if ([caseId isEqualToString:@"12pro_black"])
+        return @{@"bezel":@26.0, @"screenR":@47.0, @"color":[UIColor colorWithRed:0.12 green:0.12 blue:0.13 alpha:1], @"notch":@YES};
+    if ([caseId isEqualToString:@"12pro_blue"])
+        return @{@"bezel":@26.0, @"screenR":@47.0, @"color":[UIColor colorWithRed:0.15 green:0.21 blue:0.30 alpha:1], @"notch":@YES};
+    if ([caseId isEqualToString:@"12pro_silver"])
+        return @{@"bezel":@26.0, @"screenR":@47.0, @"color":[UIColor colorWithRed:0.85 green:0.86 blue:0.88 alpha:1], @"notch":@YES};
+    if ([caseId isEqualToString:@"12pro_gold"])
+        return @{@"bezel":@26.0, @"screenR":@47.0, @"color":[UIColor colorWithRed:0.92 green:0.86 blue:0.76 alpha:1], @"notch":@YES};
+    return nil;
+}
+
+// 向后兼容
++ (UIImage *)applyPhoneFrame:(UIImage *)image {
+    return [self applyPhoneFrame:image caseId:@"none"];
 }
 
 #pragma mark - 悬浮窗口

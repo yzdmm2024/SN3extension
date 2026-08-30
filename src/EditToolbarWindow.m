@@ -118,7 +118,7 @@ static EditToolbarWindow *_shared = nil;
 - (NSArray<NSNumber *> *)resolveEnabledTags {
     NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
                                        @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
-                                       @(ETBTagShare), @(ETBTagPhone), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip),
+                                       @(ETBTagShare), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip),
                                        @(ETBTagColorPick), @(ETBTagReset) ];
     NSMutableArray<NSNumber *> *savedOrder = [NSMutableArray array];
     NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
@@ -216,7 +216,7 @@ static EditToolbarWindow *_shared = nil;
     UIEdgeInsets safe = [Common screenSafeInsets];
 
     // v5.25.5：按钮顺序 / 禁用集合 / 单双排 由偏好决定（resolveEnabledTags 统一计算）。
-    // 默认顺序：OCR 翻译 画图 识码 AI 对话 旋转 复制 贴图 保存 分享 加壳 PDF 压缩 去状态栏 取色 还原。
+    // 默认顺序：OCR 翻译 画图 识码 AI 对话 旋转 复制 贴图 保存 分享 PDF 压缩 去状态栏 取色 还原。（v6.05：加壳移出手动按钮，改由「手机壳库」设置自动套壳）
     NSArray<NSNumber *> *enabledTags = [self resolveEnabledTags];
 
     // 按钮规格表（icon/label/tag）—— 整个工具栏统一从这里取，settings 排序也用这里
@@ -231,7 +231,6 @@ static EditToolbarWindow *_shared = nil;
         @(ETBTagFloating):  @{@"icon":@"pin",                         @"label":@"贴图"},
         @(ETBTagSave):      @{@"icon":@"square.and.arrow.down",       @"label":@"保存"},
         @(ETBTagShare):     @{@"icon":@"square.and.arrow.up",         @"label":@"分享"},
-        @(ETBTagPhone):     @{@"icon":@"iphone",                      @"label":@"加壳"},
         @(ETBTagPDF):       @{@"icon":@"doc.richtext",                @"label":@"PDF"},
         @(ETBTagCompress):  @{@"icon":@"arrow.down.circle",           @"label":@"压缩"},
         @(ETBTagStrip):     @{@"icon":@"menubar.rectangle",           @"label":@"去状态栏"},
@@ -402,16 +401,21 @@ static EditToolbarWindow *_shared = nil;
         [SuperTools floating:img withScreenRect:_imageView.frame];
         [EditToolbarWindow dismiss];
     } else if (tag == ETBTagSave) {
-        [SuperTools save:img completion:^(BOOL ok) {
+        // v6.05：手机壳库 —— 正常截图保存时按设置自动套壳
+        UIImage *toSave = img;
+        if ([Common boolPref:XZ_KEY_PHONE_CASE_ON default:NO]) {
+            NSString *caseId = [Common stringPref:XZ_KEY_PHONE_CASE default:@"none"];
+            if (caseId.length && ![caseId isEqualToString:@"none"]) {
+                UIImage *framed = [ImageUtils applyPhoneFrame:toSave caseId:caseId];
+                if (framed) toSave = framed;
+            }
+        }
+        [SuperTools save:toSave completion:^(BOOL ok) {
             [Common toast:ok ? @"已保存到相册" : @"保存失败"];
         }];
     } else if (tag == ETBTagShare) {
         [SuperTools share:img fromWindow:_win];
-    } else if (tag == ETBTagPhone) {
-        UIImage *c = [SuperTools phoneCase:img];
-        if (c) { [self replaceImage:c]; [Common toast:@"已加手机外壳"]; }
-        else [Common toast:@"处理失败"];
-    } else if (tag == ETBTagPDF) {
+    } else if (tag == ETBTagPDF) {       // v6.05：加壳移出手动按钮，改由「手机壳库」设置对正常截图自动套壳
         NSString *p = [SuperTools exportPDF:img];
         if (p) {
             NSURL *url = [NSURL fileURLWithPath:p];

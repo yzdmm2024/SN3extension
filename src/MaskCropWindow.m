@@ -140,6 +140,7 @@ static int SN3_LoopKVOContext = 0;
     UIImage         *_originalCropImage; // 首次裁剪原图，供「还原」用
     CGFloat         _localSetW;      // 单排循环：一组按钮总跨度
     BOOL            _rotateLongPressed; // 区分旋转点按(90°)/长按(180°)
+    UIImageView     *_previewIV;    // v6.05：左侧预览缩略图（旋转/还原/压缩后实时更新）
 }
 
 #pragma mark - 单例 / 生命周期
@@ -782,8 +783,9 @@ static int SN3_LoopKVOContext = 0;
 
     CGPoint loc = [pan locationInView:_contentView];
     CGRect b = _contentView.bounds;
-    // v5.7：选框顶部不低于安全区上沿，避免手柄被状态栏/刘海遮住导致「顶部无法正常使用」
-    CGFloat topLimit = [Common screenSafeInsets].top;
+    // v6.05：局部截图允许选区一直拖到屏幕最顶端(y=0)，从而能框选到状态栏/刘海上方
+    //        的信号、电量区域（captureScreen 抓的是整屏，含状态栏，裁剪自然包含）。
+    CGFloat topLimit = 0;
 
     // v5.20：当用户用 ≥2 指时让位给 pinch（缩放），避免 pan 的 loc 退化成双指质心后
     //         把 _cropRect 重置成 0,0 让 pinch 拿到 hasSelection=NO 而失效。
@@ -848,7 +850,7 @@ static int SN3_LoopKVOContext = 0;
             if (_resizeMask & XZResizeBottom) bot   = MAX(loc.y, top + minS);
             left  = MAX(0, left);
             right = MIN(b.size.width, right);
-            top   = MAX(topLimit, top);
+            top   = MAX(0, top);
             bot   = MIN(b.size.height, bot);
             if (right - left < minS) { if (left <= 0) right = minS; else left = right - minS; }
             if (bot - top  < minS) { if (top  <= 0) bot  = minS; else top  = bot  - minS; }
@@ -893,7 +895,7 @@ static int SN3_LoopKVOContext = 0;
         if (!isfinite(d) || d <= 0) return;
 
         CGRect b = _contentView.bounds;
-        CGFloat topLimit = [Common screenSafeInsets].top;
+        CGFloat topLimit = 0;        // v6.05：局部截图选区可到屏幕顶端(含状态栏)
         CGRect r = _cropRect;
         CGFloat cx = r.origin.x + r.size.width / 2.0;
         CGFloat cy = r.origin.y + r.size.height / 2.0;
@@ -1332,28 +1334,31 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     return panel;
 }
 
-// v4.9 / v6.04：在【独立窗口】上、选区下方同步弹出紧凑功能面板（不进全屏编辑窗）。
-//   · 含全部 17 个功能（OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/加壳/PDF/压缩/去状态栏/取色/还原），
+// v4.9 / v6.05：在【独立窗口】上、选区下方同步弹出紧凑功能面板（不进全屏编辑窗）。
+//   · 含 16 个功能（OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/PDF/压缩/去状态栏/取色/还原），
 //     与 EditToolbarWindow 用同一套 tag 值，故「工具栏排序」设置对它直接生效。
-//   · 单排=横向循环滑动；双排=每行 5 个自动折行。最右侧固定一个关闭按钮（不随滑动/折行移动）。
-//   · AI 按钮已合并「问AI/对话」：点开立即进对话，后台把截图文字当上下文。
+//     （「加壳」已移出局部工具栏 —— 改到「设置→手机壳库」，仅对「正常截图」生效。）
+//   · 左侧常驻一张当前裁剪图预览缩略图，旋转/还原/压缩后实时刷新，让操作看得见。
+//   · 单排=横向循环滑动；双排=每行 5 个自动折行。最右侧固定一个红色 X 关闭按钮。
 - (void)buildLocalPanelOnOwnWindowWithRect:(CGRect)rect {
     if (!_win) return;
     CGRect scr = [UIScreen mainScreen].bounds;
 
-    CGFloat iconS = 18.0;
-    CGFloat labelH = 12.0;
-    CGFloat rowH  = iconS + labelH + 10.0;   // 单排高
+    // v6.05：图标/文字/间距全面压缩，更紧凑但仍可点（按钮最小约 48pt 宽）
+    CGFloat iconS = 15.0;
+    CGFloat labelH = 11.0;
+    CGFloat rowH  = iconS + labelH + 6.0;   // 紧凑单行高
     CGFloat rowGap = 6.0;
-    CGFloat vPad  = 8.0;
+    CGFloat vPad  = 7.0;
     CGFloat pad   = 8.0;
-    CGFloat closeW = 48.0;                    // 最右侧关闭按钮占位
+    CGFloat closeW = 30.0;                    // 最右侧红色 X 占位（小、不占黑框）
+    CGFloat prevW  = 52.0;                    // 左侧预览缩略图宽
     CGFloat panelW = scr.size.width - pad * 2;
-    CGFloat areaW  = panelW - closeW - 8.0;   // 按钮区可用宽（右侧留给关闭）
+    CGFloat areaW  = panelW - closeW - prevW - 16.0;  // 按钮区可用宽（左留预览、右留关闭）
 
     BOOL singleRow = ([Common intPref:XZ_KEY_TB_LAYOUT default:0] == 1);
 
-    // 完整 17 功能目录（tag 值与 EditToolbarWindow 一致，便于「工具栏排序」互通）
+    // 局部工具栏目录（tag 值与 EditToolbarWindow 一致；不含「加壳」，加壳走正常截图）
     NSDictionary<NSNumber *, NSDictionary *> *catalog = @{
         @(XZLocalOCR):      @{@"icon":@"text.viewfinder",              @"label":@"OCR"},
         @(XZLocalTranslate):@{@"icon":@"translate",                    @"label":@"翻译"},
@@ -1365,7 +1370,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @(XZLocalFloating): @{@"icon":@"pin",                         @"label":@"贴图"},
         @(XZLocalSave):     @{@"icon":@"square.and.arrow.down",        @"label":@"保存"},
         @(XZLocalShare):    @{@"icon":@"square.and.arrow.up",          @"label":@"分享"},
-        @(XZLocalPhone):    @{@"icon":@"iphone",                      @"label":@"加壳"},
         @(XZLocalPDF):      @{@"icon":@"doc.richtext",                @"label":@"PDF"},
         @(XZLocalCompress): @{@"icon":@"arrow.down.circle",           @"label":@"压缩"},
         @(XZLocalStrip):    @{@"icon":@"menubar.rectangle",           @"label":@"去状态栏"},
@@ -1416,16 +1420,31 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     panel.userInteractionEnabled = YES;
     _localPanel = panel;
 
-    CGFloat bw, gap = 8.0;
+    // 左侧预览缩略图：显示当前裁剪图，旋转/还原/压缩后实时更新（让操作看得见）
+    if (!_previewIV) {
+        _previewIV = [[UIImageView alloc] init];
+        _previewIV.contentMode = UIViewContentModeScaleAspectFit;
+        _previewIV.layer.cornerRadius = 6;
+        _previewIV.clipsToBounds = YES;
+        _previewIV.layer.borderWidth = 1;
+        _previewIV.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.25].CGColor;
+        _previewIV.userInteractionEnabled = NO;
+    }
+    CGFloat prevH = panelH - vPad * 2;
+    _previewIV.frame = CGRectMake(8, vPad, prevW, prevH);
+    [panel addSubview:_previewIV];
+
+    CGFloat btnAreaX = 8 + prevW + 8;   // 按钮区起点（预览右侧）
+    CGFloat bw, gap = 6.0;
     if (singleRow) {
         // 单排 + 横向循环滑动（3 组首尾相接，越界无感回绕）
-        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(8, vPad, areaW, rowH)];
+        UIScrollView *sv = [[UIScrollView alloc] initWithFrame:CGRectMake(btnAreaX, vPad, areaW, rowH)];
         sv.showsHorizontalScrollIndicator = NO;
         sv.alwaysBounceHorizontal = YES;
         sv.delegate = self;
         sv.tag = 9902;                 // 本地面板循环滑动标记
         [panel addSubview:sv];
-        bw = 60.0;
+        bw = 52.0;
         CGFloat stride = (bw + gap) * (CGFloat)all.count;
         for (int copy = 0; copy < 3; copy++) {
             CGFloat x = (CGFloat)copy * stride + 6.0;
@@ -1441,22 +1460,23 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         _panelScroll = sv;
         _localSetW = stride;
     } else {
-        // 双排：每行 5 个自动折行（右侧预留关闭按钮位置）
+        // 双排：每行 5 个自动折行（左侧留预览、右侧留关闭）
         bw = (areaW - gap * (kCols - 1)) / (CGFloat)kCols;
+        if (bw < 48.0) bw = 48.0;     // 保证最小可点
         for (NSInteger i = 0; i < (NSInteger)all.count; i++) {
             NSInteger r = i / kCols, c = i % kCols;
             UIButton *b = [self makeLocalButton:all[i] iconSize:iconS labelH:labelH width:bw];
-            b.frame = CGRectMake(8 + c * (bw + gap), vPad + r * (rowH + rowGap), bw, rowH);
+            b.frame = CGRectMake(btnAreaX + c * (bw + gap), vPad + r * (rowH + rowGap), bw, rowH);
             [panel addSubview:b];
         }
     }
 
-    // 最右侧固定关闭按钮（不随滑动/折行移动，永远在工具栏最右）
+    // 最右侧固定红色 X 关闭（小、跟随工具栏右沿、一指可点）
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(panelW - closeW, y + (panelH - 40) / 2.0, closeW - 4, 40);
-    [close setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
-    close.tintColor = [UIColor colorWithRed:1 green:0.4 blue:0.4 alpha:1.0];
-    close.titleLabel.font = [UIFont systemFontOfSize:13];
+    close.frame = CGRectMake(panelW - closeW, y + (panelH - 34) / 2.0, closeW - 2, 34);
+    [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    close.tintColor = [UIColor systemRedColor];
+    close.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     [close addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
     [_panelWin addSubview:close];
     [_panelWin addInteractiveView:close];
@@ -1465,13 +1485,21 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     [_panelWin addSubview:_localPanel];
     [_panelWin addInteractiveView:_localPanel];   // 面板本身作为交互白名单
     [_panelWin bringSubviewToFront:_localPanel];
+
+    [self ensureCropImage];        // v6.05：进面板即裁好图，预览立刻有内容
+    [self updateLocalPreview];
+}
+
+// v6.05：把当前裁剪图刷新到左侧预览缩略图
+- (void)updateLocalPreview {
+    if (_previewIV) _previewIV.image = _cropImage;
 }
 
 // 与 EditToolbarWindow.resolveEnabledTags 同算法：读「工具栏排序」+ 禁用集合，返回启用按钮 tag 顺序
 - (NSArray<NSNumber *> *)resolveLocalTags {
     NSArray<NSNumber *> *defOrder = @[ @(XZLocalOCR), @(XZLocalTranslate), @(XZLocalDraw), @(XZLocalCode),
                                        @(XZLocalAI), @(XZLocalRotate), @(XZLocalCopy), @(XZLocalFloating),
-                                       @(XZLocalSave), @(XZLocalShare), @(XZLocalPhone), @(XZLocalPDF),
+                                       @(XZLocalSave), @(XZLocalShare), @(XZLocalPDF),
                                        @(XZLocalCompress), @(XZLocalStrip), @(XZLocalColorPick), @(XZLocalReset) ];
     NSMutableArray<NSNumber *> *saved = [NSMutableArray array];
     NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
@@ -1593,6 +1621,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         // 点按 90°；长按 180°（_rotateLongPressed 避免两者叠加）
         if (_rotateLongPressed) { _rotateLongPressed = NO; return; }
         [self rotateCropImageBy:M_PI_2];
+        [self updateLocalPreview];      // v6.05：旋转后立刻刷新左侧预览，让用户看到结果
     } else if (tag == XZLocalCopy) {
         [SuperTools copy:img];
         [Common toast:@"已复制到剪贴板"];
@@ -1608,10 +1637,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     } else if (tag == XZLocalShare) {
         // v5.22：分享面板也是 UIKit 弹窗, 同样不能用穿透窗口
         [SuperTools share:img fromWindow:_win];
-    } else if (tag == XZLocalPhone) {
-        UIImage *c = [SuperTools phoneCase:img];
-        if (c) { self->_cropImage = c; [Common toast:@"已加手机外壳"]; } else [Common toast:@"处理失败"];
-    } else if (tag == XZLocalPDF) {
+    } else if (tag == XZLocalPDF) {       // v6.05：加壳已移出局部工具栏，改为「手机壳库」设置，仅作用于正常截图
         NSString *p = [SuperTools exportPDF:img];
         if (p) {
             NSURL *url = [NSURL fileURLWithPath:p];
@@ -1628,14 +1654,17 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
             [Common toast:[NSString stringWithFormat:@"已压缩：%.0fKB → %.0fKB",
                            before.length / 1024.0, after.length / 1024.0]];
         } else { [Common toast:@"压缩失败"]; }
+        [self updateLocalPreview];      // v6.05：压缩后刷新预览
     } else if (tag == XZLocalStrip) {
         UIImage *s = [SuperTools stripStatusBar:img];
         if (s) { self->_cropImage = s; [Common toast:@"已去除顶部状态栏"]; } else [Common toast:@"处理失败"];
+        [self updateLocalPreview];      // v6.05：去状态栏后刷新预览（选框已能覆盖状态栏，此功能现在才看得见）
     } else if (tag == XZLocalColorPick) {
         [SuperTools colorPicker:img fromWindow:_win];
     } else if (tag == XZLocalReset) {
         if (_originalCropImage) { self->_cropImage = _originalCropImage; [Common toast:@"已还原原图"]; }
         else [Common toast:@"无原图可还原"];
+        [self updateLocalPreview];      // v6.05：还原后刷新预览
     }
 }
 
@@ -1744,6 +1773,14 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         UIImage *screen = [ImageUtils captureScreen];
         [ss dismiss];                            // 先销毁窗口A
         if (!screen) { [Common toast:@"截图失败"]; return; }
+        // v6.05：手机壳库 —— 正常截图按设置自动套壳（局部截图不走这里）
+        if ([Common boolPref:XZ_KEY_PHONE_CASE_ON default:NO]) {
+            NSString *caseId = [Common stringPref:XZ_KEY_PHONE_CASE default:@"none"];
+            if (caseId.length && ![caseId isEqualToString:@"none"]) {
+                UIImage *framed = [ImageUtils applyPhoneFrame:screen caseId:caseId];
+                if (framed) screen = framed;
+            }
+        }
         [ImageUtils saveToCustomAlbum:screen completion:^(BOOL ok, NSError *e) {
             [Common toast: ok ? @"已截图，已保存到相册「SN3截图」" : @"保存失败，请检查相册权限"];
         }];

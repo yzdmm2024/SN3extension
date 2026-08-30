@@ -801,15 +801,17 @@ static UIWindow *_floatWin = nil;
     return out ?: img;
 }
 
-// v5.15：贴图拖动。改用窗口 center（屏幕固定坐标）移动，图片 iv 始终相对窗口原位不变——
-//        不重绘、不重排，根除画面抖动/闪烁。用 locationInView:nil 取屏幕固定坐标算增量。
+// v5.15 / v6.05：贴图拖动。改用窗口 center 移动，图片 iv 始终相对窗口原位不变——
+//        不重绘、不重排，根除画面抖动/闪烁。坐标用 pan.view.superview（即浮窗自身坐标系，
+//        等于屏幕点坐标），避免 locationInView:nil 在 iOS13+ 场景模式下返回坐标错位导致的跳动/闪烁。
 + (void)panFloat:(UIPanGestureRecognizer *)pan {
     if (!_floatWin) return;
+    UIView *coordView = pan.view.superview ?: _floatWin;
     static CGPoint _floatLast;
     if (pan.state == UIGestureRecognizerStateBegan) {
-        _floatLast = [pan locationInView:nil];
+        _floatLast = [pan locationInView:coordView];
     } else if (pan.state == UIGestureRecognizerStateChanged) {
-        CGPoint loc = [pan locationInView:nil];
+        CGPoint loc = [pan locationInView:coordView];
         CGFloat dx = loc.x - _floatLast.x;
         CGFloat dy = loc.y - _floatLast.y;
         _floatLast = loc;
@@ -913,7 +915,8 @@ static UIWindow *_shareWin = nil;
 
 + (UIImage *)phoneCase:(UIImage *)image {
     if (!image) return nil;
-    return [ImageUtils applyPhoneFrame:image];
+    NSString *caseId = [Common stringPref:XZ_KEY_PHONE_CASE default:@"none"];
+    return [ImageUtils applyPhoneFrame:image caseId:caseId];
 }
 
 #pragma mark - 10a. 导出 PDF

@@ -457,6 +457,58 @@
 			<key>label</key>
 			<string>说明</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>选中机型外壳后，点「正常截图」会直接把整屏套上手机壳再存入相册。仅对正常截图生效，局部截图不受影响。</string>
+			<key>label</key>
+			<string>手机壳库</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PhoneCase_AutoOn</string>
+			<key>label</key>
+			<string>正常截图自动套壳</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PhoneCase_Id</string>
+			<key>title</key>
+			<string>手机壳</string>
+			<key>default</key>
+			<string>none</string>
+			<key>values</key>
+			<array>
+				<string>none</string>
+				<string>12pro_black</string>
+				<string>12pro_blue</string>
+				<string>12pro_silver</string>
+				<string>12pro_gold</string>
+			</array>
+			<key>titles</key>
+			<array>
+				<string>无（不套壳）</string>
+				<string>iPhone 12 Pro · 石墨黑</string>
+				<string>iPhone 12 Pro · 海蓝色</string>
+				<string>iPhone 12 Pro · 银色</string>
+				<string>iPhone 12 Pro · 金色</string>
+			</array>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>超级截图</string>

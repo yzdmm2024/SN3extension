@@ -47,7 +47,9 @@
         UIWindow *base = [Common topWindow];
         CGRect b = base.bounds;
         UIWindow *w = [[UIWindow alloc] initWithFrame:b];
-        w.windowLevel = base.windowLevel + 100;
+        // v6.05：AI 对话必须盖在局部工具栏(_panelWin≈Alert)之上，否则被压在下层看不见/点不动。
+        //        用固定高层级（高于浮窗+300、分享+400），保证始终在最上层。
+        w.windowLevel = UIWindowLevelAlert + 500;
         w.hidden = NO;
         if (@available(iOS 13.0, *)) {
             UIScene *s = [[UIApplication sharedApplication] connectedScenes].allObjects.firstObject;
