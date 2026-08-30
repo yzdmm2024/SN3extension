@@ -87,6 +87,71 @@
 			<string>PSButtonCell</string>
 			<key>label</key>
 			<string>    打开 智谱 BigModel 申请页（拿 API Key）</string>
+		</dict>		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>百度 PP-OCR 是官方免费文字识别（个人实名 1000 次/月），独立于「大模型库」。开启后识别引擎 / 翻译都改走它。需填「文字识别」应用的 API Key + Secret Key（两个都要）。</string>
+			<key>label</key>
+			<string>百度 PP-OCR（内置免费）</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PPOCR_Enabled</string>
+			<key>label</key>
+			<string>启用 PP-OCR 识别（覆盖大模型库）</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PPOCR_APIKey</string>
+			<key>label</key>
+			<string>PP-OCR API Key</string>
+			<key>placeholder</key>
+			<string>百度智能云「文字识别」应用 API Key</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.axs.snapper3zhext.prefsChanged</string>
+			<key>cell</key>
+			<string>PSSecureEditTextCell</string>
+			<key>defaults</key>
+			<string>com.axs.snapper3zhext</string>
+			<key>key</key>
+			<string>PPOCR_SecretKey</string>
+			<key>label</key>
+			<string>PP-OCR Secret Key</string>
+			<key>placeholder</key>
+			<string>百度智能云「文字识别」应用 Secret Key</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>testPPOCRConnection:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    测试 PP-OCR 连接（验证 Key 有效性）</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>openPPOCRPage:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    打开 百度智能云「文字识别」控制台（拿 Key）</string>
 		</dict>
 		<dict>
 			<key>cell</key>

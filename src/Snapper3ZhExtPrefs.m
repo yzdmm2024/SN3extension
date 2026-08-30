@@ -217,6 +217,64 @@
     if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
 }
 
+// v6.10: 打开百度智能云「文字识别」控制台（拿 API Key / Secret Key）
+- (void)openPPOCRPage:(PSSpecifier *)spec {
+    NSURL *u = [NSURL URLWithString:@"https://console.bce.baidu.com/ai/#/ai/ocr/overview/index"];
+    if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+}
+
+// v6.10: 验证百度 PP-OCR 的 Key 是否有效（只换 access_token，不需要图片）
+- (void)testPPOCRConnection:(PSSpecifier *)spec {
+    NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:XZ_PREFS_DOMAIN];
+    NSString *ak = [d stringForKey:XZ_KEY_PPOCR_AK] ?: @"";
+    NSString *sk = [d stringForKey:XZ_KEY_PPOCR_SK] ?: @"";
+    if (!ak.length || !sk.length) {
+        [self _sn3Alert:@"未配置 Key" msg:@"请先填入 PP-OCR 的 API Key 和 Secret Key（百度智能云「文字识别」应用获取）。"];
+        return;
+    }
+    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"测试中（百度 PP-OCR）"
+                                                                message:@"正在用 API Key / Secret Key 换取 access_token，请稍候…"
+                                                         preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:ac animated:YES completion:nil];
+    __block BOOL resolved = NO;
+    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:20.0 repeats:NO block:^(NSTimer *t) {
+        if (resolved) return;
+        resolved = YES;
+        ac.title = @"✗ 验证失败";
+        ac.message = @"请求超时（20 秒未响应）。请检查设备网络，或确认 API Key / Secret Key 是否正确。";
+        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+            [ac dismissViewControllerAnimated:YES completion:nil];
+        }]];
+    }];
+    NSString *u = [NSString stringWithFormat:@"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%@&client_secret=%@", ak, sk];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:u]];
+    [req setHTTPMethod:@"GET"];
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        if (resolved) return;
+        resolved = YES;
+        [timer invalidate];
+        if (err) {
+            ac.title = @"✗ 验证失败";
+            ac.message = [NSString stringWithFormat:@"网络错误：%@", err.localizedDescription];
+        } else {
+            NSError *je = nil;
+            id j = [NSJSONSerialization JSONObjectWithData:data options:0 error:&je];
+            if ([j isKindOfClass:[NSDictionary class]] && j[@"access_token"]) {
+                ac.title = @"✓ Key 有效";
+                ac.message = @"API Key / Secret Key 正确，已成功换取 access_token。\n\n去主面板点 OCR 即可识别文字（个人实名免费 1000 次/月）。";
+            } else {
+                NSString *em = j[@"error_description"] ?: j[@"error"] ?: @"未知错误";
+                ac.title = @"✗ Key 无效";
+                ac.message = [NSString stringWithFormat:@"百度鉴权失败：%@\n\n请检查：① API Key 和 Secret Key 是否填反；② 是否来自「文字识别」应用（不是别的 AI 服务）。", em];
+            }
+        }
+        [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+            [ac dismissViewControllerAnimated:YES completion:nil];
+        }]];
+    }];
+    [task resume];
+}
+
 - (void)openAPIPage:(PSSpecifier *)spec {
     // 这里保留「打开 API 开通页面」总入口, 跳到智谱 BigModel 申请页 (后续要分两段可拆)
     NSURL *u = [NSURL URLWithString:@"https://bigmodel.cn/usercenter/apikeys"];

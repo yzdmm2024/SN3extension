@@ -126,6 +126,11 @@ static CGRect XZRectFromValue(id v) {
 // 失败: 弹 alert 显示原始 error message, 调用方收到 nil items
 + (void)ocrViaBigModel:(UIImage *)image
             completion:(void (^)(NSArray<NSDictionary *> *items, NSString *err))completion {
+    // v6.10：若启用了内置百度 PP-OCR，则走独立免费通道（覆盖大模型库）
+    if ([Common boolPref:XZ_KEY_PPOCR_ON default:NO]) {
+        [self ocrViaPPOCR:image completion:completion];
+        return;
+    }
     // v6.07：识别引擎改走「大模型库」——从 ModelOCR_ID 取选中的模型配置
     NSDictionary *cfg = [Common sn3OCRConfig];
     if (!cfg) {
@@ -196,6 +201,130 @@ static CGRect XZRectFromValue(id v) {
         }
         if (completion) completion(items, nil);
     }];
+}
+
+#pragma mark - v6.10 内置百度 PP-OCR（免费文字识别，独立通道）
+
+// 严格 form-urlencode：编码所有非 [A-Za-z0-9] 字符。base64 里的 + / = 在
+// x-www-form-urlencoded 中必须编码，否则服务端会把 + 当空格、破坏 base64。
++ (NSString *)_ppocrUrlEncode:(NSString *)s {
+    if (!s.length) return @"";
+    NSMutableString *out = [NSMutableString stringWithCapacity:s.length];
+    const unsigned char *p = (const unsigned char *)[s UTF8String];
+    for (size_t i = 0; p[i]; i++) {
+        unsigned char c = p[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            [out appendFormat:@"%c", c];
+        } else {
+            [out appendFormat:@"%%%02X", c];
+        }
+    }
+    return out;
+}
+
++ (void)ocrViaPPOCR:(UIImage *)image
+         completion:(void (^)(NSArray<NSDictionary *> *items, NSString *err))completion {
+    NSString *ak = [Common stringPref:XZ_KEY_PPOCR_AK default:@""];
+    NSString *sk = [Common stringPref:XZ_KEY_PPOCR_SK default:@""];
+    if (!ak.length || !sk.length) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, @"百度 PP-OCR 未配置：请到「设置 → 超级截图 → 识别引擎 → 百度 PP-OCR」填入 API Key 和 Secret Key（百度智能云「文字识别」应用获取，个人实名免费 1000 次/月）。");
+            });
+        }
+        return;
+    }
+    // 缩图：百度要求图片 base64 后大小不超过 4M，压到最长边 2048 + JPEG 0.8 一般够
+    UIImage *tiny = [self bdShrink:image maxDim:2048];
+    NSData *jpeg = UIImageJPEGRepresentation(tiny, 0.8);
+    if (!jpeg.length) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, @"图像编码失败"); });
+        }
+        return;
+    }
+    NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
+    NSString *imgParam = [self _ppocrUrlEncode:b64];
+
+    NSURLSession *sess = [NSURLSession sharedSession];
+    // 1) 用 API Key + Secret Key 换 access_token（有效期约 30 天；每次换取不计入 OCR 免费额度）
+    NSString *tokenURL = [NSString stringWithFormat:
+        @"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%@&client_secret=%@",
+        [self _ppocrUrlEncode:ak], [self _ppocrUrlEncode:sk]];
+    NSMutableURLRequest *treq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:tokenURL]];
+    [treq setHTTPMethod:@"GET"];
+    [treq setTimeoutInterval:20];
+    [[sess dataTaskWithRequest:treq completionHandler:^(NSData *td, NSURLResponse *tr, NSError *te) {
+        if (te) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"获取百度 access_token 失败：%@", te.localizedDescription]);
+            });
+            return;
+        }
+        NSError *je = nil;
+        id tj = [NSJSONSerialization JSONObjectWithData:td options:0 error:&je];
+        if (![tj isKindOfClass:[NSDictionary class]] || !tj[@"access_token"]) {
+            NSString *em = tj[@"error_description"] ?: tj[@"error"] ?: @"百度返回异常";
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSString stringWithFormat:@"百度鉴权失败（API Key / Secret Key 可能填反或错误）：%@", em]);
+            });
+            return;
+        }
+        NSString *token = tj[@"access_token"];
+        // 2) 调 PP-OCRv6 接口（百度文档里 PP-OCRv6 走 pp_ocrv5 接口名）
+        NSString *ocrURL = [NSString stringWithFormat:
+            @"https://aip.baidubce.com/rest/2.0/ocr/v1/pp_ocrv5?access_token=%@", token];
+        NSMutableURLRequest *oreq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:ocrURL]];
+        [oreq setHTTPMethod:@"POST"];
+        [oreq setValue:@"application/x-www-form-urlencoded" forHTTPHeaderField:@"Content-Type"];
+        [oreq setTimeoutInterval:30];
+        oreq.HTTPBody = [[NSString stringWithFormat:@"image=%@", imgParam] dataUsingEncoding:NSUTF8StringEncoding];
+        [[sess dataTaskWithRequest:oreq completionHandler:^(NSData *od, NSURLResponse *or_, NSError *oe) {
+            if (oe) {
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, [NSString stringWithFormat:@"百度 OCR 请求失败：%@", oe.localizedDescription]);
+                });
+                return;
+            }
+            NSError *je2 = nil;
+            id oj = [NSJSONSerialization JSONObjectWithData:od options:0 error:&je2];
+            if (![oj isKindOfClass:[NSDictionary class]]) {
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, @"百度 OCR 返回非 JSON 数据");
+                });
+                return;
+            }
+            NSNumber *ec = oj[@"error_code"];
+            if (ec && ec.integerValue != 0) {
+                NSString *em = oj[@"error_msg"] ?: @"百度 OCR 错误";
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, [NSString stringWithFormat:@"百度 OCR 错误(%@)：%@", ec, em]);
+                });
+                return;
+            }
+            NSArray *wr = oj[@"words_result"];
+            if (![wr isKindOfClass:[NSArray class]] || !wr.count) {
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, @"百度 PP-OCR 未识别到任何文字");
+                });
+                return;
+            }
+            NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+            for (NSDictionary *w in wr) {
+                NSString *t = w[@"words"];
+                if ([t isKindOfClass:[NSString class]] && t.length) {
+                    [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:CGRectZero] }];
+                }
+            }
+            if (!items.count) {
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(nil, @"百度 PP-OCR 未识别到任何文字");
+                });
+                return;
+            }
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(items, nil); });
+        }] resume];
+    }] resume];
 }
 
 // 去掉 ```xxx\n...\n``` 代码块包裹 (智谱有时会包)

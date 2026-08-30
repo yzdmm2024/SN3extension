@@ -62,6 +62,13 @@
 #define XZ_KEY_MODEL_TRANS      @"ModelTrans_ID"     // 翻译 选用的模型 id
 #define XZ_KEY_MODEL_MIGRATED   @"ModelLib_Migrated" // 一次性迁移标记
 
+// v6.10：内置百度 PP-OCR（官方免费文字识别，独立通道，不走大模型库）
+//   鉴权需 API Key + Secret Key 两个（百度智能云「文字识别」应用，不是单个 token）
+//   开启 XZ_KEY_PPOCR_ON 后，识别引擎 / 翻译 走 PP-OCR，忽略大模型库的 OCR 模型选择
+#define XZ_KEY_PPOCR_ON    @"PPOCR_Enabled"   // 是否启用内置 PP-OCR（默认关）
+#define XZ_KEY_PPOCR_AK    @"PPOCR_APIKey"    // 百度智能云 API Key
+#define XZ_KEY_PPOCR_SK    @"PPOCR_SecretKey" // 百度智能云 Secret Key
+
 // 自定义资源目录（用户用 Filza 放入；SpringBoard 可调取）
 #define XZ_PHONE_FRAME_DIR  @"/var/mobile/Documents/com.axs.snapper3zhext/Frames"   // 自定义机框：每机型一个子目录(frame.png + info.json)
 #define XZ_HISTORY_DIR       @"/var/mobile/Documents/com.axs.snapper3zhext/History" // 历史截图缩略图
