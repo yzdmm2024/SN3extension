@@ -27,14 +27,17 @@
 }
 
 + (void)showWithTitle:(NSString *)title firstText:(NSString *)firstText {
-    [[self shared] show:title firstText:firstText];
+    [[self shared] show:title firstText:firstText image:nil];
+}
++ (void)showWithTitle:(NSString *)title firstText:(NSString *)firstText image:(UIImage *)image {
+    [[self shared] show:title firstText:firstText image:image];
 }
 + (void)appendContext:(NSString *)text {
     [[self shared] appendContext:text];
 }
 + (void)dismiss { [[self shared] hide]; }
 
-- (void)show:(NSString *)title firstText:(NSString *)firstText {
+- (void)show:(NSString *)title firstText:(NSString *)firstText image:(UIImage *)image {
     dispatch_async(dispatch_get_main_queue(), ^{
         [self hideWithoutAnimation];
         self.busy = NO;
@@ -42,7 +45,17 @@
         self.systemPrompt = custom.length ? custom : @"你是手机上截图助手中的 AI；中文回复，语言简洁准确。";
         self.messages = [NSMutableArray array];
         [self.messages addObject:@{ @"role" : @"system", @"content" : self.systemPrompt }];
-        [self.messages addObject:@{ @"role" : @"user", @"content" : firstText ?: @"" }];
+        if (image) {
+            // v6.20.4：带图问 AI —— 首条 user 消息写成多模态数组（文字 + 图片），
+            // AskAIEngine 原样把 messages 塞进 JSON，OpenAI 兼容视觉模型即可看图。
+            NSString *dataURL = [[self class] sn3ImageDataURL:image];
+            NSMutableArray<NSDictionary *> *parts = [NSMutableArray array];
+            if (firstText.length) [parts addObject:@{ @"type" : @"text", @"text" : firstText }];
+            if (dataURL.length)  [parts addObject:@{ @"type" : @"image_url", @"image_url" : @{ @"url" : dataURL } }];
+            [self.messages addObject:@{ @"role" : @"user", @"content" : parts }];
+        } else {
+            [self.messages addObject:@{ @"role" : @"user", @"content" : firstText ?: @"" }];
+        }
 
         UIWindow *base = [Common topWindow];
         CGRect b = base.bounds;
@@ -167,13 +180,46 @@
     NSMutableString *s = [NSMutableString string];
     for (NSDictionary *m in self.messages) {
         NSString *role = m[@"role"];
-        NSString *content = m[@"content"];
+        id raw = m[@"content"];
+        NSString *content;
+        if ([raw isKindOfClass:[NSArray class]]) {
+            // v6.20.4：多模态消息 content 是 parts 数组，抽取其中的 text 段渲染
+            NSMutableString *txt = [NSMutableString string];
+            for (NSDictionary *p in raw) {
+                if ([p isKindOfClass:[NSDictionary class]] && [p[@"type"] isEqualToString:@"text"]) {
+                    NSString *t = p[@"text"];
+                    if ([t isKindOfClass:[NSString class]]) [txt appendString:t];
+                }
+            }
+            content = txt;
+        } else if ([raw isKindOfClass:[NSString class]]) {
+            content = raw;
+        } else {
+            content = @"";
+        }
         if ([role isEqualToString:@"system"]) continue;
         NSString *label = [role isEqualToString:@"assistant"] ? @"AI 助手" : @"你";
         if (s.length) [s appendString:@"\n\n"];
         [s appendString:[NSString stringWithFormat:@"【%@】\n%@", label, content]];
     }
     return s;
+}
+
+// v6.20.4：把 UIImage 压成 JPEG data URL（长边缩到 2048，质量 0.8），供视觉模型多模态输入。
++ (NSString *)sn3ImageDataURL:(UIImage *)image {
+    if (!image) return nil;
+    CGFloat maxSide = 2048;
+    CGFloat w = image.size.width, h = image.size.height;
+    CGFloat scale = MIN(1.0, maxSide / MAX(w, h));
+    CGSize ts = CGSizeMake((NSInteger)(w * scale), (NSInteger)(h * scale));
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:ts];
+    UIImage *small = [r imageWithActions:^(UIGraphicsImageRendererContext * _Nonnull ctx) {
+        [image drawInRect:CGRectMake(0, 0, ts.width, ts.height)];
+    }];
+    NSData *jpeg = UIImageJPEGRepresentation(small, 0.8);
+    if (!jpeg || jpeg.length == 0) return nil;
+    NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
+    return [NSString stringWithFormat:@"data:image/jpeg;base64,%@", b64];
 }
 
 - (void)ask {

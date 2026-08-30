@@ -32,6 +32,7 @@ typedef NS_ENUM(NSInteger, ETBTag) {
     ETBTagCodeScan   = 4,
     ETBTagAI        = 17,   // 问 AI（大模型）
     ETBTagAIChat    = 18,   // AI 对话（小窗自由对话，可接豆包）
+    ETBTagAIImage   = 20,   // 看图问 AI（把原图作为多模态内容发给视觉模型）
     ETBTagRotate    = 19,   // 旋转当前图（90°步进）
     // 第 2 排：输出操作
     ETBTagCopy       = 6,
@@ -116,7 +117,7 @@ static EditToolbarWindow *_shared = nil;
 
 // v5.25.5：统一计算「当前应显示的按钮顺序（去禁用、补缺失）」，单排/双排共用
 - (NSArray<NSNumber *> *)resolveEnabledTags {
-    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
+    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI), @(ETBTagAIImage),
                                        @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
                                        @(ETBTagShare), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip),
                                        @(ETBTagColorPick), @(ETBTagReset) ];
@@ -226,6 +227,7 @@ static EditToolbarWindow *_shared = nil;
         @(ETBTagDraw):      @{@"icon":@"pencil.tip",                  @"label":@"画图"},
         @(ETBTagCodeScan):  @{@"icon":@"qrcode.viewfinder",           @"label":@"识码"},
         @(ETBTagAI):        @{@"icon":@"sparkles",                    @"label":@"AI"},
+        @(ETBTagAIImage):   @{@"icon":@"photo",                       @"label":@"看图问AI"},
         @(ETBTagRotate):    @{@"icon":@"rotate.right",                @"label":@"旋转"},
         @(ETBTagCopy):      @{@"icon":@"doc.on.doc",                  @"label":@"复制"},
         @(ETBTagFloating):  @{@"icon":@"pin",                         @"label":@"贴图"},
@@ -402,6 +404,28 @@ static EditToolbarWindow *_shared = nil;
         [AIChatWindow showWithTitle:@"AI 对话" firstText:@"这是关于你当前截图的对话，直接提问即可。"];
         [SuperTools ocr:img completion:^(NSString *text) {
             if (text.length) [AIChatWindow appendContext:text];
+        }];
+    } else if (tag == ETBTagAIImage) {
+        // v6.20.4：看图问 AI —— 把原图作为多模态内容发给所选视觉模型（豆包/智谱/通义/gpt-4o）。
+        // DeepSeek-chat 是纯文本模型，看不到图，提前拦截并提示换视觉模型。
+        NSDictionary *aiCfg = [Common sn3AIConfig];
+        NSString *aiKey = [Common sn3ModelField:aiCfg key:@"apiKey" def:@""];
+        NSString *vendor = [Common sn3ModelField:aiCfg key:@"vendor" def:@""];
+        if (!aiCfg || aiKey.length == 0) {
+            [Common sn3AlertError:@"AI 还没配好"
+                          message:aiCfg ? @"「问AI」所选模型没填 API Key。\n\n请到「设置 → 超级截图 → 大模型库」，点开该模型补上 API Key。"
+                                        : @"「问AI」还没选模型。\n\n请到「设置 → 超级截图 → 大模型库」：\n1) 点 + 从预设一键导入（DeepSeek / OpenAI / 智谱 等）\n2) 填入你的 API Key\n3) 回到「问AI · 使用模型」选中它"];
+            return;
+        }
+        if ([vendor isEqualToString:@"deepseek"]) {
+            [Common sn3AlertError:@"该模型不支持看图"
+                          message:@"「问AI · 使用模型」当前选的是 DeepSeek（纯文本模型），看不到图片。\n\n请到「设置 → 超级截图 → 大模型库」改选支持视觉的模型：\n• 火山方舟(豆包)  doubao-seed / doubao-vision\n• 智谱 glm-4v-flash\n• 通义 qwen-vl\n• OpenAI gpt-4o"];
+            return;
+        }
+        [Common toast:@"正在识别文字并准备图片…"];
+        [SuperTools ocr:img completion:^(NSString *text) {
+            NSString *first = text.length ? text : @"请分析这张图片并回答我的问题。";
+            [AIChatWindow showWithTitle:@"看图问 AI" firstText:first image:img];
         }];
     } else if (tag == ETBTagRotate) {
         // v5.25.7：区分点按(90°)与长按(180°)。长按已置 _rotateLongPressed，
