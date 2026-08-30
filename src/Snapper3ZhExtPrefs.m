@@ -7,7 +7,9 @@
 #import "SN3ModelStore.h"
 #import "SN3License.h"
 
-@class SN3LaunchAppsController;
+// v6.20.9 快捷启动 App 管理页（@interface 前置，供 openLaunchApps: 的 alloc/init 通过编译）
+@interface SN3LaunchAppsController : UIViewController <UITableViewDataSource, UITableViewDelegate>
+@end
 
 // 设置面板主控制器：iOS 设置 → 超级截图
 @interface SN3PrefsController : PSListController
@@ -564,9 +566,6 @@
 @end
 
 #pragma mark - v6.20.9 快捷启动 App 管理
-
-@interface SN3LaunchAppsController : UIViewController <UITableViewDataSource, UITableViewDelegate>
-@end
 
 @implementation SN3LaunchAppsController {
     NSMutableArray<NSDictionary *> *_apps;
