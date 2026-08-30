@@ -587,6 +587,38 @@
 			<key>placeholder</key>
 			<string>50</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>本插件已绑定设备 UDID，需输入解锁码才能使用。点「复制本机 UDID」把设备标识发给开发者生成解锁码，再点「验证 / 解锁」输入。解锁后本机永久生效（清除插件数据需重新解锁）。</string>
+			<key>label</key>
+			<string>设备授权（UDID 验证）</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>sn3CopyUDID:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    复制本机 UDID（发给开发者获取解锁码）</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>sn3ShowVerification:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    验证 / 解锁（输入解锁码）</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>sn3RevokeLicense:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    锁定本机（撤销授权）</string>
+		</dict>
 	</array>
 	<key>title</key>
 	<string>超级截图</string>

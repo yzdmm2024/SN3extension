@@ -26,6 +26,7 @@
 #import "EditToolbarWindow.h"
 #import "SN3Notify.h"
 #import "AppScrollReporter.h"
+#import "SN3License.h"
 
 // 控制中心点按 → 拉起窗口A（遮罩镂空框选）
 static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
@@ -39,6 +40,17 @@ static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
             // 总开关（设置面板第一项，默认开）
             if (![Common boolPref:XZ_KEY_MENU_ENABLED default:YES]) {
                 NSLog(@"[SN3] disabled by pref");
+                return;
+            }
+            // v6.20：设备授权验证（UDID 解锁码）。未解锁则弹验证框，不直接进截图。
+            if (![SN3License isUnlocked]) {
+                NSLog(@"[SN3] 未授权设备 -> 弹验证框");
+                [SN3License presentVerificationFromWindow:nil completion:^(BOOL unlocked) {
+                    if (unlocked) {
+                        // 解锁成功后直接进入截图（此时 isUnlocked 已为真，show 不会再被拦）
+                        [[MaskCropWindow sharedInstance] show];
+                    }
+                }];
                 return;
             }
             NSLog(@"[SN3] CC tapped -> show mask crop window (A)");

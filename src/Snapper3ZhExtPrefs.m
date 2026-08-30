@@ -5,6 +5,7 @@
 #import "AskAIEngine.h"
 #import "ToolbarOrderController.h"
 #import "SN3ModelStore.h"
+#import "SN3License.h"
 
 // 设置面板主控制器：iOS 设置 → 超级截图
 @interface SN3PrefsController : PSListController
@@ -460,6 +461,30 @@
                                                          preferredStyle:UIAlertControllerStyleAlert];
     [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:ac animated:YES completion:nil];
+}
+
+#pragma mark - v6.20 设备授权（UDID 验证）
+
+- (void)sn3CopyUDID:(PSSpecifier *)spec {
+    (void)spec;
+    NSString *udid = [SN3License deviceUDID];
+    [[UIPasteboard generalPasteboard] setString:udid];
+    [self _sn3Alert:@"已复制 UDID" msg:[NSString stringWithFormat:@"本机 UDID：\n%@", udid]];
+}
+
+- (void)sn3ShowVerification:(PSSpecifier *)spec {
+    (void)spec;
+    [SN3License presentVerificationFromWindow:nil completion:^(BOOL unlocked) {
+        [self _sn3Alert:unlocked ? @"已解锁" : @"未解锁"
+                      msg:unlocked ? @"本机已授权，可正常使用全部功能。"
+                                  : @"尚未授权：点「复制本机 UDID」发给开发者获取解锁码后，再点本按钮输入。"];
+    }];
+}
+
+- (void)sn3RevokeLicense:(PSSpecifier *)spec {
+    (void)spec;
+    [SN3License revoke];
+    [self _sn3Alert:@"已锁定" msg:@"本机授权已撤销，下次使用「超级截图」需重新输入解锁码。"];
 }
 
 @end
