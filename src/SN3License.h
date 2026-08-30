@@ -14,6 +14,7 @@
 //    避开 v6.09 在 SpringBoard 自建 key window 弹 alert 打进安全模式的坑。
 //
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 @interface SN3License : NSObject
 

@@ -8,8 +8,8 @@
 
 static NSString * const kSN3LicDomain  = @"com.axs.snapper3zhext";
 static NSString * const kSN3LicUnlocked = @"License_Unlocked";
-// 56 字符集（去掉易混淆的 0 O 1 l I）
-static NSString * const kSN3Charset = @"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz";
+// 56 字符集（去掉易混淆的 0 O 1 l I）；用 C 字符串以支持下标取字符
+static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz";
 
 @implementation SN3License
 
@@ -60,10 +60,11 @@ static NSString * const kSN3Charset = @"23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefgh
     unsigned char h[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256((const void *)m, (CC_LONG)strlen(m), h);
     NSMutableString *code = [NSMutableString stringWithCapacity:15];
+    unsigned long cl = strlen(kSN3Charset);
     for (int i = 0; i < 15; i++) {
         unsigned int v = ((unsigned int)h[i * 2 % CC_SHA256_DIGEST_LENGTH] << 8)
                         | (unsigned int)h[(i * 2 + 1) % CC_SHA256_DIGEST_LENGTH];
-        [code appendFormat:@"%C", (unichar)kSN3Charset[v % kSN3Charset.length]];
+        [code appendFormat:@"%C", (unichar)(unsigned char)kSN3Charset[v % cl]];
     }
     return code;
 }
