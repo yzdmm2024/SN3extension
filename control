@@ -1,8 +1,8 @@
 Package: com.axs.snapper3zhext
 Name: 超级截图
-Version: 6.03
+Version: 6.04
 Architecture: iphoneos-arm64
-Description: [v6.03] ①修「测试连接」卡死: 旧实现先弹「测试中」再弹第二个 alert, PSListController 上同时 present 两个 alert 被 UIKit 静默丢弃导致「测试中」永久卡屏; 改为单个 alert 原地更新结果+追加「知道了」, 并加 30s 超时兜底, 接口不响应也能看到明确反馈. ②修「局部截图工具栏跟设置对不上」: 框选确认后原代码只弹写死的 8 按钮原地面板, 那套 17 按钮的 EditToolbarWindow 虽已编译却从没被调用, 导致看不到 AI/对话/旋转/加壳/PDF/压缩/去状态栏/取色/还原, 且「工具栏排序」设置形同虚设; 现框选确认直接跳到 EditToolbarWindow(完整工具栏), 排序/单双排/无限循环滑动全部生效. (沿用 v6.02 蓝色按钮修复 + v6.01 排序页 + v5.25 UI 优化)
+Description: [v6.04] ①回退 v6.03 误加的「全屏编辑窗」: 框选确认后改为在选区下方弹出紧凑工具栏(不占满全屏), 工具栏含全部 17 功能(OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/加壳/PDF/压缩/去状态栏/取色/还原), 单排=横向循环滑动, 双排=每行5个折行, 最右侧固定关闭按钮, 且读「工具栏排序」设置. ②合并「问AI/对话」为单一「AI」按钮: 点开立即进对话, 后台把截图文字当上下文(比先OCR再开更快). ③AI对话浮层用 topWindow+100 盖在最上方, 不再被截图压住. (沿用 v6.03 测试连接修复 + v6.02 蓝色按钮 + v6.01 排序页 + v5.25 UI 优化)
 Depends: mobilesubstrate, firmware(>=14.0), preferenceloader
 Maintainer: yzdmm2024
 Author: yzdmm2024

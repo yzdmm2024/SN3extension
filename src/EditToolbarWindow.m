@@ -117,7 +117,7 @@ static EditToolbarWindow *_shared = nil;
 // v5.25.5：统一计算「当前应显示的按钮顺序（去禁用、补缺失）」，单排/双排共用
 - (NSArray<NSNumber *> *)resolveEnabledTags {
     NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
-                                       @(ETBTagAIChat), @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
+                                       @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
                                        @(ETBTagShare), @(ETBTagPhone), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip),
                                        @(ETBTagColorPick), @(ETBTagReset) ];
     NSMutableArray<NSNumber *> *savedOrder = [NSMutableArray array];
@@ -226,7 +226,6 @@ static EditToolbarWindow *_shared = nil;
         @(ETBTagDraw):      @{@"icon":@"pencil.tip",                  @"label":@"画图"},
         @(ETBTagCodeScan):  @{@"icon":@"qrcode.viewfinder",           @"label":@"识码"},
         @(ETBTagAI):        @{@"icon":@"sparkles",                    @"label":@"AI"},
-        @(ETBTagAIChat):    @{@"icon":@"bubble.left.and.bubble.right",@"label":@"对话"},
         @(ETBTagRotate):    @{@"icon":@"rotate.right",                @"label":@"旋转"},
         @(ETBTagCopy):      @{@"icon":@"doc.on.doc",                  @"label":@"复制"},
         @(ETBTagFloating):  @{@"icon":@"pin",                         @"label":@"贴图"},
@@ -377,28 +376,17 @@ static EditToolbarWindow *_shared = nil;
             [self presentCodeAction:code];
         }];
     } else if (tag == ETBTagAI) {
+        // v6.04：合并「问AI / 对话」为单一 AI 按钮 —— 立即进对话，后台把截图文字当上下文。
+        // 未配置密钥时给出明确指引（不再静默无反应）。
         NSString *key = [Common stringPref:XZ_KEY_AI_KEY default:@""];
         if (key.length == 0) {
-            // v5.8：未配置密钥时给出明确指引，不再静默无反应
             UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"未配置 AI 接口"
-                                                                       message:@"请先在「设置 → 超级截图 → AI/大模型」填写：\n• 接口地址（如 https://api.deepseek.com/v1）\n• API Key\n• 模型名（如 deepseek-chat）"
+                                                                       message:@"请先在「设置 → 超级截图 → AI/大模型」填写：\n• 接口地址（如 https://api.deepseek.com/v1）\n• API Key\n• 模型名（如 deepseek-chat；火山方舟填 ep-xxxx 接入点 ID）"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
             [ac addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
             [Common present:ac fromWindow:_win];
             return;
         }
-        [Common toast:@"正在识别图中文字…"];
-        [SuperTools ocr:img completion:^(NSString *text) {
-            NSString *prompt = [Common stringPref:XZ_KEY_AI_PROMPT default:@""];
-            NSString *sys = prompt.length ? prompt : @"请总结图片中的文字内容，并回答我的追问：";
-            NSString *first = [NSString stringWithFormat:@"%@\n\n【图片中识别到的文字】\n%@",
-                               sys, text.length ? text : @"(未识别到文字，你可直接描述图片)"];
-            [AIChatWindow showWithTitle:@"AI 对话" firstText:first];
-        }];
-    } else if (tag == ETBTagAIChat) {
-        // v5.25.5：AI 对话 —— 直接弹小窗自由对话，无需先写问题；
-        // 后台把当前截图 OCR 成文字作为对话上下文。后端走 AskAI_*（OpenAI 兼容，
-        // 把 AskAI_BaseURL 设为豆包 Ark 端点即可接豆包）。
         [AIChatWindow showWithTitle:@"AI 对话" firstText:@"这是关于你当前截图的对话，直接提问即可。"];
         [SuperTools ocr:img completion:^(NSString *text) {
             if (text.length) [AIChatWindow appendContext:text];
