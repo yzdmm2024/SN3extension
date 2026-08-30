@@ -495,7 +495,7 @@ static CGRect XZRectFromValue(id v) {
         } else { // pending / running → 继续轮询
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
                            dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                [self _ppocrJobsPollJob:jobId baseURL:u token:token attempt:attempt+1 completion:completion];
+                [self _ppocrJobsPollJob:jobId baseURL:u token:token scaleX:sx scaleY:sy attempt:attempt+1 completion:completion];
             });
         }
     }] resume];
