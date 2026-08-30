@@ -36,7 +36,7 @@ BUNDLE_NAME = Snapper3ZhExtPrefs SN3CCModule
 # com.apple.Preferences，设置进程里根本不存在这个类 → dlopen 直接失败：
 #   symbol not found in flat namespace '_OBJC_CLASS_$_AskAIEngine'
 # 表现就是「设置 → 超级截图」不显示 / 空白。prefs bundle 必须自包含。
-Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.m src/AskAIEngine.m
+Snapper3ZhExtPrefs_FILES = src/Snapper3ZhExtPrefs.m src/AskAIEngine.m src/ToolbarOrderController.m
 Snapper3ZhExtPrefs_INSTALL_PATH = /Library/PreferenceBundles
 Snapper3ZhExtPrefs_CFLAGS = -fobjc-arc -fobjc-exceptions -Isrc
 Snapper3ZhExtPrefs_FRAMEWORKS = UIKit Foundation

@@ -442,6 +442,14 @@
 			<integer>0</integer>
 		</dict>
 		<dict>
+			<key>action</key>
+			<string>openToolbarOrder</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>    工具栏排序（拖动排序 / 开关按钮）</string>
+		</dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>

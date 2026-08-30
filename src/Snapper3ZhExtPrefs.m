@@ -3,6 +3,7 @@
 #import <Preferences/Preferences.h>
 #import "Common.h"
 #import "AskAIEngine.h"
+#import "ToolbarOrderController.h"
 
 // 设置面板主控制器：iOS 设置 → 超级截图
 @interface SN3PrefsController : PSListController
@@ -18,6 +19,7 @@
     [super viewDidLoad];
     @try { self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self]; }
     @catch (NSException *e) { NSLog(@"[SN3] prefs init failed: %@", e.reason); }
+    [self _applyButtonActions];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                               selector:@selector(handleBecomeActive)
                                                   name:UIApplicationDidBecomeActiveNotification
@@ -35,6 +37,7 @@
             if (!self.specifiers || self.specifiers.count == 0) {
                 self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
             }
+            [self _applyButtonActions];
             if ([self.view respondsToSelector:@selector(reloadData)]) {
                 [(UITableView *)self.view reloadData];
             }
@@ -52,6 +55,7 @@
             if (!self.specifiers || self.specifiers.count == 0) {
                 self.specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
             }
+            [self _applyButtonActions];
             if ([self.view respondsToSelector:@selector(reloadData)]) {
                 [(UITableView *)self.view reloadData];
             }
@@ -65,6 +69,26 @@
             [(UITableView *)self.view reloadData];
         }
     });
+}
+
+// v6.01: 修复「设置面板所有蓝色按钮（PSButtonCell）点击无反应」。
+// iOS 16 的 Preferences 里 PSButtonCell 会用自身的 buttonAction 触发，
+// 而 plist 的 <key>action</key> 声明式写法不会正确设置 buttonAction（点击被吞、无回调）。
+// 这里在 specifiers 加载后统一补 setButtonAction:，复用与 SN3LinksController 相同的已验证路径。
+- (void)_applyButtonActions {
+    for (PSSpecifier *s in self.specifiers) {
+        NSString *act = [s propertyForKey:@"action"];
+        if ([act isKindOfClass:[NSString class]] && act.length) {
+            [s setButtonAction:NSSelectorFromString(act)];
+        }
+    }
+}
+
+// v6.01: 打开工具栏排序页（拖动排序 + 开关自定义按钮）
+- (void)openToolbarOrder:(PSSpecifier *)spec {
+    SN3ToolbarOrderController *vc = [[SN3ToolbarOrderController alloc] init];
+    vc.title = @"工具栏排序";
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 // v5.23.0: 智谱 BigModel API Key 一键粘贴 (单段, 没有 Secret 概念)

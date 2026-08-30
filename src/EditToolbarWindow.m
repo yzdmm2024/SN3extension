@@ -134,11 +134,8 @@ static EditToolbarWindow *_shared = nil;
     for (NSNumber *t in savedOrder) {
         if (![disabled containsObject:t]) [enabled addObject:t];
     }
-    // v5.25.7：「启用问 AI」关闭时，从工具栏移除「问 AI」与「AI 对话」两个按钮
-    if (![Common boolPref:XZ_KEY_AI_ENABLED default:YES]) {
-        [enabled removeObject:@(ETBTagAI)];
-        [enabled removeObject:@(ETBTagAIChat)];
-    }
+    // v6.01：AI / 对话 / 旋转 三个按钮始终显示（不再受「启用问 AI」开关过滤），
+    // 「启用问 AI」开关只作为 AI 对话是否走已配置接口的提示，不影响按钮可见性。
     return enabled;
 }
 
