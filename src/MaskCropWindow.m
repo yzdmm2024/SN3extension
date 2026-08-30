@@ -1191,7 +1191,7 @@ static int SN3_LoopKVOContext = 0;
 }
 
 // 框选确认 → 选区下方弹出【紧凑工具栏】（不进全屏编辑窗）。
-// 工具栏含全部功能（含 AI/旋转/加壳/PDF/压缩/看图问AI/取色/还原），并读「工具栏排序」设置。
+// 工具栏含全部功能（含 AI/旋转/加壳/PDF/压缩/打开豆包/取色/还原），并读「工具栏排序」设置。
 // 这是用户要的形态：框选下方出单排/双排工具栏，最右侧有关闭按钮，不占满全屏。
 - (void)presentLocalPanelForRect:(CGRect)rect {
     if (!_win) return;
@@ -1275,8 +1275,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     XZLocalTranslate= 2,
     XZLocalDraw     = 3,
     XZLocalCode     = 4,
-    XZLocalAI       = 17,   // 合并「问AI / 对话」
-    XZLocalAIImage  = 20,   // 看图问 AI（把裁剪图作为多模态内容发给视觉模型）—— v6.20.6 补齐（主工具栏 6.20.4 已有，局部工具栏此前漏加）
+    XZLocalAIImage  = 20,   // 打开豆包（直接拉起豆包 App 并把裁剪图带进去）—— v6.20.6 由主工具栏补齐，v6.20.8 改为打开豆包
     XZLocalRotate   = 19,
     XZLocalCopy     = 6,
     XZLocalFloating = 7,
@@ -1341,7 +1340,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 }
 
 // v4.9 / v6.05：在【独立窗口】上、选区下方同步弹出紧凑功能面板（不进全屏编辑窗）。
-//   · 含全部功能（OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/PDF/压缩/看图问AI/取色/还原），
+//   · 含全部功能（OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/PDF/压缩/打开豆包/取色/还原），
 //     与 EditToolbarWindow 用同一套 tag 值，故「工具栏排序」设置对它直接生效。
 //     （「加壳」已移出局部工具栏 —— 改到「设置→手机壳库」，仅对「正常截图」生效。）
 //   · 左侧常驻一张当前裁剪图预览缩略图，旋转/还原/压缩后实时刷新，让操作看得见。
@@ -1371,8 +1370,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @(XZLocalTranslate):@{@"icon":@"translate",                    @"label":@"翻译"},
         @(XZLocalDraw):     @{@"icon":@"pencil.tip",                  @"label":@"画图"},
         @(XZLocalCode):     @{@"icon":@"qrcode.viewfinder",           @"label":@"识码"},
-        @(XZLocalAI):       @{@"icon":@"sparkles",                    @"label":@"AI"},
-        @(XZLocalAIImage):  @{@"icon":@"photo",                       @"label":@"看图问AI"},
+        @(XZLocalAIImage):  @{@"icon":@"bubble.left",                 @"label":@"打开豆包"},
         @(XZLocalRotate):   @{@"icon":@"rotate.right",                @"label":@"旋转"},
         @(XZLocalCopy):     @{@"icon":@"doc.on.doc",                  @"label":@"复制"},
         @(XZLocalFloating): @{@"icon":@"pin",                         @"label":@"贴图"},
@@ -1586,7 +1584,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 // 与 EditToolbarWindow.resolveEnabledTags 同算法：读「工具栏排序」+ 禁用集合，返回启用按钮 tag 顺序
 - (NSArray<NSNumber *> *)resolveLocalTags {
     NSArray<NSNumber *> *defOrder = @[ @(XZLocalOCR), @(XZLocalTranslate), @(XZLocalDraw), @(XZLocalCode),
-                                       @(XZLocalAI), @(XZLocalAIImage), @(XZLocalRotate), @(XZLocalCopy), @(XZLocalFloating),
+                                       @(XZLocalAIImage), @(XZLocalRotate), @(XZLocalCopy), @(XZLocalFloating),
                                        @(XZLocalSave), @(XZLocalShare), @(XZLocalPDF),
                                        @(XZLocalCompress), @(XZLocalColorPick), @(XZLocalReset) ];
     NSMutableArray<NSNumber *> *saved = [NSMutableArray array];
@@ -1702,34 +1700,18 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         [SuperTools codeScan:img completion:^(NSString *code) {
             [self presentLocalCode:code];
         }];
-    } else if (tag == XZLocalAI) {
-        // 合并「问AI / 对话」：立即进对话，后台把截图文字当上下文（比先 OCR 再开更快）
-        [AIChatWindow showWithTitle:@"AI 对话" firstText:@"这是关于你当前截图的对话，直接提问即可。"];
-        [SuperTools ocr:img completion:^(NSString *text) {
-            if (text.length) [AIChatWindow appendContext:text];
-        }];
     } else if (tag == XZLocalAIImage) {
-        // v6.20.6：补齐局部截图工具栏的「看图问 AI」—— 与主工具栏 ETBTagAIImage 同源实现。
-        // DeepSeek 纯文本模型看不到图，提前拦截并提示换视觉模型。
-        NSDictionary *aiCfg = [Common sn3AIConfig];
-        NSString *aiKey = [Common sn3ModelField:aiCfg key:@"apiKey" def:@""];
-        NSString *vendor = [Common sn3ModelField:aiCfg key:@"vendor" def:@""];
-        if (!aiCfg || aiKey.length == 0) {
-            [Common sn3AlertError:@"AI 还没配好"
-                          message:aiCfg ? @"「问AI」所选模型没填 API Key。\n\n请到「设置 → 超级截图 → 大模型库」，点开该模型补上 API Key。"
-                                        : @"「问AI」还没选模型。\n\n请到「设置 → 超级截图 → 大模型库」：\n1) 点 + 从预设一键导入（DeepSeek / OpenAI / 智谱 等）\n2) 填入你的 API Key\n3) 回到「问AI · 使用模型」选中它"];
-            return;
+        // v6.20.8：改为直接拉起「豆包」App 并把截图带进去（不再应用内发 API 对话）
+        BOOL opened = [SuperTools openDoubaoWithImage:img];
+        if (opened) {
+            [Common toast:@"已打开豆包，截图已复制到剪贴板，长按输入框可粘贴"];
+            [self dismiss];
+        } else {
+            UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[img] applicationActivities:nil];
+            [Common present:avc fromWindow:_win];
+            [Common toast:@"未检测到豆包，已用系统分享，请选择豆包"];
+            [self dismiss];
         }
-        if ([vendor isEqualToString:@"deepseek"]) {
-            [Common sn3AlertError:@"该模型不支持看图"
-                          message:@"「问AI · 使用模型」当前选的是 DeepSeek（纯文本模型），看不到图片。\n\n请到「设置 → 超级截图 → 大模型库」改选支持视觉的模型：\n• 火山方舟(豆包)  doubao-seed / doubao-vision\n• 智谱 glm-4v-flash\n• 通义 qwen-vl\n• OpenAI gpt-4o"];
-            return;
-        }
-        [Common toast:@"正在识别文字并准备图片…"];
-        [SuperTools ocr:img completion:^(NSString *text) {
-            NSString *first = text.length ? text : @"请分析这张图片并回答我的问题。";
-            [AIChatWindow showWithTitle:@"看图问 AI" firstText:first image:img];
-        }];
     } else if (tag == XZLocalRotate) {
         // 点按 90°；长按 180°（_rotateLongPressed 避免两者叠加）
         if (_rotateLongPressed) { _rotateLongPressed = NO; return; }

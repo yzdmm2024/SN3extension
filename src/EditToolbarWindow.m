@@ -30,7 +30,6 @@ typedef NS_ENUM(NSInteger, ETBTag) {
     ETBTagTranslate  = 2,
     ETBTagDraw       = 3,
     ETBTagCodeScan   = 4,
-    ETBTagAI        = 17,   // 问 AI（大模型）
     ETBTagAIChat    = 18,   // AI 对话（小窗自由对话，可接豆包）
     ETBTagAIImage   = 20,   // 看图问 AI（把原图作为多模态内容发给视觉模型）
     ETBTagRotate    = 19,   // 旋转当前图（90°步进）
@@ -116,7 +115,7 @@ static EditToolbarWindow *_shared = nil;
 
 // v5.25.5：统一计算「当前应显示的按钮顺序（去禁用、补缺失）」，单排/双排共用
 - (NSArray<NSNumber *> *)resolveEnabledTags {
-    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
+    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAIImage),
                                        @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
                                        @(ETBTagShare), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagAIImage),
                                        @(ETBTagColorPick), @(ETBTagReset) ];
@@ -216,7 +215,7 @@ static EditToolbarWindow *_shared = nil;
     UIEdgeInsets safe = [Common screenSafeInsets];
 
     // v5.25.5：按钮顺序 / 禁用集合 / 单双排 由偏好决定（resolveEnabledTags 统一计算）。
-    // 默认顺序：OCR 翻译 画图 识码 AI 看图问AI 旋转 复制 贴图 保存 分享 PDF 压缩 取色 还原。（v6.20.5：去状态栏已移除，由「看图问AI」替代；加壳移出手动按钮，改由「手机壳库」设置自动套壳）
+    // 默认顺序：OCR 翻译 画图 识码 AI 打开豆包 旋转 复制 贴图 保存 分享 PDF 压缩 取色 还原。（v6.20.5：去状态栏已移除，由「打开豆包」替代；加壳移出手动按钮，改由「手机壳库」设置自动套壳）
     NSArray<NSNumber *> *enabledTags = [self resolveEnabledTags];
 
     // 按钮规格表（icon/label/tag）—— 整个工具栏统一从这里取，settings 排序也用这里
@@ -225,8 +224,7 @@ static EditToolbarWindow *_shared = nil;
         @(ETBTagTranslate): @{@"icon":@"translate",                   @"label":@"翻译"},
         @(ETBTagDraw):      @{@"icon":@"pencil.tip",                  @"label":@"画图"},
         @(ETBTagCodeScan):  @{@"icon":@"qrcode.viewfinder",           @"label":@"识码"},
-        @(ETBTagAI):        @{@"icon":@"sparkles",                    @"label":@"AI"},
-        @(ETBTagAIImage):   @{@"icon":@"photo",                       @"label":@"看图问AI"},
+        @(ETBTagAIImage):   @{@"icon":@"bubble.left",                 @"label":@"打开豆包"},
         @(ETBTagRotate):    @{@"icon":@"rotate.right",                @"label":@"旋转"},
         @(ETBTagCopy):      @{@"icon":@"doc.on.doc",                  @"label":@"复制"},
         @(ETBTagFloating):  @{@"icon":@"pin",                         @"label":@"贴图"},
@@ -387,44 +385,17 @@ static EditToolbarWindow *_shared = nil;
         [SuperTools codeScan:img completion:^(NSString *code) {
             [self presentCodeAction:code];
         }];
-    } else if (tag == ETBTagAI) {
-        // v6.04：合并「问AI / 对话」为单一 AI 按钮 —— 立即进对话，后台把截图文字当上下文。
-        // v6.09 修正：这里原先仍在读旧的 AskAI_Key，没走「大模型库」，提示语也指向已废弃的
-        //            旧设置路径。改为按大模型库里「问AI·使用模型」的选择来判断。
-        NSDictionary *aiCfg = [Common sn3AIConfig];
-        NSString *aiKey = [Common sn3ModelField:aiCfg key:@"apiKey" def:@""];
-        if (!aiCfg || aiKey.length == 0) {
-            [Common sn3AlertError:@"AI 还没配好"
-                          message:aiCfg ? @"「问AI」所选模型没填 API Key。\n\n请到「设置 → 超级截图 → 大模型库」，点开该模型补上 API Key。"
-                                        : @"「问AI」还没选模型。\n\n请到「设置 → 超级截图 → 大模型库」：\n1) 点 + 从预设一键导入（DeepSeek / OpenAI / 智谱 等）\n2) 填入你的 API Key\n3) 回到「问AI · 使用模型」选中它"];
-            return;
-        }
-        [AIChatWindow showWithTitle:@"AI 对话" firstText:@"这是关于你当前截图的对话，直接提问即可。"];
-        [SuperTools ocr:img completion:^(NSString *text) {
-            if (text.length) [AIChatWindow appendContext:text];
-        }];
     } else if (tag == ETBTagAIImage) {
-        // v6.20.4：看图问 AI —— 把原图作为多模态内容发给所选视觉模型（豆包/智谱/通义/gpt-4o）。
-        // DeepSeek-chat 是纯文本模型，看不到图，提前拦截并提示换视觉模型。
-        NSDictionary *aiCfg = [Common sn3AIConfig];
-        NSString *aiKey = [Common sn3ModelField:aiCfg key:@"apiKey" def:@""];
-        NSString *vendor = [Common sn3ModelField:aiCfg key:@"vendor" def:@""];
-        if (!aiCfg || aiKey.length == 0) {
-            [Common sn3AlertError:@"AI 还没配好"
-                          message:aiCfg ? @"「问AI」所选模型没填 API Key。\n\n请到「设置 → 超级截图 → 大模型库」，点开该模型补上 API Key。"
-                                        : @"「问AI」还没选模型。\n\n请到「设置 → 超级截图 → 大模型库」：\n1) 点 + 从预设一键导入（DeepSeek / OpenAI / 智谱 等）\n2) 填入你的 API Key\n3) 回到「问AI · 使用模型」选中它"];
-            return;
+        // v6.20.8：改为直接拉起「豆包」App 并把截图带进去（不再应用内发 API 对话）
+        BOOL opened = [SuperTools openDoubaoWithImage:img];
+        if (opened) {
+            [Common toast:@"已打开豆包，截图已复制到剪贴板，长按输入框可粘贴"];
+        } else {
+            // 豆包未安装：回退系统分享面板（选豆包即带图）
+            UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[img] applicationActivities:nil];
+            [Common present:avc fromWindow:_win];
+            [Common toast:@"未检测到豆包，已用系统分享，请选择豆包"];
         }
-        if ([vendor isEqualToString:@"deepseek"]) {
-            [Common sn3AlertError:@"该模型不支持看图"
-                          message:@"「问AI · 使用模型」当前选的是 DeepSeek（纯文本模型），看不到图片。\n\n请到「设置 → 超级截图 → 大模型库」改选支持视觉的模型：\n• 火山方舟(豆包)  doubao-seed / doubao-vision\n• 智谱 glm-4v-flash\n• 通义 qwen-vl\n• OpenAI gpt-4o"];
-            return;
-        }
-        [Common toast:@"正在识别文字并准备图片…"];
-        [SuperTools ocr:img completion:^(NSString *text) {
-            NSString *first = text.length ? text : @"请分析这张图片并回答我的问题。";
-            [AIChatWindow showWithTitle:@"看图问 AI" firstText:first image:img];
-        }];
     } else if (tag == ETBTagRotate) {
         // v5.25.7：区分点按(90°)与长按(180°)。长按已置 _rotateLongPressed，
         // 此处跳过以免 90° 与 180° 叠加（净转 270°）。

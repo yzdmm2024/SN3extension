@@ -43,6 +43,9 @@
 // 9. 分享：原生 UIActivityViewController
 + (void)share:(UIImage *)image fromWindow:(UIWindow *)win;
 
+// 9c. 打开豆包：把图写入剪贴板并直接 Deep Link 拉起豆包 App；返回 YES 表示已拉起（未安装返回 NO，调用方可回退系统分享）
++ (BOOL)openDoubaoWithImage:(UIImage *)image;
+
 // 9b. 加手机壳：给截图套一个 iPhone 外壳边框
 + (UIImage *)phoneCase:(UIImage *)image;
 

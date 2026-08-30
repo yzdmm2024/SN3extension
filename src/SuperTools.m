@@ -1381,6 +1381,20 @@ static UIWindow *_floatWin = nil;
     }];
 }
 
+#pragma mark - 8b. 打开豆包（带图）
+
++ (BOOL)openDoubaoWithImage:(UIImage *)image {
+    if (!image) return NO;
+    // v6.20.8：把截图写入系统剪贴板，豆包启动后通常能识别并在输入框提示插入；
+    // 同时用 doubao:// 直接拉起豆包 App（与 iOS 快捷指令同款 Scheme，豆包 App ≥ v3.0.0）。
+    [[UIPasteboard generalPasteboard] setImage:image];
+    NSURL *url = [NSURL URLWithString:@"doubao://"];
+    if (!url) return NO;
+    // ⚠️ tweak 宿主 App 不一定在 LSApplicationQueriesSchemes 声明 doubao，
+    //    故不能用 canOpenURL 判断，直接 openURL 并以返回值确认是否拉起成功。
+    return [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+}
+
 #pragma mark - 9. 分享
 
 static UIWindow *_shareWin = nil;
