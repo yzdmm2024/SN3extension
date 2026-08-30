@@ -26,6 +26,9 @@ typedef NS_ENUM(NSInteger, XZMaskMode) {
 
 + (instancetype)sharedInstance;
 
+// v6.06：是否已显示（供 Tweak.xm 拦截系统截图时判断，避免重复拉起）
++ (BOOL)isShowing;
+
 // 弹出窗口A（控制中心点按「超级截图」后调用）
 - (void)show;
 
