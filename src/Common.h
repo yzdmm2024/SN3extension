@@ -103,6 +103,8 @@
 + (NSArray<NSDictionary *> *)sn3ModelLibrary;
 // 按 id 取模型；取不到返回 nil
 + (NSDictionary *)sn3ModelById:(NSString *)mid;
+// 从模型 dict 取字段，nil/空时回退默认值（各功能共用，避免各自硬编码 key 顺序）
++ (NSString *)sn3ModelField:(NSDictionary *)m key:(NSString *)k def:(NSString *)def;
 // 各功能当前选中的模型配置（含 baseURL/apiKey/model）；未选返回 nil
 + (NSDictionary *)sn3AIConfig;
 + (NSDictionary *)sn3OCRConfig;
