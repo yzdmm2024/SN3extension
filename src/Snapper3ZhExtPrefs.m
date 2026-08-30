@@ -474,7 +474,8 @@
 
 - (void)sn3ShowVerification:(PSSpecifier *)spec {
     (void)spec;
-    [SN3License presentVerificationFromWindow:nil completion:^(BOOL unlocked) {
+    // v6.20.2：在设置进程内直接 present 在 self 上（安全、可取消、不会冻结）。
+    [SN3License presentVerificationInViewController:self completion:^(BOOL unlocked) {
         [self _sn3Alert:unlocked ? @"已解锁" : @"未解锁"
                       msg:unlocked ? @"本机已授权，可正常使用全部功能。"
                                   : @"尚未授权：点「复制本机 UDID」发给开发者获取解锁码后，再点本按钮输入。"];

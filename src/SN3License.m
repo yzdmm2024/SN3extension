@@ -86,7 +86,7 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
 + (void)markUnlocked { [self setUnlocked:YES]; }
 + (void)revoke { [self setUnlocked:NO]; }
 
-#pragma mark - 安全弹窗
+#pragma mark - 工具
 
 + (void)runOnMain:(dispatch_block_t)block {
     if (!block) return;
@@ -94,63 +94,36 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
     else dispatch_async(dispatch_get_main_queue(), block);
 }
 
-// 自建 host 窗口挂载 alert。注意：必须由调用方在展示前 [host makeKeyAndVisible]（见 presentVerificationFromWindow:），
-// 否则 alert 虽显示却收不到触摸事件导致「点不动」；dismiss 时再把 key 还给先前的窗口。
-+ (UIWindow *)_makeHostWindow {
-    UIWindow *host = nil;
-    if (@available(iOS 13.0, *)) {
-        UIWindowScene *scene = nil;
-        for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-            if ([sc isKindOfClass:[UIWindowScene class]] &&
-                ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
-                scene = (UIWindowScene *)sc; break;
-            }
+// 取前台（或任意）UIWindowScene，用于安全地建窗口（iOS 13+ 必须挂到 scene）。
++ (UIWindowScene *)_frontScene {
+    UIWindowScene *scene = nil;
+    for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+        if ([sc isKindOfClass:[UIWindowScene class]] &&
+            ((UIWindowScene *)sc).activationState == UISceneActivationStateForegroundActive) {
+            scene = (UIWindowScene *)sc; break;
         }
-        if (!scene) {
-            for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
-                if ([sc isKindOfClass:[UIWindowScene class]]) { scene = (UIWindowScene *)sc; break; }
-            }
-        }
-        if (!scene) return nil;
-        host = [[UIWindow alloc] initWithWindowScene:scene];
-    } else {
-        host = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     }
-    host.frame = [UIScreen mainScreen].bounds;
-    host.windowLevel = UIWindowLevelAlert + 700;   // 高于 ResultWindow(≈2600)
-    host.backgroundColor = [UIColor clearColor];
-    host.rootViewController = [[UIViewController alloc] init];
-    host.rootViewController.view.backgroundColor = [UIColor clearColor];
-    host.hidden = NO;   // presenter 会再 makeKeyAndVisible 接管为 key
-    return host;
+    if (!scene) {
+        for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+            if ([sc isKindOfClass:[UIWindowScene class]]) { scene = (UIWindowScene *)sc; break; }
+        }
+    }
+    return scene;
 }
 
-+ (void)toast:(NSString *)msg onHost:(UIWindow *)host {
-    [self runOnMain:^{
-        if (!host) return;
-        CGFloat ww = host.bounds.size.width;
-        CGFloat hgt = 40;
-        UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, host.bounds.size.height / 2 - hgt / 2, ww - 32, hgt)];
-        l.text = msg;
-        l.textColor = [UIColor whiteColor];
-        l.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-        l.textAlignment = NSTextAlignmentCenter;
-        l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.85];
-        l.layer.cornerRadius = 10;
-        l.layer.masksToBounds = YES;
-        l.alpha = 0;
-        [host addSubview:l];
-        [UIView animateWithDuration:0.2 animations:^{ l.alpha = 1; }];
-        [UIView animateWithDuration:0.2 delay:1.2 options:0
-                         animations:^{ l.alpha = 0; }
-                         completion:^(BOOL f) { [l removeFromSuperview]; }];
-    }];
+// 取 base 的最顶层已 present 的 VC，避免「already presenting」被 UIKit 静默忽略。
++ (UIViewController *)_topVCFrom:(UIViewController *)base {
+    UIViewController *vc = base;
+    while (vc && vc.presentedViewController) vc = vc.presentedViewController;
+    return vc;
 }
 
-+ (void)presentVerificationFromWindow:(UIWindow *)win
-                           completion:(void (^)(BOOL))completion {
-    (void)win;  // 统一自建安全 host 窗口，不依赖传入窗口
+#pragma mark - 安全弹窗（直接 present 在调用方 VC 上，不抢 key window）
+
++ (void)presentVerificationInViewController:(UIViewController *)vc
+                                 completion:(void (^)(BOOL))completion {
     [self runOnMain:^{
+        if (!vc) { if (completion) completion([self isUnlocked]); return; }
         UIAlertController *a = [UIAlertController alertControllerWithTitle:@"设备授权验证"
                                                                    message:@"本插件已绑定设备 UDID，需输入解锁码才能使用。点「复制 UDID」把设备标识发给开发者生成解锁码。"
                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -158,31 +131,15 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
         [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
             tf.placeholder = @"解锁码（15 位）";
             tf.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
-            tf.autocorrectionType = UITextAutocorrectionTypeNo;
+            tf.autocorrectionType = UITextCorrectionTypeNo;
             tf.clearButtonMode = UITextFieldViewModeWhileEditing;
         }];
 
-        UIWindow *host = [self _makeHostWindow];
-        if (!host) {
-            NSLog(@"[SN3] License: 无法创建 host 窗口，放弃弹窗");
-            return;
-        }
-        // 关键修复：必须把 host 设为 key window，否则 alert 虽显示却收不到触摸（点不动）。
-        // 记住先前的 key window，dismiss 时还回去，避免长期劫持 SpringBoard 的 key window。
-        UIWindow *prevKey = [UIApplication sharedApplication].keyWindow;
-        [host makeKeyAndVisible];
-
         __block BOOL resolved = NO;
-        void (^finish)(BOOL, NSString *) = ^(BOOL ok, NSString *toastMsg) {
+        void (^dismiss)(BOOL) = ^(BOOL ok) {
             if (resolved) return;
             resolved = YES;
-            [a dismissViewControllerAnimated:YES completion:^{
-                if (toastMsg.length) [self toast:toastMsg onHost:host];
-                host.userInteractionEnabled = NO;    // 释放触摸拦截
-                [prevKey makeKeyAndVisible];         // 把 key 还给 SpringBoard
-                // 弹窗关闭且 toast 显示期间保持 host 存活，之后释放
-                [self performSelector:@selector(_releaseHost:) withObject:host afterDelay:1.6];
-            }];
+            [a dismissViewControllerAnimated:YES completion:nil];
             if (completion) completion(ok);
         };
 
@@ -191,7 +148,6 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
                                             handler:^(UIAlertAction *act) {
             NSString *udid = [self deviceUDID];
             [[UIPasteboard generalPasteboard] setString:udid];
-            // 直接把 UDID 显示到弹窗里（比在弹窗后加 toast 更可靠，toast 会被 alert 盖住）
             a.message = [NSString stringWithFormat:
                 @"已复制本机 UDID 到剪贴板：\n%@\n\n把此标识发给开发者生成解锁码，再在下方输入。", udid];
         }]];
@@ -202,16 +158,17 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
             NSString *input = a.textFields.firstObject.text ?: @"";
             if ([self verifyCode:input]) {
                 [self markUnlocked];
-                finish(YES, @"解锁成功，本机已授权");
+                dismiss(YES);
             } else {
-                a.message = [baseMsg stringByAppendingString:@"\n\n❌ 解锁码无效，请重试。"];
+                a.message = [baseMsg stringByAppendingString:@"\n\n❌ 解锁码无效，请重试，或点「取消」退出。"];
             }
         }]];
 
+        // 取消 = 强制退出，干净 dismiss，绝不困住用户
         [a addAction:[UIAlertAction actionWithTitle:@"取消"
                                               style:UIAlertActionStyleCancel
                                             handler:^(UIAlertAction *act) {
-            finish([self isUnlocked], nil);
+            dismiss([self isUnlocked]);
         }]];
 
         if ([self isUnlocked]) {
@@ -219,18 +176,67 @@ static const char *kSN3Charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnp
                                                   style:UIAlertActionStyleDestructive
                                                 handler:^(UIAlertAction *act) {
                 [self revoke];
-                finish(NO, @"已锁定本机，下次需重新验证");
+                dismiss(NO);
             }]];
         }
 
-        [host.rootViewController presentViewController:a animated:YES completion:nil];
+        UIViewController *top = [self _topVCFrom:vc];
+        if (!top) { if (completion) completion([self isUnlocked]); return; }
+        [top presentViewController:a animated:YES completion:nil];
     }];
 }
 
-+ (void)_releaseHost:(UIWindow *)host {
-    host.userInteractionEnabled = NO;
-    host.hidden = YES;
-    host.rootViewController = nil;
+// 兼容旧调用：在 keyWindow 的 rootViewController 上弹验证框。
++ (void)presentVerificationFromWindow:(UIWindow *)win
+                           completion:(void (^)(BOOL))completion {
+    (void)win;
+    UIViewController *vc = nil;
+    UIWindow *kw = [UIApplication sharedApplication].keyWindow;
+    if (kw && kw.rootViewController) vc = kw.rootViewController;
+    [self presentVerificationInViewController:vc completion:completion];
+}
+
+#pragma mark - 非阻塞提示（控制中心路径专用，绝不冻结）
+
++ (void)presentUnlockHint {
+    [self runOnMain:^{
+        UIWindowScene *scene = [self _frontScene];
+        UIWindow *w = scene ? [[UIWindow alloc] initWithWindowScene:scene]
+                            : [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        w.frame = [UIScreen mainScreen].bounds;
+        w.windowLevel = UIWindowLevelAlert + 1000;
+        w.backgroundColor = [UIColor clearColor];
+        w.userInteractionEnabled = NO;   // 关键：不拦截任何触摸，纯粹提示，绝不冻结
+        UIViewController *rvc = [[UIViewController alloc] init];
+        rvc.view.backgroundColor = [UIColor clearColor];
+        w.rootViewController = rvc;
+
+        CGFloat ww = w.bounds.size.width;
+        CGFloat hh = w.bounds.size.height;
+        CGFloat bw = MIN(ww - 56, 320);
+        UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake((ww - bw) / 2, hh / 2 - 52, bw, 104)];
+        l.numberOfLines = 0;
+        l.textAlignment = NSTextAlignmentCenter;
+        l.text = @"未授权：本功能需设备验证\n\n请到 设置 › 超级截图 › 设备授权\n输入解锁码后使用";
+        l.textColor = [UIColor whiteColor];
+        l.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+        l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.82];
+        l.layer.cornerRadius = 14;
+        l.layer.masksToBounds = YES;
+        l.alpha = 0;
+        [rvc.view addSubview:l];
+
+        w.hidden = NO;
+        [UIView animateWithDuration:0.25 animations:^{ l.alpha = 1; }];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.8 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.3 animations:^{ l.alpha = 0; }
+                             completion:^(BOOL f){
+                                 w.hidden = YES;
+                                 w.rootViewController = nil;
+                             }];
+        });
+    }];
 }
 
 @end

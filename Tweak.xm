@@ -42,15 +42,12 @@ static void xz_ccCapture(CFNotificationCenterRef center, void *observer,
                 NSLog(@"[SN3] disabled by pref");
                 return;
             }
-            // v6.20：设备授权验证（UDID 解锁码）。未解锁则弹验证框，不直接进截图。
+            // v6.20.2：设备授权验证（UDID 解锁码）。未解锁时，控制中心路径只给「非阻塞提示横幅」
+            // 并直接退出本次截图动作 —— 绝不在这里弹模态验证框（SpringBoard 弹模态曾反复冻结手机）。
+            // 真正的验证弹窗只在「设置 › 超级截图 › 设备授权」里（普通 App 进程，安全且可取消）。
             if (![SN3License isUnlocked]) {
-                NSLog(@"[SN3] 未授权设备 -> 弹验证框");
-                [SN3License presentVerificationFromWindow:nil completion:^(BOOL unlocked) {
-                    if (unlocked) {
-                        // 解锁成功后直接进入截图（此时 isUnlocked 已为真，show 不会再被拦）
-                        [[MaskCropWindow sharedInstance] show];
-                    }
-                }];
+                NSLog(@"[SN3] 未授权设备 -> 非阻塞提示，本次截图已退出（请到 设置›超级截图›设备授权 验证）");
+                [SN3License presentUnlockHint];
                 return;
             }
             NSLog(@"[SN3] CC tapped -> show mask crop window (A)");
