@@ -82,16 +82,36 @@
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    NSString *pick;
+    NSString *pick = nil;
+    BOOL syncPPOCR_ON = NO;          // 是否同步把 PPOCR_Enabled 拉到 ON
+    BOOL isPaddleOCRRow = NO;        // picker 选中的行是 PPOCR（内置行 / vendor=paddleocr）？
     if (ip.row == 0) {
         pick = @"";
     } else {
         NSDictionary *m = self.dispModels[ip.row-1];
-        pick = m[@"id"];
+        id mid = m[@"id"];
+        pick = [mid isKindOfClass:[NSString class]] ? (NSString *)mid : @"";
+        BOOL isBuiltin = [m[@"__builtin"] boolValue];
+        NSString *vendor = SN3ModelField(m, @"vendor", @"");
+        isPaddleOCRRow = isBuiltin || [vendor isEqualToString:@"paddleocr"];
     }
     self.selId = pick;
+
+    // v6.16: 识别引擎 picker 选中后自动同步 PPOCR_Enabled，避免「开关开着选大模型
+    //          → 仍走 PP-OCR」的虚假「切换没差别」。
+    //   - 选「不使用」 / 选非 paddleocr 的普通大模型 → PPOCR_Enabled = NO
+    //   - 选内置 PaddleOCR / vendor=paddleocr → PPOCR_Enabled = YES
+    // （仅对 OCR 选择器生效；问AI / 翻译 选择器不动这个键）
+    if (self.isOCR) {
+        [SN3Defs() setBool:isPaddleOCRRow forKey:@"PPOCR_Enabled"];
+        syncPPOCR_ON = YES;
+    }
+
     [SN3Defs() setObject:pick forKey:self.featureKey];
     [SN3Defs() synchronize];
+    if (syncPPOCR_ON) {
+        // 不必再发一次 darwin notify:同一组 setObject:synchronize 后面的统一一次 post
+    }
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                          (CFStringRef)@"com.axs.snapper3zhext.prefsChanged", NULL, NULL, YES);
     [self.tv reloadData];
