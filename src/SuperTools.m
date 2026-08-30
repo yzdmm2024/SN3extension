@@ -133,6 +133,11 @@ static CGRect XZRectFromValue(id v) {
     }
     // v6.07：识别引擎改走「大模型库」——从 ModelOCR_ID 取选中的模型配置
     NSDictionary *cfg = [Common sn3OCRConfig];
+    // v6.13：大模型库里选中的识别模型若是「百度 PaddleOCR」，直接走独立免费通道
+    if ([[Common sn3ModelField:cfg key:@"vendor" def:@""] isEqualToString:@"paddleocr"]) {
+        [self ocrViaPPOCR:image completion:completion];
+        return;
+    }
     if (!cfg) {
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -239,7 +244,11 @@ static CGRect XZRectFromValue(id v) {
         return;
     }
     NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
-    NSDictionary *body = @{ @"file": b64, @"fileType": @1 };
+    // v6.13：兼容两种 AI Studio 接口（按 host 区分请求体）
+    //   xxxx.aistudio-app.com/ocr        → {"file":b64,"fileType":1}
+    //   xxxx.aistudio-hub.baidu.com/ocr  → {"image":b64}
+    BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
+    NSDictionary *body = isHub ? @{ @"image": b64 } : @{ @"file": b64, @"fileType": @1 };
     NSError *je = nil;
     NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:&je];
     if (!json) {
@@ -279,20 +288,25 @@ static CGRect XZRectFromValue(id v) {
             return;
         }
         NSDictionary *res = oj[@"result"];
-        NSArray *ocrResults = res[@"ocrResults"];
-        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-        if ([ocrResults isKindOfClass:[NSArray class]]) {
-            for (NSDictionary *r in ocrResults) {
-                NSDictionary *pr = r[@"prunedResult"];
-                if (![pr isKindOfClass:[NSDictionary class]]) continue;
-                NSArray *texts = pr[@"rec_texts"];
-                if (![texts isKindOfClass:[NSArray class]]) continue;
-                for (NSString *t in texts) {
-                    if ([t isKindOfClass:[NSString class]] && t.length) {
-                        [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:CGRectZero] }];
-                    }
+        NSMutableArray<NSString *> *raw = [NSMutableArray array];
+        if ([res isKindOfClass:[NSDictionary class]]) {
+            NSArray *ocrResults = res[@"ocrResults"];
+            if ([ocrResults isKindOfClass:[NSArray class]]) {
+                for (NSDictionary *r in ocrResults) {
+                    if (![r isKindOfClass:[NSDictionary class]]) continue;
+                    NSArray *texts = nil;
+                    NSDictionary *pr = r[@"prunedResult"];
+                    if ([pr isKindOfClass:[NSDictionary class]]) texts = pr[@"rec_texts"];
+                    if (![texts isKindOfClass:[NSArray class]]) texts = r[@"rec_texts"];
+                    [raw addObjectsFromArray:[self _sn3FlattenTexts:texts]];
                 }
             }
+            if (!raw.count) [raw addObjectsFromArray:[self _sn3FlattenTexts:res[@"texts"]]];
+            if (!raw.count) [raw addObjectsFromArray:[self _sn3FlattenTexts:res[@"rec_texts"]]];
+        }
+        NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+        for (NSString *t in raw) {
+            if (t.length) [items addObject:@{ @"text": t, @"box": [NSValue valueWithCGRect:CGRectZero] }];
         }
         if (!items.count) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{
@@ -302,6 +316,20 @@ static CGRect XZRectFromValue(id v) {
         }
         if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(items, nil); });
     }] resume];
+}
+
+// v6.13：把各种可能的文字数组（字符串数组 / {text:..} 对象数组）拍平成 NSString 列表
++ (NSArray<NSString *> *)_sn3FlattenTexts:(id)texts {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    if (![texts isKindOfClass:[NSArray class]]) return out;
+    for (id x in (NSArray *)texts) {
+        if ([x isKindOfClass:[NSString class]]) [out addObject:x];
+        else if ([x isKindOfClass:[NSDictionary class]]) {
+            id t = x[@"text"] ?: x[@"rec_text"];
+            if ([t isKindOfClass:[NSString class]]) [out addObject:t];
+        }
+    }
+    return out;
 }
 
 // 去掉 ```xxx\n...\n``` 代码块包裹 (智谱有时会包)

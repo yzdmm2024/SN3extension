@@ -270,7 +270,8 @@
 	UIGraphicsEndImageContext();
 	NSData *jpeg = UIImageJPEGRepresentation(img ?: [UIImage new], 0.8);
 	NSString *b64 = [jpeg base64EncodedStringWithOptions:0];
-	NSDictionary *body = @{ @"file": b64, @"fileType": @1 };
+	BOOL isHub = [[u.host lowercaseString] containsString:@"aistudio-hub"];
+	NSDictionary *body = isHub ? @{ @"image": b64 } : @{ @"file": b64, @"fileType": @1 };
 	NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
 	NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:u];
 	[req setHTTPMethod:@"POST"];

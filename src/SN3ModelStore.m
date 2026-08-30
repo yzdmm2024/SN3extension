@@ -55,6 +55,7 @@ NSArray<NSDictionary *> *SN3Presets(void) {
         @{@"name":@"通义千问",         @"baseURL":@"https://dashscope.aliyuncs.com/compatible-mode/v1", @"model":@"qwen2.5-vl-72b-instruct", @"vendor":@"qwen"},
         @{@"name":@"火山方舟(豆包)",   @"baseURL":@"https://ark.cn-beijing.volces.com/api/v3", @"model":@"ep-xxxxxxxx",        @"vendor":@"volc"},
         @{@"name":@"Ollama 本地",      @"baseURL":@"http://127.0.0.1:11434/v1",             @"model":@"llama3",              @"vendor":@"ollama"},
+        @{@"name":@"百度 PaddleOCR (免费)", @"baseURL":@"",                                  @"model":@"",                   @"vendor":@"paddleocr"},
     ];
 }
 
