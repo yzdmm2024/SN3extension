@@ -3,7 +3,7 @@
 //
 #import "SN3ModelStore.h"
 
-static NSUserDefaults *SN3Defs(void) {
+NSUserDefaults *SN3Defs(void) {
     static NSUserDefaults *d;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ d = [[NSUserDefaults alloc] initWithSuiteName:SN3_DOMAIN]; });
