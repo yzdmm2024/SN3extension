@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      # Homebrew 新版本强制 tap 信任检查，runner 上预置的 aws/tap 未信任会导致 brew install 直接失败。
+      # 关掉该检查以解锁构建（仅影响 CI 安装依赖步骤）。
+      HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
     steps:
       - uses: actions/checkout@v4
 
