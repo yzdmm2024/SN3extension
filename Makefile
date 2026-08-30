@@ -64,7 +64,7 @@ include $(THEOS_MAKE_PATH)/bundle.mk
 #   snapper://settings → 打开本插件设置面板。
 #   App 本身只是一个壳：截图 UI 仍由注入 SpringBoard 的 tweak 提供。
 # ────────────────────────────────────────────────────────────────────────
-APP_NAME = SN3Companion
+APPLICATION_NAME = SN3Companion
 SN3Companion_FILES = App/main.m App/SN3AppDelegate.m App/SN3ViewController.m
 SN3Companion_INFORMATION_PROPERTY_LIST = App/Info.plist
 SN3Companion_RESOURCES = App/Icon.png App/Icon@2x.png App/Icon@3x.png

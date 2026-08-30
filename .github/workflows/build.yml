@@ -85,8 +85,9 @@ jobs:
 
           # ---- Companion App（v6.17 套壳）：拷贝 theos 产出的 .app
           mkdir -p stage/var/jb/Applications
-          cp -R .theos/obj/debug/SN3Companion.app stage/var/jb/Applications/ 2>/dev/null || \
-          cp -R .theos/obj/SN3Companion.app stage/var/jb/Applications/ || { echo "FATAL: SN3Companion.app not found"; exit 1; }
+          APP_PATH=$(find .theos/obj -name "SN3Companion.app" -type d 2>/dev/null | head -1)
+          if [ -z "$APP_PATH" ]; then echo "FATAL: SN3Companion.app not found"; exit 1; fi
+          cp -R "$APP_PATH" stage/var/jb/Applications/
           # 对 app 可执行文件做假签名（theos 一般已签，这里兜底）
           ldid -S stage/var/jb/Applications/SN3Companion.app/SN3Companion 2>/dev/null || true
 
