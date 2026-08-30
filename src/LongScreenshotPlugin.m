@@ -6,6 +6,7 @@
 #import "LongShotController.h"
 #import "ResultWindow.h"
 #import "Common.h"
+#import "ImageUtils.h"
 #import <Photos/Photos.h>
 
 @implementation LongScreenshotPlugin
@@ -22,12 +23,10 @@
         // 先预览，点击“保存到相册”再落盘
         [ResultWindow showWithTitle:@"长截图预览" text:[NSString stringWithFormat:@"尺寸 %.0f×%.0f\n点击下方保存到相册", stitched.size.width, stitched.size.height] image:stitched
                         actionTitle:@"保存到相册" onAction:^{
-            [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-                [PHAssetChangeRequest creationRequestForAssetFromImage:stitched];
-            } completionHandler:^(BOOL ok, NSError *err) {
+            [ImageUtils saveToCustomAlbum:stitched completion:^(BOOL ok, NSError *err) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if (ok) [Common toast:@"已保存到相册"];
-                    else [Common toast:err ? @"保存失败" : @"保存失败"];
+                    if (ok) [Common toast:@"已保存到相册「SN3截图」"];
+                    else [Common toast:err ? [NSString stringWithFormat:@"保存失败：%@", err.localizedDescription] : @"保存失败"];
                 });
             }];
         }];

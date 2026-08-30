@@ -1191,7 +1191,7 @@ static int SN3_LoopKVOContext = 0;
 }
 
 // 框选确认 → 选区下方弹出【紧凑工具栏】（不进全屏编辑窗）。
-// 工具栏含全部 17 功能（含 AI/旋转/加壳/PDF/压缩/去状态栏/取色/还原），并读「工具栏排序」设置。
+// 工具栏含全部功能（含 AI/旋转/加壳/PDF/压缩/看图问AI/取色/还原），并读「工具栏排序」设置。
 // 这是用户要的形态：框选下方出单排/双排工具栏，最右侧有关闭按钮，不占满全屏。
 - (void)presentLocalPanelForRect:(CGRect)rect {
     if (!_win) return;
@@ -1284,7 +1284,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     XZLocalPhone    = 11,
     XZLocalPDF      = 12,
     XZLocalCompress = 13,
-    XZLocalStrip    = 14,
     XZLocalColorPick= 15,
     XZLocalReset    = 16,
 };
@@ -1341,7 +1340,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
 }
 
 // v4.9 / v6.05：在【独立窗口】上、选区下方同步弹出紧凑功能面板（不进全屏编辑窗）。
-//   · 含 16 个功能（OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/PDF/压缩/去状态栏/取色/还原），
+//   · 含全部功能（OCR/翻译/画图/识码/AI/旋转/复制/贴图/保存/分享/PDF/压缩/看图问AI/取色/还原），
 //     与 EditToolbarWindow 用同一套 tag 值，故「工具栏排序」设置对它直接生效。
 //     （「加壳」已移出局部工具栏 —— 改到「设置→手机壳库」，仅对「正常截图」生效。）
 //   · 左侧常驻一张当前裁剪图预览缩略图，旋转/还原/压缩后实时刷新，让操作看得见。
@@ -1379,7 +1378,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
         @(XZLocalShare):    @{@"icon":@"square.and.arrow.up",          @"label":@"分享"},
         @(XZLocalPDF):      @{@"icon":@"doc.richtext",                @"label":@"PDF"},
         @(XZLocalCompress): @{@"icon":@"arrow.down.circle",           @"label":@"压缩"},
-        @(XZLocalStrip):    @{@"icon":@"menubar.rectangle",           @"label":@"去状态栏"},
         @(XZLocalColorPick):@{@"icon":@"eyedropper",                  @"label":@"取色"},
         @(XZLocalReset):    @{@"icon":@"arrow.counterclockwise",       @"label":@"还原"},
     };
@@ -1588,7 +1586,7 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
     NSArray<NSNumber *> *defOrder = @[ @(XZLocalOCR), @(XZLocalTranslate), @(XZLocalDraw), @(XZLocalCode),
                                        @(XZLocalAI), @(XZLocalRotate), @(XZLocalCopy), @(XZLocalFloating),
                                        @(XZLocalSave), @(XZLocalShare), @(XZLocalPDF),
-                                       @(XZLocalCompress), @(XZLocalStrip), @(XZLocalColorPick), @(XZLocalReset) ];
+                                       @(XZLocalCompress), @(XZLocalColorPick), @(XZLocalReset) ];
     NSMutableArray<NSNumber *> *saved = [NSMutableArray array];
     NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
     if (orderStr.length) [saved addObjectsFromArray:[orderStr componentsSeparatedByString:@","]];
@@ -1749,10 +1747,6 @@ typedef NS_ENUM(NSInteger, XZLocalTag) {
                            before.length / 1024.0, after.length / 1024.0]];
         } else { [Common toast:@"压缩失败"]; }
         [self updateLocalPreview];      // v6.05：压缩后刷新预览
-    } else if (tag == XZLocalStrip) {
-        UIImage *s = [SuperTools stripStatusBar:img];
-        if (s) { self->_cropImage = s; [Common toast:@"已去除顶部状态栏"]; } else [Common toast:@"处理失败"];
-        [self updateLocalPreview];      // v6.05：去状态栏后刷新预览（选框已能覆盖状态栏，此功能现在才看得见）
     } else if (tag == XZLocalColorPick) {
         [SuperTools colorPicker:img fromWindow:_win];
     } else if (tag == XZLocalReset) {

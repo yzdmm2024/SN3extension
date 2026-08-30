@@ -217,7 +217,8 @@
     // 先检查相册权限
     [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (status != PHAuthorizationStatusAuthorized) {
+            // v6.20.5：兼容 iOS 14+「限定访问(Limited)」权限，否则相册创建/写入会被误判为"无权限"而失败
+            if (status != PHAuthorizationStatusAuthorized && status != PHAuthorizationStatusLimited) {
                 if (completion) completion(NO, [NSError errorWithDomain:@"ImageUtils" code:-1
                                                               userInfo:@{NSLocalizedDescriptionKey: @"没有相册权限"}]);
                 return;

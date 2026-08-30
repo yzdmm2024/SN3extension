@@ -43,7 +43,6 @@ typedef NS_ENUM(NSInteger, ETBTag) {
     // 第 3 排：更多工具（直接平铺，不再进二级菜单）
     ETBTagPDF        = 12,   // 导出 PDF
     ETBTagCompress   = 13,   // 压缩
-    ETBTagStrip      = 14,   // 去状态栏
     ETBTagColorPick  = 15,   // 取色器
     ETBTagReset      = 16,   // 还原原图
 };
@@ -117,9 +116,9 @@ static EditToolbarWindow *_shared = nil;
 
 // v5.25.5：统一计算「当前应显示的按钮顺序（去禁用、补缺失）」，单排/双排共用
 - (NSArray<NSNumber *> *)resolveEnabledTags {
-    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI), @(ETBTagAIImage),
+    NSArray<NSNumber *> *defOrder = @[ @(ETBTagOCR), @(ETBTagTranslate), @(ETBTagDraw), @(ETBTagCodeScan), @(ETBTagAI),
                                        @(ETBTagRotate), @(ETBTagCopy), @(ETBTagFloating), @(ETBTagSave),
-                                       @(ETBTagShare), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagStrip),
+                                       @(ETBTagShare), @(ETBTagPDF), @(ETBTagCompress), @(ETBTagAIImage),
                                        @(ETBTagColorPick), @(ETBTagReset) ];
     NSMutableArray<NSNumber *> *savedOrder = [NSMutableArray array];
     NSString *orderStr = [Common stringPref:XZ_KEY_TB_ORDER default:@""];
@@ -217,7 +216,7 @@ static EditToolbarWindow *_shared = nil;
     UIEdgeInsets safe = [Common screenSafeInsets];
 
     // v5.25.5：按钮顺序 / 禁用集合 / 单双排 由偏好决定（resolveEnabledTags 统一计算）。
-    // 默认顺序：OCR 翻译 画图 识码 AI 对话 旋转 复制 贴图 保存 分享 PDF 压缩 去状态栏 取色 还原。（v6.05：加壳移出手动按钮，改由「手机壳库」设置自动套壳）
+    // 默认顺序：OCR 翻译 画图 识码 AI 看图问AI 旋转 复制 贴图 保存 分享 PDF 压缩 取色 还原。（v6.20.5：去状态栏已移除，由「看图问AI」替代；加壳移出手动按钮，改由「手机壳库」设置自动套壳）
     NSArray<NSNumber *> *enabledTags = [self resolveEnabledTags];
 
     // 按钮规格表（icon/label/tag）—— 整个工具栏统一从这里取，settings 排序也用这里
@@ -235,7 +234,6 @@ static EditToolbarWindow *_shared = nil;
         @(ETBTagShare):     @{@"icon":@"square.and.arrow.up",         @"label":@"分享"},
         @(ETBTagPDF):       @{@"icon":@"doc.richtext",                @"label":@"PDF"},
         @(ETBTagCompress):  @{@"icon":@"arrow.down.circle",           @"label":@"压缩"},
-        @(ETBTagStrip):     @{@"icon":@"menubar.rectangle",           @"label":@"去状态栏"},
         @(ETBTagColorPick): @{@"icon":@"eyedropper",                  @"label":@"取色"},
         @(ETBTagReset):     @{@"icon":@"arrow.counterclockwise",      @"label":@"还原"},
     };
@@ -473,10 +471,6 @@ static EditToolbarWindow *_shared = nil;
         } else {
             [Common toast:@"压缩失败"];
         }
-    } else if (tag == ETBTagStrip) {
-        UIImage *s = [SuperTools stripStatusBar:img];
-        if (s) { [self replaceImage:s]; [Common toast:@"已去除顶部状态栏"]; }
-        else [Common toast:@"处理失败"];
     } else if (tag == ETBTagColorPick) {
         [SuperTools colorPicker:img fromWindow:_win];
     } else if (tag == ETBTagReset) {
